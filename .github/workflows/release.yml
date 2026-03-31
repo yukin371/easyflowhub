@@ -54,6 +54,13 @@ jobs:
             easyflowhub-app/src-tauri/target/release/bundle/nsis/*.exe
             easyflowhub-app/src-tauri/target/release/bundle/msi/*.msi
 
+      - name: Debug NSIS output
+        run: |
+          echo "=== NSIS bundle directory ==="
+          ls -la easyflowhub-app/src-tauri/target/release/bundle/nsis/ 2>/dev/null || echo "Directory not found"
+          echo "=== MSI bundle directory ==="
+          ls -la easyflowhub-app/src-tauri/target/release/bundle/msi/ 2>/dev/null || echo "Directory not found"
+
   build-scriptmgr:
     name: Build scriptmgr-go
     runs-on: ubuntu-latest
