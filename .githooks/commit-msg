@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# commit-msg hook - 提交信息检查
+# 检查: AI协作者标识、提交格式规范
+
+set -eo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+HAS_ERROR=0
+
+# 检查 AI 协作者标识 (Co-Authored-By 行中包含已知 AI 名称)
+if echo "$COMMIT_MSG" | grep -qE "Co-Authored-By:.*(noreply|bot|assistant)@"; then
+    echo -e "${RED}[XX] 提交信息包含 AI 协作者标识${NC}"
+    echo "  请移除 Co-Authored-By 中的 AI 邮箱"
+    HAS_ERROR=1
+fi
+
+if echo "$COMMIT_MSG" | grep -qE "Generated with.*Code"; then
+    echo -e "${RED}[XX] 提交信息包含 AI 生成标识${NC}"
+    echo "  请移除 Generated with 标识行"
+    HAS_ERROR=1
+fi
+
+# 检查提交信息格式 (conventional commits)
+FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+if ! echo "$FIRST_LINE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .{1,80}$"; then
+    echo -e "${RED}[XX] 提交信息格式不规范${NC}"
+    echo "  期望格式: type(scope): description"
+    echo "  示例: feat(notes): 添加批量删除功能"
+    echo "  当前: $FIRST_LINE"
+    HAS_ERROR=1
+fi
+
+if [ "$HAS_ERROR" -gt 0 ]; then
+    exit 1
+fi
+
+echo -e "${GREEN}[OK] 提交信息检查通过${NC}"
+exit 0
