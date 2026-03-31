@@ -47,6 +47,15 @@ jobs:
         run: bunx tauri build
 
       - name: Upload artifacts
+        run: |
+          echo "=== Release directory ==="
+          ls -la easyflowhub-app/src-tauri/target/release/
+          echo "=== NSIS bundle ==="
+          ls -la easyflowhub-app/src-tauri/target/release/bundle/nsis/ 2>/dev/null || echo "No NSIS dir"
+          echo "=== MSI bundle ==="
+          ls -la easyflowhub-app/src-tauri/target/release/bundle/msi/ 2>/dev/null || echo "No MSI dir"
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: easyflowhub-installers
