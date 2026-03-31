@@ -120,7 +120,17 @@ jobs:
       - name: Create latest.json
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          ASSET=$(ls app/*.exe | head -1 | xargs basename)
+
+          # Find the first .exe in app directory
+          EXE_FILE=$(find app -name '*.exe' -type f | head -1)
+          if [ -z "$EXE_FILE" ]; then
+            echo "No .exe found in app directory"
+            ls -la app/
+            exit 1
+          fi
+
+          ASSET=$(basename "$EXE_FILE")
+          SHA256=$(sha256sum "$EXE_FILE" | cut -d' ' -f1)
 
           cat << EOF > latest.json
           {
@@ -128,7 +138,7 @@ jobs:
             "date": "$(date +%Y-%m-%d)",
             "body": "See release notes",
             "path": "$ASSET",
-            "sha256": "$(sha256sum app/*.exe | cut -d' ' -f1)"
+            "sha256": "$SHA256"
           }
           EOF
 
