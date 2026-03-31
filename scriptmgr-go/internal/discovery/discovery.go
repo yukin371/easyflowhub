@@ -231,11 +231,18 @@ func executableDir() string {
 }
 
 func isSameOrNestedRoot(root, candidate string) bool {
-	// Normalize to forward slashes for consistent cross-platform comparison
-	root = filepath.ToSlash(strings.ToLower(filepath.Clean(root)))
-	candidate = filepath.ToSlash(strings.ToLower(filepath.Clean(candidate)))
+	// Normalize backslashes to forward slashes for cross-platform consistency
+	root = strings.ReplaceAll(root, "\\", "/")
+	candidate = strings.ReplaceAll(candidate, "\\", "/")
+	// Lowercase for case-insensitive comparison
+	root = strings.ToLower(root)
+	candidate = strings.ToLower(candidate)
+	// Remove trailing/leading slashes for consistent comparison
+	root = strings.Trim(root, "/")
+	candidate = strings.Trim(candidate, "/")
 	if root == candidate {
 		return true
 	}
+	// Check if root is nested within candidate (candidate is a prefix of root)
 	return strings.HasPrefix(root, candidate+"/")
 }
