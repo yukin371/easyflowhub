@@ -46,11 +46,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bunx tauri build
 
-      - name: Debug build output
+      - name: List build output
+        shell: pwsh
         run: |
-          echo "=== Finding files ==="
-          find easyflowhub-app/src-tauri/target/release/bundle -type f \( -name "*.exe" -o -name "*.msi" \) 2>/dev/null || echo "No bundle files found"
-          find easyflowhub-app/src-tauri/target/release -maxdepth 1 -type f -name "*.exe" 2>/dev/null || echo "No portable exe found"
+          Write-Host "=== NSIS ===" ; Get-ChildItem src-tauri/target/release/bundle/nsis/ -ErrorAction SilentlyContinue
+          Write-Host "=== MSI ===" ; Get-ChildItem src-tauri/target/release/bundle/msi/ -ErrorAction SilentlyContinue
+          Write-Host "=== Portable exe ===" ; Get-ChildItem src-tauri/target/release/*.exe -ErrorAction SilentlyContinue
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -109,13 +110,16 @@ jobs:
           path: scriptmgr
 
       - name: List artifacts
-        run: ls -la && ls -la app && ls -la scriptmgr
+        run: find app -type f && find scriptmgr -type f
 
       - name: Rename portable exe
         run: |
+          VERSION=${GITHUB_REF_NAME#v}
           if [ -f "app/easyflowhub.exe" ]; then
-            VERSION=${GITHUB_REF_NAME#v}
             mv app/easyflowhub.exe "app/EasyFlowHub_${VERSION}_portable.exe"
+          else
+            echo "::warning::Portable exe not found at app/easyflowhub.exe"
+            find app -name "*.exe" -type f
           fi
 
       - name: Create Release
