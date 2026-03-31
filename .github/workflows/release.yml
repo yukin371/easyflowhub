@@ -8,15 +8,15 @@ on:
 permissions:
   contents: write
 
-defaults:
-  run:
-    working-directory: easyflowhub-app
-
 jobs:
-  release:
-    permissions:
-      contents: write
+  build-app:
+    name: Build EasyFlowHub
     runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: easyflowhub-app
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,14 +27,14 @@ jobs:
           node-version: lts/*
 
       - name: Setup Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          toolchain: stable
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Install frontend deps
+      - name: Install deps
         run: bun install
 
       - name: Install Tauri CLI
@@ -46,27 +46,95 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bunx tauri build
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyflowhub-installers
+          path: |
+            easyflowhub-app/src-tauri/target/release/bundle/nsis/*.exe
+            easyflowhub-app/src-tauri/target/release/bundle/msi/*.msi
+
+  build-scriptmgr:
+    name: Build scriptmgr-go
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: scriptmgr-go
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build
+        run: go build -ldflags="-s -w" -o scriptmgr.exe ./cmd/scriptmgr
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scriptmgr
+          path: scriptmgr-go/scriptmgr.exe
+
+  release:
+    name: Create Release
+    needs: [build-app, build-scriptmgr]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download app artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: easyflowhub-installers
+          path: app
+
+      - name: Download scriptmgr artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: scriptmgr
+          path: scriptmgr
+
+      - name: List artifacts
+        run: ls -la && ls -la app && ls -la scriptmgr
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
+            app/*.exe
+            app/*.msi
+            scriptmgr/scriptmgr.exe
           generate_release_notes: true
+          draft: true
+          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create latest.json
         run: |
-          $version = $env:GITHUB_REF_NAME -replace 'v',''
-          $assetName = "EasyFlowHub_${version}_x64-setup.exe"
+          VERSION=${GITHUB_REF_NAME#v}
+          ASSET=$(ls app/*.exe | head -1 | xargs basename)
 
-          @{
-            version = $version
-            date = (Get-Date -Format "yyyy-MM-dd")
-            body = "See release notes"
-            path = $assetName
-            sha256 = (Get-FileHash "src-tauri/target/release/bundle/nsis/$assetName" -Algorithm SHA256).Hash.ToLower()
-          } | ConvertTo-Json | Out-File -Encoding UTF8 -FilePath "latest.json"
+          cat << EOF > latest.json
+          {
+            "version": "$VERSION",
+            "date": "$(date +%Y-%m-%d)",
+            "body": "See release notes",
+            "path": "$ASSET",
+            "sha256": "$(sha256sum app/*.exe | cut -d' ' -f1)"
+          }
+          EOF
 
-          gh release upload $env:GITHUB_REF_NAME latest.json --clobber
+          cat latest.json
+
+      - name: Upload latest.json
+        run: gh release upload ${{ github.ref_name }} latest.json --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
