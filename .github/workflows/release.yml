@@ -112,25 +112,40 @@ jobs:
       - name: List artifacts
         run: find app -type f && find scriptmgr -type f
 
-      - name: Rename portable exe
+      - name: Organize artifacts
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+
+          # Move NSIS installer to app root
+          NSIS=$(find app -path '*/nsis/*.exe' -type f | head -1)
+          if [ -n "$NSIS" ]; then
+            mv "$NSIS" "app/EasyFlowHub_${VERSION}_x64-setup.exe"
+          fi
+
+          # Move MSI to app root
+          MSI=$(find app -path '*/msi/*.msi' -type f | head -1)
+          if [ -n "$MSI" ]; then
+            mv "$MSI" "app/EasyFlowHub_${VERSION}_x64_en-US.msi"
+          fi
+
+          # Rename portable exe
           if [ -f "app/easyflowhub.exe" ]; then
             mv app/easyflowhub.exe "app/EasyFlowHub_${VERSION}_portable.exe"
-          else
-            echo "::warning::Portable exe not found at app/easyflowhub.exe"
-            find app -name "*.exe" -type f
           fi
+
+          echo "=== Final file list ==="
+          find app -maxdepth 1 -type f
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            app/EasyFlowHub_*.exe
-            app/EasyFlowHub_*.msi
+            app/EasyFlowHub_*_x64-setup.exe
+            app/EasyFlowHub_*_x64_en-US.msi
+            app/EasyFlowHub_*_portable.exe
             scriptmgr/scriptmgr.exe
           generate_release_notes: true
-          draft: true
+          draft: false
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -139,16 +154,16 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
 
-          # Find portable exe
-          EXE_FILE=$(find app -name '*portable*.exe' -type f | head -1)
-          if [ -z "$EXE_FILE" ]; then
-            echo "No portable .exe found"
+          # Use NSIS installer as update asset
+          SETUP_FILE=$(find app -name '*x64-setup.exe' -type f | head -1)
+          if [ -z "$SETUP_FILE" ]; then
+            echo "No setup .exe found"
             ls -la app/
             exit 1
           fi
 
-          ASSET=$(basename "$EXE_FILE")
-          SHA256=$(sha256sum "$EXE_FILE" | cut -d' ' -f1)
+          ASSET=$(basename "$SETUP_FILE")
+          SHA256=$(sha256sum "$SETUP_FILE" | cut -d' ' -f1)
 
           cat << EOF > latest.json
           {

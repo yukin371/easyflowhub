@@ -284,6 +284,10 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             // 监听 manager 窗口关闭事件，改为隐藏
             if let Some(window) = app.get_webview_window("manager") {

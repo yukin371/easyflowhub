@@ -15,8 +15,9 @@ import { getSettings, updateSettings } from '../../lib/tauri/settings';
 import type { AppSettings } from '../../types/settings';
 import { moduleRegistry } from '../../modules';
 import type { FeatureModule } from '../../modules';
+import { isEnabled as isAutostartEnabled, enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 
-type SettingsSection = 'modules' | 'shortcuts' | 'quickNote' | 'todo' | 'trash' | 'editor';
+type SettingsSection = 'general' | 'modules' | 'shortcuts' | 'quickNote' | 'todo' | 'trash' | 'editor';
 
 interface ShortcutField {
   key: keyof ShortcutConfig;
@@ -41,6 +42,7 @@ const SHORTCUT_FIELDS: ShortcutField[] = [
 ];
 
 const NAV_ITEMS: { key: SettingsSection; label: string; icon: string }[] = [
+  { key: 'general', label: '通用', icon: '⚙' },
   { key: 'modules', label: '功能模块', icon: '🧩' },
   { key: 'shortcuts', label: '快捷键', icon: '⌨' },
   { key: 'quickNote', label: '快速笔记', icon: '📝' },
@@ -50,7 +52,7 @@ const NAV_ITEMS: { key: SettingsSection; label: string; icon: string }[] = [
 ];
 
 export function SettingsPanel() {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('modules');
+  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
   const [shortcutConfig, setShortcutConfig] = useState<ShortcutConfig>(DEFAULT_SHORTCUT_CONFIG);
   const [shortcutSaveState, setShortcutSaveState] = useState<'saved' | 'dirty'>('saved');
   const [recordingKey, setRecordingKey] = useState<keyof ShortcutConfig | null>(null);
@@ -71,11 +73,15 @@ export function SettingsPanel() {
   // 模块状态
   const [toggleableModules, setToggleableModules] = useState<FeatureModule[]>([]);
 
+  // 自启动状态
+  const [autostartOn, setAutostartOn] = useState(false);
+
   // 临时编辑状态，用于允许输入框清空后再输入
   const [editingValues, setEditingValues] = useState<Record<string, string>>({});
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<SettingsSection, HTMLDivElement | null>>({
+    general: null,
     modules: null,
     shortcuts: null,
     quickNote: null,
@@ -87,6 +93,9 @@ export function SettingsPanel() {
   useEffect(() => {
     setShortcutConfig(loadShortcutConfig());
     getSettings().then(setAppSettings).catch(console.error);
+
+    // 读取自启动状态
+    isAutostartEnabled().then(setAutostartOn).catch(() => setAutostartOn(false));
 
     // 加载可切换的模块
     setToggleableModules(moduleRegistry.getToggleableModules());
@@ -239,6 +248,66 @@ export function SettingsPanel() {
         </header>
 
         <div ref={scrollContainerRef} className="h-[calc(100%-120px)] overflow-y-auto px-6 py-5">
+          {/* 通用设置 */}
+          <div
+            ref={(el) => { sectionRefs.current.general = el; }}
+            className="mb-8"
+          >
+            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
+              <div className="mb-4">
+                <p className="manager-kicker">General</p>
+                <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">通用</h3>
+              </div>
+              <p className="mb-4 text-sm text-[color:var(--manager-ink-soft)]">
+                应用启动行为等基础配置。
+              </p>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-[18px] border border-[color:var(--manager-border)] bg-white/68 px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-[color:var(--manager-border)] bg-white/70 text-sm text-[color:var(--manager-ink-soft)]">
+                      🚀
+                    </span>
+                    <div>
+                      <p className="text-sm font-medium text-[color:var(--manager-ink-strong)]">
+                        开机自启动
+                      </p>
+                      <p className="text-xs text-[color:var(--manager-ink-subtle)]">
+                        系统启动时自动运行 EasyFlowHub
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        if (autostartOn) {
+                          await disableAutostart();
+                          setAutostartOn(false);
+                        } else {
+                          await enableAutostart();
+                          setAutostartOn(true);
+                        }
+                      } catch (err) {
+                        console.error('Failed to toggle autostart:', err);
+                      }
+                    }}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${
+                      autostartOn
+                        ? 'bg-[color:var(--manager-accent)]'
+                        : 'bg-[color:var(--manager-border)]'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                        autostartOn ? 'left-6' : 'left-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+
           {/* 功能模块设置 */}
           <div
             ref={(el) => { sectionRefs.current.modules = el; }}
