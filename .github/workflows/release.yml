@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    working-directory: easyflowhub-app
+
 jobs:
   release:
     permissions:
@@ -38,7 +42,6 @@ jobs:
 
       - name: Build Tauri
         env:
-          # Set secrets in GitHub repo settings
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bunx tauri build
@@ -52,24 +55,6 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Release Asset
-        run: |
-          $version = $env:GITHUB_REF_NAME -replace 'v',''
-          $assetPath = "src-tauri/target/release/bundle/nsis/EasyFlowHub_${version}_x64-setup.exe"
-
-          # Create latest.json
-          $json = @{
-            version = $version
-            date = (Get-Date -Format "yyyy-MM-dd")
-            path = (Split-Path $assetPath -Leaf)
-            sha256 = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLower()
-          } | ConvertTo-Json
-
-          $json | Out-File -Encoding UTF8 "$env:GITHUB_OUTPUT"
-
-          # Upload to release
-          gh release upload $env:GITHUB_REF_NAME $assetPath --clobber
 
       - name: Create latest.json
         run: |

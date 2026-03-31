@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, master]
 
+defaults:
+  run:
+    working-directory: easyflowhub-app
+
 jobs:
   test:
     name: Frontend Tests
