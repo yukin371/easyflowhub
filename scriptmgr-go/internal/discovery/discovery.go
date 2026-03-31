@@ -231,10 +231,11 @@ func executableDir() string {
 }
 
 func isSameOrNestedRoot(root, candidate string) bool {
-	root = strings.ToLower(filepath.Clean(root))
-	candidate = strings.ToLower(filepath.Clean(candidate))
+	// Normalize to forward slashes for consistent cross-platform comparison
+	root = filepath.ToSlash(strings.ToLower(filepath.Clean(root)))
+	candidate = filepath.ToSlash(strings.ToLower(filepath.Clean(candidate)))
 	if root == candidate {
 		return true
 	}
-	return strings.HasPrefix(root, candidate+string(filepath.Separator))
+	return strings.HasPrefix(root, candidate+"/")
 }

@@ -70,6 +70,10 @@ func (m *MockAPI) UpdateScriptCategory(scriptID, category string) error {
 	return m.Err
 }
 
+func (m *MockAPI) ListCategories() (map[string]int, error) {
+	return make(map[string]int), nil
+}
+
 func TestNewServer(t *testing.T) {
 	mock := &MockAPI{}
 	srv := NewServer(mock)
