@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: bun
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend deps
+        run: bun install
+
+      - name: Install Tauri CLI
+        run: bun add -D @tauri-apps/cli@latest
+
+      - name: Build Tauri
+        env:
+          # Set secrets in GitHub repo settings
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bunx tauri build
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Release Asset
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace 'v',''
+          $assetPath = "src-tauri/target/release/bundle/nsis/EasyFlowHub_${version}_x64-setup.exe"
+
+          # Create latest.json
+          $json = @{
+            version = $version
+            date = (Get-Date -Format "yyyy-MM-dd")
+            path = (Split-Path $assetPath -Leaf)
+            sha256 = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLower()
+          } | ConvertTo-Json
+
+          $json | Out-File -Encoding UTF8 "$env:GITHUB_OUTPUT"
+
+          # Upload to release
+          gh release upload $env:GITHUB_REF_NAME $assetPath --clobber
+
+      - name: Create latest.json
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace 'v',''
+          $assetName = "EasyFlowHub_${version}_x64-setup.exe"
+
+          @{
+            version = $version
+            date = (Get-Date -Format "yyyy-MM-dd")
+            body = "See release notes"
+            path = $assetName
+            sha256 = (Get-FileHash "src-tauri/target/release/bundle/nsis/$assetName" -Algorithm SHA256).Hash.ToLower()
+          } | ConvertTo-Json | Out-File -Encoding UTF8 -FilePath "latest.json"
+
+          gh release upload $env:GITHUB_REF_NAME latest.json --clobber

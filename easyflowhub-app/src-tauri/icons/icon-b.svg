@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- 背景圆角矩形 -->
+  <rect width="128" height="128" rx="28" fill="url(#paint0_linear)"/>
+
+  <!-- 左侧三条横线 - 笔记 -->
+  <g stroke="white" stroke-width="8" stroke-linecap="round">
+    <line x1="24" y1="44" x2="52" y2="44"/>
+    <line x1="24" y1="64" x2="68" y2="64"/>
+    <line x1="24" y1="84" x2="44" y2="84"/>
+  </g>
+
+  <!-- 右侧大括号/弧线 - 脚本 -->
+  <path d="M80 40 C96 40 104 52 104 64 C104 76 96 88 80 88"
+        stroke="#00F2FE" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- 三个扩散箭头 -->
+  <g fill="#00F2FE">
+    <!-- 上箭头 - 略微上扬 -->
+    <path d="M100 50 L116 54 L100 58 Z" transform="rotate(-8 108 54)"/>
+    <!-- 中箭头 - 水平向右 -->
+    <path d="M102 62 L120 64 L102 66 Z"/>
+    <!-- 下箭头 - 略微下斜 -->
+    <path d="M100 70 L116 74 L100 78 Z" transform="rotate(8 108 74)"/>
+  </g>
+
+  <defs>
+    <linearGradient id="paint0_linear" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4FACFE"/>
+      <stop offset="1" stop-color="#00F2FE"/>
+    </linearGradient>
+  </defs>
+</svg>

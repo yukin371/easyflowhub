@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景圆角矩形 -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#bg)"/>
+
+  <!-- 顶部装饰光晕 -->
+  <ellipse cx="64" cy="24" rx="40" ry="16" fill="url(#shine)"/>
+
+  <!-- 主图形：抽象 D + 流动线条 -->
+  <g transform="translate(20, 20)">
+    <!-- 外框圆角矩形 -->
+    <rect x="0" y="0" width="88" height="88" rx="16" fill="white" fill-opacity="0.1"/>
+
+    <!-- 左侧弧线 D -->
+    <path d="M28 16 C 14 16, 4 28, 4 44 L4 60 C 4 76, 14 88, 28 88"
+          fill="none" stroke="white" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- D 的内部填充 -->
+    <path d="M28 16 C 14 16, 4 28, 4 44 L4 60 C 4 76, 14 88, 28 88 L28 80 C 16 80, 10 70, 10 60 L10 44 C 10 30, 16 20, 28 20 Z"
+          fill="white" fill-opacity="0.15"/>
+
+    <!-- 内部闪电/流动线 -->
+    <path d="M18 36 L30 48 L18 60 L30 72"
+          stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95"/>
+
+    <!-- 右侧装饰：笔记页轮廓 -->
+    <g transform="translate(50, 18)">
+      <rect x="0" y="0" width="32" height="40" rx="4" fill="white" fill-opacity="0.2" stroke="white" stroke-width="2"/>
+      <!-- 页内线条 -->
+      <line x1="6" y1="10" x2="26" y2="10" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+      <line x1="6" y1="18" x2="20" y2="18" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+      <line x1="6" y1="26" x2="22" y2="26" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+      <line x1="6" y1="34" x2="16" y2="34" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+    </g>
+
+    <!-- 右上角小闪电 -->
+    <g transform="translate(68, 52) scale(0.7)">
+      <path d="M6 0 L0 14 L8 14 L2 28 L14 10 L6 10 L12 0 Z" fill="white" opacity="0.9"/>
+    </g>
+
+    <!-- 底部装饰点 -->
+    <circle cx="18" cy="82" r="2" fill="white" opacity="0.3"/>
+    <circle cx="28" cy="82" r="2" fill="white" opacity="0.5"/>
+    <circle cx="38" cy="82" r="2" fill="white" opacity="0.7"/>
+  </g>
+
+  <!-- 底部渐变遮罩增强立体感 -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#shine)" opacity="0.5"/>
+</svg>
