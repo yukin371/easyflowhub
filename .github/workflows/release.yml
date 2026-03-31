@@ -48,21 +48,18 @@ jobs:
 
       - name: Debug build output
         run: |
-          echo "=== Release directory ==="
-          ls -la easyflowhub-app/src-tauri/target/release/
-          echo "=== NSIS bundle ==="
-          ls -la easyflowhub-app/src-tauri/target/release/bundle/nsis/ 2>/dev/null || echo "No NSIS dir"
-          echo "=== MSI bundle ==="
-          ls -la easyflowhub-app/src-tauri/target/release/bundle/msi/ 2>/dev/null || echo "No MSI dir"
+          echo "=== Finding files ==="
+          find easyflowhub-app/src-tauri/target/release/bundle -type f \( -name "*.exe" -o -name "*.msi" \) 2>/dev/null || echo "No bundle files found"
+          find easyflowhub-app/src-tauri/target/release -maxdepth 1 -type f -name "*.exe" 2>/dev/null || echo "No portable exe found"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: easyflowhub-installers
           path: |
-            easyflowhub-app/src-tauri/target/release/easyflowhub.exe
-            easyflowhub-app/src-tauri/target/release/bundle/nsis/*.exe
-            easyflowhub-app/src-tauri/target/release/bundle/msi/*.msi
+            easyflowhub-app/src-tauri/target/release/bundle/nsis/
+            easyflowhub-app/src-tauri/target/release/bundle/msi/
+            easyflowhub-app/src-tauri/target/release/*.exe
 
   build-scriptmgr:
     name: Build scriptmgr-go
