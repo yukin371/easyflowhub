@@ -51,15 +51,9 @@ jobs:
         with:
           name: easyflowhub-installers
           path: |
+            easyflowhub-app/src-tauri/target/release/easyflowhub.exe
             easyflowhub-app/src-tauri/target/release/bundle/nsis/*.exe
             easyflowhub-app/src-tauri/target/release/bundle/msi/*.msi
-
-      - name: Debug NSIS output
-        run: |
-          echo "=== NSIS bundle directory ==="
-          ls -la easyflowhub-app/src-tauri/target/release/bundle/nsis/ 2>/dev/null || echo "Directory not found"
-          echo "=== MSI bundle directory ==="
-          ls -la easyflowhub-app/src-tauri/target/release/bundle/msi/ 2>/dev/null || echo "Directory not found"
 
   build-scriptmgr:
     name: Build scriptmgr-go
@@ -111,12 +105,19 @@ jobs:
       - name: List artifacts
         run: ls -la && ls -la app && ls -la scriptmgr
 
+      - name: Rename portable exe
+        run: |
+          if [ -f "app/easyflowhub.exe" ]; then
+            VERSION=${GITHUB_REF_NAME#v}
+            mv app/easyflowhub.exe "app/EasyFlowHub_${VERSION}_portable.exe"
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            app/*.exe
-            app/*.msi
+            app/EasyFlowHub_*.exe
+            app/EasyFlowHub_*.msi
             scriptmgr/scriptmgr.exe
           generate_release_notes: true
           draft: true
@@ -128,10 +129,10 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
 
-          # Find the first .exe in app directory
-          EXE_FILE=$(find app -name '*.exe' -type f | head -1)
+          # Find portable exe
+          EXE_FILE=$(find app -name '*portable*.exe' -type f | head -1)
           if [ -z "$EXE_FILE" ]; then
-            echo "No .exe found in app directory"
+            echo "No portable .exe found"
             ls -la app/
             exit 1
           fi
