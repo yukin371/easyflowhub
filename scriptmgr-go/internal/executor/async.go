@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"scriptmgr/internal/discovery"
@@ -104,10 +103,7 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 	cmd.Stdout = devNull
 	cmd.Stderr = devNull
 	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: 0x00000008 | 0x00000200,
-	}
+	applySysProcAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return model.SessionRecord{}, err
@@ -164,7 +160,7 @@ func (m *AsyncManager) RunWorker(buildCommand func(model.ScriptRecord, []string)
 	cmd.Stdout = outputFile
 	cmd.Stderr = outputFile
 	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	applySysProcAttr(cmd)
 
 	startedAt, parseErr := time.Parse(time.RFC3339, session.StartedAt)
 	if parseErr != nil || startedAt.IsZero() {
