@@ -12,6 +12,8 @@ const TODO_REGEX = /^(\s*)((?:[-*])|(?:\d+\.))\s*\[([ xX])\]\s*(.+)$/;
 /** 匹配行尾的 @done:ISO-timestamp */
 const DONE_TIMESTAMP_REGEX = /\s*@done:(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)\s*$/;
 
+export const TODO_INBOX_TITLE = '待办箱';
+
 /**
  * 从单个笔记中提取所有 todo 项
  */
@@ -150,4 +152,37 @@ export function getTodoStats(todos: TodoItem[]): { total: number; done: number; 
     done,
     pending: todos.length - done,
   };
+}
+
+export function sortTodosForDisplay(todos: TodoItem[]): TodoItem[] {
+  return [...todos].sort((a, b) => {
+    if (a.checked !== b.checked) {
+      return a.checked ? 1 : -1;
+    }
+
+    return a.lineIndex - b.lineIndex;
+  });
+}
+
+export function compareTodoGroupsForDisplay<
+  T extends { noteId: string; noteTitle: string; todos: TodoItem[] }
+>(a: T, b: T): number {
+  const aIsInbox = a.noteTitle.trim() === TODO_INBOX_TITLE;
+  const bIsInbox = b.noteTitle.trim() === TODO_INBOX_TITLE;
+  if (aIsInbox !== bIsInbox) {
+    return aIsInbox ? -1 : 1;
+  }
+
+  const aHasPending = a.todos.some((todo) => !todo.checked);
+  const bHasPending = b.todos.some((todo) => !todo.checked);
+  if (aHasPending !== bHasPending) {
+    return aHasPending ? -1 : 1;
+  }
+
+  const titleCompare = a.noteTitle.localeCompare(b.noteTitle, 'zh-CN');
+  if (titleCompare !== 0) {
+    return titleCompare;
+  }
+
+  return a.noteId.localeCompare(b.noteId);
 }

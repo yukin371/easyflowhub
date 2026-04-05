@@ -10,10 +10,13 @@ import { moduleRegistry } from '../../modules';
 import type { FeatureModule } from '../../modules';
 
 export const MANAGER_ACTIVATED_EVENT = 'easyflowhub:manager-activated';
+export const MANAGER_OPEN_NOTE_EVENT = 'easyflowhub:open-note';
+export const MANAGER_NAVIGATE_TO_NOTE_EVENT = 'easyflowhub:navigate-to-note';
 
 export function ManagerPage() {
   const [enabledModules, setEnabledModules] = useState<FeatureModule[]>([]);
   const [activePanel, setActivePanel] = useState<string | null>(null);
+  const [pendingNoteNavigation, setPendingNoteNavigation] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // 加载模块配置
@@ -102,6 +105,47 @@ export function ManagerPage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupNavigationListener = async () => {
+      try {
+        const win = getCurrentWindow();
+        unlisten = await win.listen<{ noteId?: string }>(MANAGER_NAVIGATE_TO_NOTE_EVENT, (event) => {
+          const noteId = event.payload?.noteId;
+          if (!noteId) {
+            return;
+          }
+
+          setPendingNoteNavigation(noteId);
+          setActivePanel('notes');
+        });
+      } catch (error) {
+        console.error('Failed to setup manager note navigation listener:', error);
+      }
+    };
+
+    void setupNavigationListener();
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    if (activePanel !== 'notes' || !pendingNoteNavigation) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+          detail: { noteId: pendingNoteNavigation },
+        })
+      );
+      setPendingNoteNavigation(null);
+    }, 16);
+
+    return () => window.clearTimeout(timer);
+  }, [activePanel, pendingNoteNavigation]);
 
   const handlePanelChange = useCallback((panelId: string) => {
     setActivePanel(panelId);

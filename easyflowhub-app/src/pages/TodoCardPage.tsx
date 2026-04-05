@@ -5,20 +5,24 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { createNote, getNote, listNotes, saveNote } from '../lib/tauri/notes';
 import { getSettings } from '../lib/tauri/settings';
 import {
+  compareTodoGroupsForDisplay,
   extractAllTodos,
   isWithinRetention,
+  sortTodosForDisplay,
+  TODO_INBOX_TITLE,
   toggleTodoInContent,
   updateTodoTextInContent,
 } from '../lib/todoParser';
 import type { Note } from '../types/note';
 import type { TodoItem } from '../types/todo';
+import { MANAGER_NAVIGATE_TO_NOTE_EVENT } from '../components/manager/ManagerPage';
 
 const BG_COLOR = '#FAF8F0';
-const TODO_INBOX_TITLE = '待办箱';
 
 function appendTodoLine(content: string, text: string) {
   const normalizedText = text.trim();
@@ -139,16 +143,51 @@ export function TodoCardPage() {
   }, [editingTodoId, isComposerOpen, isWindowFocused]);
 
   const groupedTodos = useMemo(() => {
-    const groups = new Map<string, TodoItem[]>();
+    const groups = new Map<string, { noteId: string; noteTitle: string; todos: TodoItem[] }>();
 
     for (const todo of todos) {
-      const list = groups.get(todo.noteId) ?? [];
-      list.push(todo);
-      groups.set(todo.noteId, list);
+      const existing = groups.get(todo.noteId);
+      if (existing) {
+        existing.todos.push(todo);
+        continue;
+      }
+
+      groups.set(todo.noteId, {
+        noteId: todo.noteId,
+        noteTitle: todo.noteTitle,
+        todos: [todo],
+      });
     }
 
-    return Array.from(groups.values());
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        todos: sortTodosForDisplay(group.todos),
+      }))
+      .sort(compareTodoGroupsForDisplay);
   }, [todos]);
+
+  const pendingGroups = useMemo(
+    () =>
+      groupedTodos
+        .map((group) => ({
+          ...group,
+          todos: group.todos.filter((todo) => !todo.checked),
+        }))
+        .filter((group) => group.todos.length > 0),
+    [groupedTodos]
+  );
+
+  const completedGroups = useMemo(
+    () =>
+      groupedTodos
+        .map((group) => ({
+          ...group,
+          todos: group.todos.filter((todo) => todo.checked),
+        }))
+        .filter((group) => group.todos.length > 0),
+    [groupedTodos]
+  );
 
   const pendingCount = todos.filter((todo) => !todo.checked).length;
 
@@ -257,6 +296,15 @@ export function TodoCardPage() {
       setSubmitting(false);
     }
   }, [loadTodos, todoDraft]);
+
+  const handleOpenSourceNote = useCallback(async (noteId: string) => {
+    try {
+      await invoke('show_manager_window');
+      await emitTo('manager', MANAGER_NAVIGATE_TO_NOTE_EVENT, { noteId });
+    } catch (error) {
+      console.error('Failed to open source note from todo card:', error);
+    }
+  }, []);
 
   return (
     <div
@@ -372,98 +420,275 @@ export function TodoCardPage() {
           ) : todos.length === 0 ? (
             <div style={emptyStateStyle}>○</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {groupedTodos.map((group, groupIndex) => (
-                <div key={`${group[0]?.noteId ?? groupIndex}`}>
-                  {groupIndex > 0 ? (
+            <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {pendingGroups.map((group, groupIndex) => (
+                  <div key={`${group.noteId ?? groupIndex}`}>
+                    {groupIndex > 0 ? (
+                      <div
+                        style={{
+                          height: 1,
+                          margin: '2px 6px 8px',
+                          background: 'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.16), transparent)',
+                        }}
+                      />
+                    ) : null}
                     <div
                       style={{
-                        height: 1,
-                        margin: '2px 6px 8px',
-                        background: 'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.16), transparent)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '0 6px 4px',
                       }}
-                    />
-                  ) : null}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {group.map((todo) => {
-                      const isEditing = editingTodoId === todo.id;
-
-                      return (
-                        <div
-                          key={todo.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 8,
-                            borderRadius: 12,
-                            padding: '4px 6px',
-                            background: isEditing ? 'rgba(255,255,255,0.75)' : 'transparent',
-                          }}
+                    >
+                      <div
+                        style={{
+                          minWidth: 0,
+                          fontSize: 10,
+                          letterSpacing: '0.14em',
+                          textTransform: 'uppercase',
+                          color: 'rgba(139, 125, 105, 0.72)',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                        title={group.noteTitle}
+                      >
+                        {group.noteTitle}
+                      </div>
+                      {group.noteTitle.trim() !== TODO_INBOX_TITLE ? (
+                        <button
+                          onClick={() => void handleOpenSourceNote(group.noteId)}
+                          title="打开原笔记"
+                          style={toolbarButtonStyle}
                         >
-                          <button
-                            onClick={() => void handleToggle(todo)}
+                          ↗
+                        </button>
+                      ) : (
+                        <div style={{ width: 22, height: 22, flexShrink: 0 }} />
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {group.todos.map((todo) => {
+                        const isEditing = editingTodoId === todo.id;
+
+                        return (
+                          <div
+                            key={todo.id}
                             style={{
-                              ...checkboxStyle,
-                              background: todo.checked ? 'rgba(109, 90, 62, 0.2)' : 'rgba(255,255,255,0.84)',
-                              borderColor: todo.checked ? 'rgba(109, 90, 62, 0.22)' : 'rgba(109, 90, 62, 0.18)',
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: 8,
+                              borderRadius: 12,
+                              padding: '4px 6px',
+                              background: isEditing ? 'rgba(255,255,255,0.75)' : 'transparent',
                             }}
                           >
-                            {todo.checked ? (
-                              <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="#6d5a3e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M2 6l3 3 5-5" />
-                              </svg>
-                            ) : null}
-                          </button>
-
-                          {isEditing ? (
-                            <input
-                              ref={editInputRef}
-                              value={todoDraft}
-                              disabled={submitting}
-                              onChange={(event) => setTodoDraft(event.target.value)}
-                              onBlur={() => {
-                                void handleSaveEdit(todo);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  void handleSaveEdit(todo);
-                                }
-
-                                if (event.key === 'Escape') {
-                                  event.preventDefault();
-                                  setEditingTodoId(null);
-                                  setTodoDraft('');
-                                }
-                              }}
-                              style={inputStyle}
-                            />
-                          ) : (
                             <button
-                              onClick={() => handleStartEdit(todo)}
+                              onClick={() => void handleToggle(todo)}
                               style={{
-                                flex: 1,
-                                border: 'none',
-                                background: 'transparent',
-                                padding: 0,
-                                textAlign: 'left',
-                                cursor: 'text',
-                                color: todo.checked ? 'rgba(109, 90, 62, 0.38)' : '#4b3d2b',
-                                fontSize: 13,
-                                lineHeight: 1.45,
-                                textDecoration: todo.checked ? 'line-through' : 'none',
-                                wordBreak: 'break-word',
+                                ...checkboxStyle,
+                                background: todo.checked ? 'rgba(109, 90, 62, 0.2)' : 'rgba(255,255,255,0.84)',
+                                borderColor: todo.checked ? 'rgba(109, 90, 62, 0.22)' : 'rgba(109, 90, 62, 0.18)',
                               }}
                             >
-                              {todo.text}
+                              {todo.checked ? (
+                                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="#6d5a3e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M2 6l3 3 5-5" />
+                                </svg>
+                              ) : null}
                             </button>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                            {isEditing ? (
+                              <input
+                                ref={editInputRef}
+                                value={todoDraft}
+                                disabled={submitting}
+                                onChange={(event) => setTodoDraft(event.target.value)}
+                                onBlur={() => {
+                                  void handleSaveEdit(todo);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    void handleSaveEdit(todo);
+                                  }
+
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    setEditingTodoId(null);
+                                    setTodoDraft('');
+                                  }
+                                }}
+                                style={inputStyle}
+                              />
+                            ) : (
+                              <button
+                                onClick={() => handleStartEdit(todo)}
+                                style={{
+                                  flex: 1,
+                                  border: 'none',
+                                  background: 'transparent',
+                                  padding: 0,
+                                  textAlign: 'left',
+                                  cursor: 'text',
+                                  color: todo.checked ? 'rgba(109, 90, 62, 0.38)' : '#4b3d2b',
+                                  fontSize: 13,
+                                  lineHeight: 1.45,
+                                  textDecoration: todo.checked ? 'line-through' : 'none',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
+                                {todo.text}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
+                ))}
+              </div>
+              {completedGroups.length > 0 ? <div style={{ flex: 1, minHeight: 24 }} /> : null}
+              {completedGroups.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div
+                    style={{
+                      height: 1,
+                      margin: '6px 6px 2px',
+                      background:
+                        'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.2), transparent)',
+                    }}
+                  />
+                  {completedGroups.map((group, groupIndex) => (
+                    <div key={`done-${group.noteId ?? groupIndex}`}>
+                      {groupIndex > 0 ? (
+                        <div
+                          style={{
+                            height: 1,
+                            margin: '2px 6px 8px',
+                            background:
+                              'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.16), transparent)',
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '0 6px 4px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            minWidth: 0,
+                            fontSize: 10,
+                            letterSpacing: '0.14em',
+                            textTransform: 'uppercase',
+                            color: 'rgba(139, 125, 105, 0.52)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={group.noteTitle}
+                        >
+                          {group.noteTitle}
+                        </div>
+                        {group.noteTitle.trim() !== TODO_INBOX_TITLE ? (
+                          <button
+                            onClick={() => void handleOpenSourceNote(group.noteId)}
+                            title="打开原笔记"
+                            style={toolbarButtonStyle}
+                          >
+                            ↗
+                          </button>
+                        ) : (
+                          <div style={{ width: 22, height: 22, flexShrink: 0 }} />
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {group.todos.map((todo) => {
+                          const isEditing = editingTodoId === todo.id;
+
+                          return (
+                            <div
+                              key={todo.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: 8,
+                                borderRadius: 12,
+                                padding: '4px 6px',
+                                background: isEditing ? 'rgba(255,255,255,0.75)' : 'transparent',
+                              }}
+                            >
+                              <button
+                                onClick={() => void handleToggle(todo)}
+                                style={{
+                                  ...checkboxStyle,
+                                  background: 'rgba(109, 90, 62, 0.2)',
+                                  borderColor: 'rgba(109, 90, 62, 0.22)',
+                                }}
+                              >
+                                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="#6d5a3e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M2 6l3 3 5-5" />
+                                </svg>
+                              </button>
+
+                              {isEditing ? (
+                                <input
+                                  ref={editInputRef}
+                                  value={todoDraft}
+                                  disabled={submitting}
+                                  onChange={(event) => setTodoDraft(event.target.value)}
+                                  onBlur={() => {
+                                    void handleSaveEdit(todo);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                      event.preventDefault();
+                                      void handleSaveEdit(todo);
+                                    }
+
+                                    if (event.key === 'Escape') {
+                                      event.preventDefault();
+                                      setEditingTodoId(null);
+                                      setTodoDraft('');
+                                    }
+                                  }}
+                                  style={inputStyle}
+                                />
+                              ) : (
+                                <button
+                                  onClick={() => handleStartEdit(todo)}
+                                  style={{
+                                    flex: 1,
+                                    border: 'none',
+                                    background: 'transparent',
+                                    padding: 0,
+                                    textAlign: 'left',
+                                    cursor: 'text',
+                                    color: 'rgba(109, 90, 62, 0.38)',
+                                    fontSize: 13,
+                                    lineHeight: 1.45,
+                                    textDecoration: 'line-through',
+                                    wordBreak: 'break-word',
+                                  }}
+                                >
+                                  {todo.text}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              ) : null}
             </div>
           )}
         </div>

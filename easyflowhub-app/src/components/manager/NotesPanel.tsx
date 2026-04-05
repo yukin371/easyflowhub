@@ -4,9 +4,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { createNote, trashNote, trashNotesBatch, listNotes, saveNote, togglePinNote } from '../../lib/tauri/notes';
+import { createNote, trashNote, trashNotesBatch, listNotes, saveNote, togglePinNote, getNote } from '../../lib/tauri/notes';
 import type { Note } from '../../types/note';
-import { MANAGER_ACTIVATED_EVENT } from './ManagerPage';
+import { MANAGER_ACTIVATED_EVENT, MANAGER_OPEN_NOTE_EVENT } from './ManagerPage';
 import { TagFilterBar } from './notes/filters/TagFilterBar';
 import { ListView } from './notes/views/ListView';
 import { GridView } from './notes/views/GridView';
@@ -297,12 +297,47 @@ export function NotesPanel() {
     inspectBackup(note);
   }, [inspectBackup, resetSaveFeedback]);
 
+  const openNoteById = useCallback(async (noteId: string) => {
+    const existing = notes.find((note) => note.id === noteId);
+    if (existing) {
+      openNote(existing);
+      return;
+    }
+
+    try {
+      const note = await getNote(noteId);
+      if (!note) {
+        return;
+      }
+
+      setNotes((prev) => (prev.some((item) => item.id === note.id) ? prev : [note, ...prev]));
+      openNote(note);
+    } catch (error) {
+      console.error('Failed to open note by id:', error);
+    }
+  }, [notes, openNote]);
+
   const closeEditor = useCallback(async () => {
     await flushSave(currentPersistParams);
     setEditingNoteId(null);
     resetSaveFeedback();
     clearBackupDraft();
   }, [clearBackupDraft, currentPersistParams, flushSave, resetSaveFeedback]);
+
+  useEffect(() => {
+    const handleOpenNote = (event: Event) => {
+      const customEvent = event as CustomEvent<{ noteId?: string }>;
+      const noteId = customEvent.detail?.noteId;
+      if (!noteId) {
+        return;
+      }
+
+      void openNoteById(noteId);
+    };
+
+    window.addEventListener(MANAGER_OPEN_NOTE_EVENT, handleOpenNote as EventListener);
+    return () => window.removeEventListener(MANAGER_OPEN_NOTE_EVENT, handleOpenNote as EventListener);
+  }, [openNoteById]);
 
   const handleDraftChange = (field: 'title' | 'content' | 'tags', value: string) => {
     if (!editingNoteId) {
