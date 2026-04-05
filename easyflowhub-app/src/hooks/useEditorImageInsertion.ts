@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { readFile } from '@tauri-apps/plugin-fs';
-import { saveImage } from '../lib/tauri/notes';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { saveImage, saveImageFromPath } from '../lib/tauri/notes';
 import { insertSnippetAtCursor, type TextSelectionUpdate } from '../lib/editorTransforms';
+import { buildShortAssetSrc } from '../lib/imageAssets';
 
 interface UseEditorImageInsertionOptions {
   value: string;
   onChange: (update: TextSelectionUpdate) => void;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  onImageSaved?: (image: { altText: string; filename: string; path: string }) => void;
+  nativeWindowDropEnabled?: boolean;
 }
 
 export function useEditorImageInsertion(options: UseEditorImageInsertionOptions) {
-  const { value, onChange, textareaRef } = options;
+  const { value, onChange, textareaRef, onImageSaved, nativeWindowDropEnabled = false } = options;
   const [isDragActive, setIsDragActive] = useState(false);
   const [insertResult, setInsertResult] = useState<string | null>(null);
   const dragDepthRef = useRef(0);
+  const lastNativeDropRef = useRef<{ path: string; at: number } | null>(null);
 
   const hasImageFile = useCallback((files: FileList | File[]) => {
     return Array.from(files).some((item) => item.type.startsWith('image/'));
@@ -38,11 +41,42 @@ export function useEditorImageInsertion(options: UseEditorImageInsertionOptions)
         return;
       }
 
-      onChange(
-        insertSnippetAtCursor(value, textarea.selectionStart, textarea.selectionEnd, snippet)
-      );
+      onChange(insertSnippetAtCursor(value, textarea.selectionStart, textarea.selectionEnd, snippet));
     },
     [onChange, textareaRef, value]
+  );
+
+  const handleSavedImage = useCallback(
+    (filename: string, path: string, altText: string) => {
+      if (onImageSaved) {
+        onImageSaved({ altText, filename, path });
+        return;
+      }
+
+      const prefix = value.length === 0 || value.endsWith('\n') ? '' : '\n';
+      const assetUrl = buildShortAssetSrc(filename);
+      insertAtCursor(`${prefix}![${altText}](${assetUrl})\n`);
+    },
+    [insertAtCursor, onImageSaved, value]
+  );
+
+  const insertImageFromPath = useCallback(
+    async (filePath: string) => {
+      try {
+        setInsertResult(`保存图片中...`);
+        const result = await saveImageFromPath(filePath);
+        const altText = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') || 'image';
+        handleSavedImage(result.filename, result.path, altText);
+        setInsertResult(`✅ 图片已插入`);
+        setTimeout(() => setInsertResult(null), 2000);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('Failed to insert image from path:', error);
+        setInsertResult(`❌ 失败: ${errorMsg}`);
+        setTimeout(() => setInsertResult(null), 4000);
+      }
+    },
+    [handleSavedImage]
   );
 
   const insertImageFile = useCallback(
@@ -59,10 +93,7 @@ export function useEditorImageInsertion(options: UseEditorImageInsertionOptions)
         setInsertResult(`保存图片中...`);
         const result = await saveImage(dataUrl);
         const altText = file.name.replace(/\.[^.]+$/, '') || 'image';
-        const prefix = value.length === 0 || value.endsWith('\n') ? '' : '\n';
-        // 使用 asset 协议的相对路径格式，避免 Windows 路径编码问题
-        const assetUrl = `asset://localhost/assets/${result.filename}`;
-        insertAtCursor(`${prefix}![${altText}](${assetUrl})\n`);
+        handleSavedImage(result.filename, result.path, altText);
         setInsertResult(`✅ 图片已插入`);
         setTimeout(() => setInsertResult(null), 2000);
       } catch (error) {
@@ -72,85 +103,49 @@ export function useEditorImageInsertion(options: UseEditorImageInsertionOptions)
         setTimeout(() => setInsertResult(null), 4000);
       }
     },
-    [insertAtCursor, value]
-  );
-
-  const insertImageFromPath = useCallback(
-    async (filePath: string) => {
-      try {
-        setInsertResult(`读取文件...`);
-        const fileData = await readFile(filePath);
-        const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
-        const mimeTypes: Record<string, string> = {
-          png: 'image/png',
-          jpg: 'image/jpeg',
-          jpeg: 'image/jpeg',
-          gif: 'image/gif',
-          webp: 'image/webp',
-          bmp: 'image/bmp',
-          svg: 'image/svg+xml',
-        };
-        const mimeType = mimeTypes[ext] || 'image/png';
-        const base64 = btoa(
-          new Uint8Array(fileData).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
-        const dataUrl = `data:${mimeType};base64,${base64}`;
-
-        setInsertResult(`保存图片中...`);
-        const result = await saveImage(dataUrl);
-        const altText = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') || 'image';
-        const prefix = value.length === 0 || value.endsWith('\n') ? '' : '\n';
-        // 使用 asset 协议的相对路径格式，避免 Windows 路径编码问题
-        const assetUrl = `asset://localhost/assets/${result.filename}`;
-        insertAtCursor(`${prefix}![${altText}](${assetUrl})\n`);
-        setInsertResult(`✅ 图片已插入`);
-        setTimeout(() => setInsertResult(null), 2000);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error('Failed to insert image from path:', error);
-        setInsertResult(`❌ 失败: ${errorMsg}`);
-        setTimeout(() => setInsertResult(null), 4000);
-      }
-    },
-    [insertAtCursor, value]
+    [handleSavedImage]
   );
 
   useEffect(() => {
-    let unlistenDragDrop: (() => void) | undefined;
-    let unlistenDragEnter: (() => void) | undefined;
-    let unlistenDragLeave: (() => void) | undefined;
+    if (!nativeWindowDropEnabled) {
+      return;
+    }
 
-    const setupDragDropListener = async () => {
-      unlistenDragEnter = await listen('tauri://drag-enter', () => {
-        setIsDragActive(true);
-      });
+    let unlisten: (() => void) | undefined;
 
-      unlistenDragLeave = await listen('tauri://drag-leave', () => {
+    const setupDragDrop = async () => {
+      const webview = getCurrentWebview();
+      unlisten = await webview.onDragDropEvent((event) => {
+        if (event.payload.type === 'enter' || event.payload.type === 'over') {
+          setIsDragActive(true);
+          return;
+        }
+
+        if (event.payload.type === 'leave') {
+          resetDragState();
+          return;
+        }
+
         resetDragState();
-      });
-
-      const unlisten = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
-        resetDragState();
-        const { paths } = event.payload;
-        const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
-
-        for (const path of paths) {
+        for (const path of event.payload.paths) {
           const ext = path.split('.').pop()?.toLowerCase() || '';
-          if (imageExtensions.includes(ext)) {
-            await insertImageFromPath(path);
+          if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) {
+            const now = Date.now();
+            const lastDrop = lastNativeDropRef.current;
+            if (lastDrop && lastDrop.path === path && now - lastDrop.at < 800) {
+              continue;
+            }
+            lastNativeDropRef.current = { path, at: now };
+            void insertImageFromPath(path);
+            break;
           }
         }
       });
-      unlistenDragDrop = unlisten;
     };
 
-    void setupDragDropListener();
-    return () => {
-      unlistenDragDrop?.();
-      unlistenDragEnter?.();
-      unlistenDragLeave?.();
-    };
-  }, [insertImageFromPath, resetDragState]);
+    void setupDragDrop();
+    return () => unlisten?.();
+  }, [insertImageFromPath, nativeWindowDropEnabled, resetDragState]);
 
   return {
     isDragActive,

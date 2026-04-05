@@ -1,5 +1,6 @@
 import type { Note } from '../../../../types/note';
 import { deriveDisplayTitle, truncateTitle } from '../../../../lib/noteParser';
+import { summarizeContentWithoutImageMarkdown } from '../../../../lib/imageAssets';
 import { InlineTitleEditor } from './InlineTitleEditor';
 
 interface GridViewProps {
@@ -60,7 +61,7 @@ export function GridView(props: GridViewProps) {
             </div>
             <div className="mt-3 rounded-[12px] bg-[rgba(248,243,234,0.46)] px-3 py-3">
               <p className="line-clamp-4 text-[14px] leading-7 text-[color:var(--manager-ink-soft)]">
-                {note.content || '留白也会被妥善保存。'}
+                {summarizeContentWithoutImageMarkdown(note.content) || '留白也会被妥善保存。'}
               </p>
             </div>
             <div className="mt-auto flex items-end justify-between gap-3 pt-4">

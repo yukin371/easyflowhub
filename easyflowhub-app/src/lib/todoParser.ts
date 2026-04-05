@@ -1,13 +1,14 @@
 /**
  * TodoParser - 从 Markdown 内容中提取 checkbox 待办事项
- * 支持 - [ ], - [x], * [ ], * [x] 语法
+ * 支持 - [ ], * [ ], 1. [ ], 1. [x] 语法
  * 完成项可带 @done:ISO-timestamp 标记
  */
 
 import type { TodoItem } from '../types/todo';
+import { deriveDisplayTitle } from './noteParser';
 
-/** 匹配 markdown checkbox 行 (支持 - 和 * 两种列表符号) */
-const TODO_REGEX = /^(\s*)[-*]\s*\[([ xX])\]\s*(.+)$/;
+/** 匹配 markdown checkbox 行 (支持无序和有序列表符号) */
+const TODO_REGEX = /^(\s*)((?:[-*])|(?:\d+\.))\s*\[([ xX])\]\s*(.+)$/;
 /** 匹配行尾的 @done:ISO-timestamp */
 const DONE_TIMESTAMP_REGEX = /\s*@done:(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)\s*$/;
 
@@ -21,8 +22,8 @@ export function extractTodos(content: string, noteId: string, noteTitle: string)
   for (let i = 0; i < lines.length; i++) {
     const match = TODO_REGEX.exec(lines[i]);
     if (match) {
-      const checked = match[2].toLowerCase() === 'x';
-      let text = match[3].trim();
+      const checked = match[3].toLowerCase() === 'x';
+      let text = match[4].trim();
       let checkedAt: string | null = null;
 
       // 从已完成项中提取 @done:timestamp
@@ -58,7 +59,7 @@ export function extractAllTodos(
   notes: Array<{ id: string; title: string; content: string }>
 ): TodoItem[] {
   return notes.flatMap((note) =>
-    extractTodos(note.content, note.id, note.title || '无标题')
+    extractTodos(note.content, note.id, deriveDisplayTitle(note.title, note.content) || '无标题')
   );
 }
 
@@ -76,8 +77,9 @@ export function toggleTodoInContent(content: string, lineIndex: number): string 
   if (!match) return null;
 
   const indent = match[1];
-  const currentChecked = match[2].toLowerCase() === 'x';
-  let text = match[3];
+  const marker = match[2];
+  const currentChecked = match[3].toLowerCase() === 'x';
+  let text = match[4];
 
   const newChecked = !currentChecked;
 
@@ -86,13 +88,42 @@ export function toggleTodoInContent(content: string, lineIndex: number): string 
     // 先移除可能已有的旧 timestamp
     text = text.replace(DONE_TIMESTAMP_REGEX, '').trim();
     const timestamp = new Date().toISOString();
-    lines[lineIndex] = `${indent}- [x] ${text} @done:${timestamp}`;
+    lines[lineIndex] = `${indent}${marker} [x] ${text} @done:${timestamp}`;
   } else {
     // 取消打勾：移除 @done:timestamp
     text = text.replace(DONE_TIMESTAMP_REGEX, '').trim();
-    lines[lineIndex] = `${indent}- [ ] ${text}`;
+    lines[lineIndex] = `${indent}${marker} [ ] ${text}`;
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * 更新指定 todo 行的文本内容
+ * 保留原有的列表符号、完成状态和 @done 时间戳
+ */
+export function updateTodoTextInContent(
+  content: string,
+  lineIndex: number,
+  nextText: string
+): string | null {
+  const lines = content.split('\n');
+  if (lineIndex < 0 || lineIndex >= lines.length) return null;
+
+  const match = TODO_REGEX.exec(lines[lineIndex]);
+  if (!match) return null;
+
+  const normalizedText = nextText.trim();
+  if (!normalizedText) return null;
+
+  const indent = match[1];
+  const marker = match[2];
+  const checked = match[3].toLowerCase() === 'x';
+  const text = match[4];
+  const checkedAt = checked ? DONE_TIMESTAMP_REGEX.exec(text)?.[1] ?? null : null;
+  const doneSuffix = checkedAt ? ` @done:${checkedAt}` : '';
+
+  lines[lineIndex] = `${indent}${marker} [${checked ? 'x' : ' '}] ${normalizedText}${doneSuffix}`;
   return lines.join('\n');
 }
 

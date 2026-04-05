@@ -1,5 +1,6 @@
 import type { Note } from '../../../../types/note';
 import { deriveDisplayTitle, truncateTitle } from '../../../../lib/noteParser';
+import { summarizeContentWithoutImageMarkdown } from '../../../../lib/imageAssets';
 import { InlineTitleEditor } from './InlineTitleEditor';
 
 interface ListViewProps {
@@ -47,7 +48,7 @@ export function ListView(props: ListViewProps) {
                 />
               </div>
               <p className="mt-4 line-clamp-2 text-sm leading-7 text-[color:var(--manager-ink-soft)]">
-                {note.content || '这是一条空白笔记，点击后进入全屏编辑。'}
+                {summarizeContentWithoutImageMarkdown(note.content) || '这是一条空白笔记，点击后进入全屏编辑。'}
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 {splitTags(note.tags).map((tag) => (

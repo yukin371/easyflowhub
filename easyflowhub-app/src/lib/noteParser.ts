@@ -11,8 +11,12 @@ export interface ParsedNote {
   cleanContent: string;
 }
 
+export function normalizeStoredTitle(title: string): string {
+  return title.trim();
+}
+
 export function deriveDisplayTitle(title: string, content: string): string {
-  const normalizedTitle = title.trim();
+  const normalizedTitle = normalizeStoredTitle(title);
   if (normalizedTitle) {
     return normalizedTitle;
   }

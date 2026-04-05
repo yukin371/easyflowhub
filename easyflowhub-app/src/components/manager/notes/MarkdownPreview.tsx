@@ -4,7 +4,9 @@
  */
 
 import { Fragment } from 'react';
-import Markdown from 'markdown-to-jsx';
+import { useEffect, useState } from 'react';
+import MDEditor from '@uiw/react-md-editor';
+import { normalizeMarkdownAssetSources, resolveMarkdownAssetSources } from '../../../lib/imageAssets';
 
 interface MarkdownPreviewProps {
   content: string;
@@ -72,7 +74,26 @@ function parseSegments(content: string): Segment[] {
 }
 
 export function MarkdownPreview({ content, onToggleCheckbox }: MarkdownPreviewProps) {
-  const segments = parseSegments(content);
+  const normalizedContent = normalizeMarkdownAssetSources(content);
+  const [resolvedContent, setResolvedContent] = useState(normalizedContent);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveContent = async () => {
+      const next = await resolveMarkdownAssetSources(normalizedContent);
+      if (!cancelled) {
+        setResolvedContent(next);
+      }
+    };
+
+    void resolveContent();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedContent]);
+
+  const segments = parseSegments(resolvedContent);
 
   return (
     <div className="font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-[15px] leading-8 text-[color:var(--manager-ink)]">
@@ -105,7 +126,7 @@ export function MarkdownPreview({ content, onToggleCheckbox }: MarkdownPreviewPr
             key={`md-${idx}`}
             className="prose prose-sm max-w-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:text-[color:var(--manager-ink-strong)] [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-[color:var(--manager-ink-strong)] [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-[color:var(--manager-ink-strong)] [&_code]:rounded [&_code]:bg-black/5 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-sm [&_pre]:rounded-xl [&_pre]:bg-black/5 [&_pre]:p-4 [&_blockquote]:border-l-2 [&_blockquote]:border-[color:var(--manager-accent)] [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-[color:var(--manager-ink-soft)] [&_a]:text-[color:var(--manager-accent)] [&_a]:underline [&_img]:rounded-lg [&_img]:shadow-sm [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_hr]:border-[color:var(--manager-border)]"
           >
-            <Markdown>{seg.text}</Markdown>
+            <MDEditor.Markdown source={seg.text} style={{ backgroundColor: 'transparent', color: 'inherit' }} />
           </div>
         );
       })}

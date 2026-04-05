@@ -16,6 +16,7 @@ import type { AppSettings } from '../../types/settings';
 import { moduleRegistry } from '../../modules';
 import type { FeatureModule } from '../../modules';
 import { isEnabled as isAutostartEnabled, enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
+import { SettingsSectionCard } from './shared/SettingsSectionCard';
 
 type SettingsSection = 'general' | 'modules' | 'shortcuts' | 'quickNote' | 'todo' | 'trash' | 'editor';
 
@@ -253,15 +254,11 @@ export function SettingsPanel() {
             ref={(el) => { sectionRefs.current.general = el; }}
             className="mb-8"
           >
-            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
-              <div className="mb-4">
-                <p className="manager-kicker">General</p>
-                <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">通用</h3>
-              </div>
-              <p className="mb-4 text-sm text-[color:var(--manager-ink-soft)]">
-                应用启动行为等基础配置。
-              </p>
-
+            <SettingsSectionCard
+              kicker="General"
+              title="通用"
+              description="应用启动行为等基础配置。"
+            >
               <div className="space-y-2">
                 <div className="flex items-center justify-between rounded-[18px] border border-[color:var(--manager-border)] bg-white/68 px-4 py-3">
                   <div className="flex items-center gap-3">
@@ -305,7 +302,7 @@ export function SettingsPanel() {
                   </button>
                 </div>
               </div>
-            </section>
+            </SettingsSectionCard>
           </div>
 
           {/* 功能模块设置 */}
@@ -313,15 +310,11 @@ export function SettingsPanel() {
             ref={(el) => { sectionRefs.current.modules = el; }}
             className="mb-8"
           >
-            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
-              <div className="mb-4">
-                <p className="manager-kicker">Modules</p>
-                <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">功能模块</h3>
-              </div>
-              <p className="mb-4 text-sm text-[color:var(--manager-ink-soft)]">
-                启用或禁用应用功能模块。禁用的模块不会显示在侧边栏中。
-              </p>
-
+            <SettingsSectionCard
+              kicker="Modules"
+              title="功能模块"
+              description="启用或禁用应用功能模块。禁用的模块不会显示在侧边栏中。"
+            >
               <div className="space-y-2">
                 {toggleableModules.map((module) => {
                   const isEnabled = moduleRegistry.isEnabled(module.id);
@@ -367,7 +360,7 @@ export function SettingsPanel() {
                   所有模块已启用。
                 </p>
               )}
-            </section>
+            </SettingsSectionCard>
           </div>
 
           {/* 快捷键设置 */}
@@ -439,13 +432,11 @@ export function SettingsPanel() {
             ref={(el) => { sectionRefs.current.quickNote = el; }}
             className="mb-8"
           >
-            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
-              <p className="manager-kicker">Quick Note</p>
-              <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">快速笔记窗口</h3>
-              <p className="mt-2 text-sm text-[color:var(--manager-ink-soft)]">
-                新建快速笔记窗口的默认尺寸。
-              </p>
-
+            <SettingsSectionCard
+              kicker="Quick Note"
+              title="快速笔记窗口"
+              description="新建快速笔记窗口的默认尺寸。"
+            >
               <div className="mt-6 grid gap-4 sm:grid-cols-2">
                 <div className="rounded-[18px] border border-[color:var(--manager-border)] bg-white/68 p-4">
                   <label className="block text-sm font-medium text-[color:var(--manager-ink-strong)]">
@@ -510,7 +501,7 @@ export function SettingsPanel() {
                   {settingsSaveState === 'saved' ? '✓ 已保存' : '○ 未保存'}
                 </span>
               </div>
-            </section>
+            </SettingsSectionCard>
           </div>
 
           {/* 待办设置 */}
@@ -518,13 +509,11 @@ export function SettingsPanel() {
             ref={(el) => { sectionRefs.current.todo = el; }}
             className="mb-8"
           >
-            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
-              <p className="manager-kicker">Todos</p>
-              <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">待办</h3>
-              <p className="mt-2 text-sm text-[color:var(--manager-ink-soft)]">
-                已完成的待办会在保留期内以删除线显示，方便确认和撤销误操作。
-              </p>
-
+            <SettingsSectionCard
+              kicker="Todos"
+              title="待办"
+              description="已完成的待办会在保留期内以删除线显示，方便确认和撤销误操作。"
+            >
               <div className="mt-6">
                 <div className="rounded-[18px] border border-[color:var(--manager-border)] bg-white/68 p-4">
                   <label className="block text-sm font-medium text-[color:var(--manager-ink-strong)]">
@@ -567,7 +556,7 @@ export function SettingsPanel() {
                   {settingsSaveState === 'saved' ? '✓ 已保存' : '○ 未保存'}
                 </span>
               </div>
-            </section>
+            </SettingsSectionCard>
           </div>
 
           {/* 回收站设置 */}
@@ -575,13 +564,11 @@ export function SettingsPanel() {
             ref={(el) => { sectionRefs.current.trash = el; }}
             className="mb-8"
           >
-            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
-              <p className="manager-kicker">Trash</p>
-              <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">回收站</h3>
-              <p className="mt-2 text-sm text-[color:var(--manager-ink-soft)]">
-                回收站中的笔记在指定天数后将自动永久删除。
-              </p>
-
+            <SettingsSectionCard
+              kicker="Trash"
+              title="回收站"
+              description="回收站中的笔记在指定天数后将自动永久删除。"
+            >
               <div className="mt-6">
                 <div className="rounded-[18px] border border-[color:var(--manager-border)] bg-white/68 p-4">
                   <label className="block text-sm font-medium text-[color:var(--manager-ink-strong)]">
@@ -612,7 +599,7 @@ export function SettingsPanel() {
                   {settingsSaveState === 'saved' ? '✓ 已保存' : '○ 未保存'}
                 </span>
               </div>
-            </section>
+            </SettingsSectionCard>
           </div>
 
           {/* 编辑器设置 */}
@@ -620,13 +607,11 @@ export function SettingsPanel() {
             ref={(el) => { sectionRefs.current.editor = el; }}
             className="mb-8"
           >
-            <section className="rounded-[24px] border border-[color:var(--manager-border)] bg-white/62 p-5">
-              <p className="manager-kicker">Editor</p>
-              <h3 className="mt-2 text-lg text-[color:var(--manager-ink-strong)]">编辑器</h3>
-              <p className="mt-2 text-sm text-[color:var(--manager-ink-soft)]">
-                编辑器保留的撤销步数与光标可见性。保持轻量，不引入复杂编辑器内核。
-              </p>
-
+            <SettingsSectionCard
+              kicker="Editor"
+              title="编辑器"
+              description="编辑器保留的撤销步数与光标可见性。保持轻量，不引入复杂编辑器内核。"
+            >
               <div className="mt-6 grid gap-4 lg:grid-cols-2">
                 <div className="rounded-[18px] border border-[color:var(--manager-border)] bg-white/68 p-4">
                   <label className="block text-sm font-medium text-[color:var(--manager-ink-strong)]">
@@ -723,7 +708,7 @@ export function SettingsPanel() {
                   {settingsSaveState === 'saved' ? '✓ 已保存' : '○ 未保存'}
                 </span>
               </div>
-            </section>
+            </SettingsSectionCard>
           </div>
         </div>
       </div>

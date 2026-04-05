@@ -38,7 +38,7 @@ function matchesQueryToken(note: Note, token: string): boolean {
   }
 
   const noteTags = splitTags(note.tags).map((tag) => tag.toLowerCase());
-  const title = note.title.toLowerCase();
+  const title = deriveDisplayTitle(note.title, note.content).toLowerCase();
   const content = note.content.toLowerCase();
 
   if (normalizedToken.startsWith('tag:') || normalizedToken.startsWith('#')) {
@@ -316,7 +316,7 @@ export function NotesPanel() {
           note.id === editingNoteId
             ? {
                 ...note,
-                title: value.trim() || deriveDisplayTitle(value, draftContent),
+                title: value,
                 updated_at: new Date().toISOString(),
               }
             : note
@@ -333,7 +333,7 @@ export function NotesPanel() {
           note.id === editingNoteId
             ? {
                 ...note,
-                title: draftTitle.trim() || deriveDisplayTitle(draftTitle, value),
+                title: draftTitle,
                 content: value,
                 updated_at: new Date().toISOString(),
               }

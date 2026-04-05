@@ -151,3 +151,7 @@ export interface SaveImageResponse {
 export async function saveImage(dataUrl: string): Promise<SaveImageResponse> {
   return await invoke('save_image', { dataUrl });
 }
+
+export async function saveImageFromPath(filePath: string): Promise<SaveImageResponse> {
+  return await invoke('save_image_from_path', { filePath });
+}

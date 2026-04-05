@@ -8,6 +8,8 @@ import { EditorTextarea } from '../../shared/EditorTextarea';
 import { StatusBar } from './StatusBar';
 import { deriveDisplayTitle } from '../../../lib/noteParser';
 import { MarkdownPreview } from './MarkdownPreview';
+import { applyMarkdownCompletion } from '../../../lib/markdownEditing';
+import { toggleTodoInContent } from '../../../lib/todoParser';
 
 type EditorMode = 'edit' | 'preview';
 
@@ -169,155 +171,11 @@ export function NoteEditor(props: NoteEditorProps) {
             value={draftContent}
             onChange={(event) => handleContentChangeWithAutoComplete(event.target.value)}
             onKeyDown={(event) => {
-              const textarea = event.currentTarget;
-              const { selectionStart, selectionEnd, value } = textarea;
-
-              // Enter key: list auto-continuation
-              if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-                const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
-                const currentLine = value.slice(lineStart, selectionStart);
-
-                // Match todo checkbox: "- [ ] text" or "- [x] text" → continue with "- [ ] "
-                const todoMatch = /^(\s*)([-*])\s*\[[ xX]\]\s*(.*)$/.exec(currentLine);
-                if (todoMatch) {
-                  const [, indent, bullet, text] = todoMatch;
-                  // If the line is empty (just the bullet), clear it and stop list
-                  if (!text.trim()) {
-                    event.preventDefault();
-                    const before = value.slice(0, lineStart);
-                    const after = value.slice(selectionStart);
-                    onContentChange(before + '\n' + after);
-                    requestAnimationFrame(() => {
-                      const pos = before.length + 1;
-                      textarea.selectionStart = pos;
-                      textarea.selectionEnd = pos;
-                    });
-                    return;
-                  }
-                  // Continue list with new checkbox
-                  event.preventDefault();
-                  const before = value.slice(0, selectionStart);
-                  const after = value.slice(selectionStart);
-                  const newLine = `\n${indent}${bullet} [ ] `;
-                  onContentChange(before + newLine + after);
-                  requestAnimationFrame(() => {
-                    const pos = before.length + newLine.length;
-                    textarea.selectionStart = pos;
-                    textarea.selectionEnd = pos;
-                  });
-                  return;
-                }
-
-                // Match unordered list: "- text" or "* text" → continue with "- "
-                const ulMatch = /^(\s*)([-*])\s+(.*)$/.exec(currentLine);
-                if (ulMatch) {
-                  const [, indent, bullet, text] = ulMatch;
-                  if (!text.trim()) {
-                    event.preventDefault();
-                    const before = value.slice(0, lineStart);
-                    const after = value.slice(selectionStart);
-                    onContentChange(before + '\n' + after);
-                    requestAnimationFrame(() => {
-                      const pos = before.length + 1;
-                      textarea.selectionStart = pos;
-                      textarea.selectionEnd = pos;
-                    });
-                    return;
-                  }
-                  event.preventDefault();
-                  const before = value.slice(0, selectionStart);
-                  const after = value.slice(selectionStart);
-                  const newLine = `\n${indent}${bullet} `;
-                  onContentChange(before + newLine + after);
-                  requestAnimationFrame(() => {
-                    const pos = before.length + newLine.length;
-                    textarea.selectionStart = pos;
-                    textarea.selectionEnd = pos;
-                  });
-                  return;
-                }
-
-                // Match ordered list: "1. text" → continue with "2. "
-                const olMatch = /^(\s*)(\d+)\.\s+(.*)$/.exec(currentLine);
-                if (olMatch) {
-                  const [, indent, numStr, text] = olMatch;
-                  if (!text.trim()) {
-                    event.preventDefault();
-                    const before = value.slice(0, lineStart);
-                    const after = value.slice(selectionStart);
-                    onContentChange(before + '\n' + after);
-                    requestAnimationFrame(() => {
-                      const pos = before.length + 1;
-                      textarea.selectionStart = pos;
-                      textarea.selectionEnd = pos;
-                    });
-                    return;
-                  }
-                  event.preventDefault();
-                  const before = value.slice(0, selectionStart);
-                  const after = value.slice(selectionStart);
-                  const nextNum = parseInt(numStr, 10) + 1;
-                  const newLine = `\n${indent}${nextNum}. `;
-                  onContentChange(before + newLine + after);
-                  requestAnimationFrame(() => {
-                    const pos = before.length + newLine.length;
-                    textarea.selectionStart = pos;
-                    textarea.selectionEnd = pos;
-                  });
-                  return;
-                }
-              }
-
-              // Bracket auto-completion
-              const pairs: Record<string, string> = {
-                '[': ']',
-                '(': ')',
-                '{': '}',
-                '`': '`',
-              };
-
-              const openChar = event.key;
-              if (pairs[openChar]) {
-                event.preventDefault();
-                const closeChar = pairs[openChar];
-                const before = value.slice(0, selectionStart);
-                const selected = value.slice(selectionStart, selectionEnd);
-                const after = value.slice(selectionEnd);
-
-                // Special: typing `- [` at line start → `- [ ] `
-                const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
-                const beforeCursorOnLine = value.slice(lineStart, selectionStart);
-                if (openChar === '[' && /^(\s*)(-|\*)\s?$/.test(beforeCursorOnLine)) {
-                  const newContent = before + '[ ] ' + after;
-                  onContentChange(newContent);
-                  // Set cursor after the space
-                  requestAnimationFrame(() => {
-                    textarea.selectionStart = selectionStart + 4;
-                    textarea.selectionEnd = selectionStart + 4;
-                  });
-                  return;
-                }
-
-                const newContent = before + openChar + selected + closeChar + after;
-                onContentChange(newContent);
-                // Place cursor between brackets (or after selection)
-                const cursorPos = selectionStart + 1 + selected.length;
-                requestAnimationFrame(() => {
-                  textarea.selectionStart = selectionStart + 1;
-                  textarea.selectionEnd = cursorPos;
-                });
-                return;
-              }
-
-              // Auto-skip closing bracket
-              if (event.key === ']' || event.key === ')' || event.key === '}') {
-                if (selectionStart === selectionEnd && value[selectionStart] === event.key) {
-                  event.preventDefault();
-                  textarea.selectionStart = selectionStart + 1;
-                  textarea.selectionEnd = selectionStart + 1;
-                  return;
-                }
-              }
+              applyMarkdownCompletion({
+                event,
+                value: draftContent,
+                onChange: onContentChange,
+              });
             }}
             onPaste={onPasteImage}
             onDragEnter={onDragEnterImage}
@@ -330,15 +188,10 @@ export function NoteEditor(props: NoteEditorProps) {
           <MarkdownPreview
             content={draftContent}
             onToggleCheckbox={(lineIndex) => {
-              const lines = draftContent.split('\n');
-              const line = lines[lineIndex];
-              if (!line) return;
-              const todoMatch = /^(\s*)([-*])\s*\[([ xX])\]\s*(.+)$/.exec(line);
-              if (!todoMatch) return;
-              const [, indent, bullet, checked, text] = todoMatch;
-              const newChecked = checked.toLowerCase() === 'x' ? ' ' : 'x';
-              lines[lineIndex] = `${indent}${bullet} [${newChecked}] ${text}`;
-              onContentChange(lines.join('\n'));
+              const updated = toggleTodoInContent(draftContent, lineIndex);
+              if (updated !== null) {
+                onContentChange(updated);
+              }
             }}
           />
         )}

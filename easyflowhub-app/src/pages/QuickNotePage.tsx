@@ -5,11 +5,11 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { closeAllNoteWindows, createNote, getNote, listNotes, toggleNoteWindowsVisibility } from '../lib/tauri/notes';
 import { deriveDisplayTitle, formatNoteForDisplay } from '../lib/noteParser';
 import { buildPersistParams } from '../lib/notePersistence';
 import type { Note } from '../types/note';
-import { listen } from '@tauri-apps/api/event';
 import { EditorTextarea } from '../components/shared/EditorTextarea';
 import { useShortcutEngine } from '../hooks/useShortcutEngine';
 import { useAutoSave } from '../hooks/useAutoSave';
@@ -18,6 +18,12 @@ import { useHistory } from '../hooks/useHistory';
 import { useEditorImageInsertion } from '../hooks/useEditorImageInsertion';
 import { matchesShortcutEvent } from '../types/shortcut';
 import { applyTextareaSelectionUpdate, focusTextareaAtEnd } from '../lib/editorSelection';
+import { applyMarkdownCompletion } from '../lib/markdownEditing';
+import {
+  appendAttachedImageAssets,
+  extractAttachedImageAssets,
+  resolveAssetFilenameToUrl,
+} from '../lib/imageAssets';
 
 const BG_COLOR = '#FAF8F0';
 const AUTOSAVE_DELAY = 900;
@@ -28,13 +34,6 @@ function dedupeNotes(notes: Note[]): Note[] {
     map.set(note.id, note);
   }
   return Array.from(map.values());
-}
-
-function extractImageLinks(content: string): string[] {
-  const matches = content.match(/!\[[^\]]*]\((.*?)\)/g) ?? [];
-  return matches
-    .map((match) => match.match(/!\[[^\]]*]\((.*?)\)/)?.[1]?.trim() ?? '')
-    .filter(Boolean);
 }
 
 function isContinueCandidate(note: Note): boolean {
@@ -63,6 +62,7 @@ export function QuickNotePage() {
   const [undoSteps, setUndoSteps] = useState(100);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [lastVisibleOpacity, setLastVisibleOpacity] = useState(1);
+  const [attachedImages, setAttachedImages] = useState<Array<{ alt: string; filename: string }>>([]);
 
   // 使用 useHistory 管理内容，支持撤销/重做
   const {
@@ -99,9 +99,14 @@ export function QuickNotePage() {
     },
   });
 
+  const mergedEditorContent = useMemo(
+    () => appendAttachedImageAssets(displayContent, attachedImages),
+    [attachedImages, displayContent]
+  );
+
   const currentPersistParams = useMemo(() => {
-    return buildPersistParams(note?.id ?? null, displayContent);
-  }, [displayContent, note]);
+    return buildPersistParams(note?.id ?? null, mergedEditorContent, note?.title ?? '');
+  }, [mergedEditorContent, note]);
 
   const refreshRecentNotes = useCallback(async (preferredId?: string | null) => {
     try {
@@ -146,13 +151,28 @@ export function QuickNotePage() {
 
     flushHistory(); // 刷新历史记录
     try {
-      await flushSave(currentPersistParams);
-      await invoke('close_window');
+      if (currentPersistParams) {
+        await Promise.race([
+          flushSave(currentPersistParams),
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 350)),
+        ]);
+      }
+
+      try {
+        await getCurrentWindow().destroy();
+      } catch (primaryError) {
+        console.error('Primary quick note destroy failed, falling back to backend close:', primaryError);
+        await invoke('close_window');
+      }
     } catch (error) {
       console.error('Failed to close window:', error);
       isClosingRef.current = false;
     }
   }, [currentPersistParams, flushSave, flushHistory]);
+
+  const removeAttachedImage = useCallback((indexToRemove: number) => {
+    setAttachedImages((prev) => prev.filter((_, index) => index !== indexToRemove));
+  }, []);
 
   // 初始化笔记
   useEffect(() => {
@@ -167,16 +187,22 @@ export function QuickNotePage() {
         if (noteId) {
           const existingNote = await getNote(noteId);
           if (existingNote) {
+            const parsed = extractAttachedImageAssets(formatNoteForDisplay(existingNote));
             setNote(existingNote);
-            setDisplayContent(formatNoteForDisplay(existingNote), true); // skipHistory
+            setDisplayContent(parsed.textContent, true); // skipHistory
+            setAttachedImages(parsed.images);
             resetSaveFeedback();
           } else {
             const newNote = await createNote();
             setNote(newNote);
+            setDisplayContent('', true);
+            setAttachedImages([]);
           }
         } else {
           const newNote = await createNote();
           setNote(newNote);
+          setDisplayContent('', true);
+          setAttachedImages([]);
         }
       } catch (error) {
         console.error('Failed to initialize note:', error);
@@ -272,6 +298,10 @@ export function QuickNotePage() {
 
   useEffect(() => {
     const handleQuickNoteKeys = (event: KeyboardEvent) => {
+      if (!document.hasFocus()) {
+        return;
+      }
+
       // 撤销: Ctrl+Z
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
         // 只在不是 switcher 打开时处理
@@ -348,28 +378,6 @@ export function QuickNotePage() {
     scheduleSave(currentPersistParams);
   }, [currentPersistParams, scheduleSave]);
 
-  // 窗口关闭事件
-  useEffect(() => {
-    let unlistenFn: (() => void) | undefined;
-
-    const setupListener = async () => {
-      const unlisten = await listen('tauri://close-requested', async (event: any) => {
-        if (isClosingRef.current) {
-          return;
-        }
-        const payload = event.payload as { preventDefault?: () => void };
-        if (payload?.preventDefault) {
-          payload.preventDefault();
-        }
-        await closeWindow();
-      });
-      unlistenFn = unlisten;
-    };
-
-    setupListener();
-    return () => unlistenFn?.();
-  }, [closeWindow]);
-
   // 透明度控制
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -408,6 +416,10 @@ export function QuickNotePage() {
     value: displayContent,
     textareaRef,
     onChange: applyShortcutContentChange,
+    nativeWindowDropEnabled: true,
+    onImageSaved: ({ altText, filename }) => {
+      setAttachedImages((prev) => [...prev, { alt: altText, filename }]);
+    },
   });
 
   const handleSwitchNote = useCallback(
@@ -424,8 +436,10 @@ export function QuickNotePage() {
           return;
         }
 
+        const parsed = extractAttachedImageAssets(formatNoteForDisplay(nextNote));
         setNote(nextNote);
-        setDisplayContent(formatNoteForDisplay(nextNote), true); // skipHistory
+        setDisplayContent(parsed.textContent, true); // skipHistory
+        setAttachedImages(parsed.images);
         clearHistory(); // 清空历史
         resetSaveFeedback();
         await refreshRecentNotes(nextNote.id);
@@ -442,7 +456,8 @@ export function QuickNotePage() {
       await flushSave(currentPersistParams);
       const nextNote = await createNote();
       setNote(nextNote);
-      setDisplayContent(formatNoteForDisplay(nextNote), true); // skipHistory
+      setDisplayContent('', true); // skipHistory
+      setAttachedImages([]);
       clearHistory(); // 清空历史
       resetSaveFeedback();
       await refreshRecentNotes(nextNote.id);
@@ -466,7 +481,29 @@ export function QuickNotePage() {
     });
   }, [recentNotes, switcherQuery]);
 
-  const imageLinks = useMemo(() => extractImageLinks(displayContent), [displayContent]);
+  const [resolvedImageLinks, setResolvedImageLinks] = useState<Array<{ src: string; alt: string }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveImages = async () => {
+      const next = await Promise.all(
+        attachedImages.map(async (image) => ({
+          alt: image.alt,
+          src: await resolveAssetFilenameToUrl(image.filename),
+        }))
+      );
+
+      if (!cancelled) {
+        setResolvedImageLinks(next);
+      }
+    };
+
+    void resolveImages();
+    return () => {
+      cancelled = true;
+    };
+  }, [attachedImages]);
   const isGhostMode = opacity <= 0.01;
   const quickHelpItems = [
     `切换笔记 ${shortcutConfig.quickSwitcher}`,
@@ -634,7 +671,11 @@ export function QuickNotePage() {
         >
           <span style={{ fontSize: 12, lineHeight: 1, marginTop: -2, letterSpacing: '0.06em' }}>•••</span>
         </button>
-        <button onClick={handleToggleAlwaysOnTop} style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: alwaysOnTop ? '#3b82f6' : '#9ca3af' }} title={alwaysOnTop ? '取消置顶' : '置顶'}>
+        <button
+          onClick={handleToggleAlwaysOnTop}
+          style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: alwaysOnTop ? '#3b82f6' : '#9ca3af' }}
+          title={alwaysOnTop ? '取消置顶' : '置顶'}
+        >
           <svg width="16" height="16" fill={alwaysOnTop ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
           </svg>
@@ -724,27 +765,60 @@ export function QuickNotePage() {
           {imageInsertion.insertResult}
         </div>
       ) : null}
-      <div style={{ flex: 1, padding: 8, paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {imageLinks.length > 0 ? (
-          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingInline: 4, paddingTop: 2 }}>
-            {imageLinks.slice(0, 8).map((src, index) => (
+      <div style={{ flex: 1, minHeight: 0, padding: 8, paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {resolvedImageLinks.length > 0 ? (
+          <div
+            style={{
+              flex: '0 0 auto',
+              display: 'flex',
+              gap: 8,
+              overflowX: 'auto',
+              paddingInline: 4,
+              paddingBottom: 2,
+            }}
+          >
+            {resolvedImageLinks.map(({ src, alt }, index) => (
               <div
-                key={`${src}-${index}`}
+                key={attachedImages[index]?.filename ?? `${src}-${index}`}
                 style={{
-                  width: 74,
-                  height: 54,
-                  flexShrink: 0,
-                  borderRadius: 12,
+                  position: 'relative',
+                  width: 72,
+                  minWidth: 72,
+                  height: 72,
+                  borderRadius: 14,
                   overflow: 'hidden',
-                  border: '1px solid rgba(109, 90, 62, 0.12)',
-                  background: 'rgba(255,255,255,0.68)',
+                  border: '1px solid rgba(109, 90, 62, 0.08)',
+                  background: 'rgba(255,255,255,0.72)',
+                  boxShadow: '0 6px 18px rgba(58, 48, 33, 0.06)',
                 }}
               >
                 <img
                   src={src}
-                  alt={`插入图片 ${index + 1}`}
+                  alt={alt || `插入图片 ${index + 1}`}
                   style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                 />
+                <button
+                  onClick={() => removeAttachedImage(index)}
+                  title="移除图片"
+                  style={{
+                    position: 'absolute',
+                    right: 4,
+                    top: 4,
+                    width: 18,
+                    height: 18,
+                    borderRadius: 999,
+                    border: 'none',
+                    background: 'rgba(255, 251, 245, 0.78)',
+                    color: '#6d5a3e',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    backdropFilter: 'blur(6px)',
+                  }}
+                >
+                  <span style={{ fontSize: 11, lineHeight: 1 }}>×</span>
+                </button>
               </div>
             ))}
           </div>
@@ -758,11 +832,14 @@ export function QuickNotePage() {
           aria-label="笔记内容"
           value={displayContent}
           onChange={(e) => setDisplayContent(e.target.value)}
+          onKeyDown={(event) => {
+            applyMarkdownCompletion({
+              event,
+              value: displayContent,
+              onChange: setDisplayContent,
+            });
+          }}
           onPaste={imageInsertion.handlePaste}
-          onDragEnter={imageInsertion.handleDragEnter}
-          onDragLeave={imageInsertion.handleDragLeave}
-          onDragOver={imageInsertion.handleDragOver}
-          onDrop={imageInsertion.handleDrop}
           placeholder=""
           autoFocus
         />

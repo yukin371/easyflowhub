@@ -36,7 +36,7 @@ async fn hide_window(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 async fn close_window(window: WebviewWindow) -> Result<(), String> {
-    window.close().map_err(|e: tauri::Error| e.to_string())
+    window.destroy().map_err(|e: tauri::Error| e.to_string())
 }
 
 fn compute_quick_note_position(
@@ -269,6 +269,8 @@ async fn toggle_note_windows_visibility(app: tauri::AppHandle) -> Result<bool, S
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let launched_from_autostart = std::env::args().any(|arg| arg == "--autostart");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
@@ -284,14 +286,19 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
-        .setup(|app| {
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--autostart"])
+                .app_name("EasyFlowHub")
+                .build(),
+        )
+        .setup(move |app| {
             // 监听 manager 窗口关闭事件，改为隐藏
             if let Some(window) = app.get_webview_window("manager") {
                 let window_clone = window.clone();
+                if launched_from_autostart {
+                    let _ = window.hide();
+                }
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         // 阻止默认关闭行为
@@ -463,6 +470,7 @@ pub fn run() {
             notes::delete_note,
             notes::search_notes,
             notes::save_image,
+            notes::save_image_from_path,
             notes::create_note,
             notes::toggle_pin_note,
             notes::trash_note,

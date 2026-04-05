@@ -3,7 +3,7 @@ import { saveNote } from '../lib/tauri/notes';
 import type { Note } from '../types/note';
 import type { SaveState } from '../components/manager/notes/types';
 import { getBackupKey, normalizeTags } from '../components/manager/notes/utils';
-import { deriveDisplayTitle, parseNoteContent } from '../lib/noteParser';
+import { normalizeStoredTitle, parseNoteContent } from '../lib/noteParser';
 
 interface PersistParams {
   noteId: string;
@@ -34,7 +34,7 @@ export function useAutoSave(options: UseAutoSaveOptions) {
 
       const updated = await saveNote({
         id: noteId,
-        title: deriveDisplayTitle(title, normalizedContent),
+        title: normalizeStoredTitle(title),
         content: normalizedContent,
         tags: normalizedTags,
       });

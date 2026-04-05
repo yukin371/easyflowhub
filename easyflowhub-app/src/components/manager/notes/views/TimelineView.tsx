@@ -1,5 +1,6 @@
 import type { Note } from '../../../../types/note';
 import { deriveDisplayTitle, truncateTitle } from '../../../../lib/noteParser';
+import { summarizeContentWithoutImageMarkdown } from '../../../../lib/imageAssets';
 import { InlineTitleEditor } from './InlineTitleEditor';
 
 interface TimelineViewProps {
@@ -37,7 +38,7 @@ export function TimelineView({ groups, onOpenNote, onRenameNote }: TimelineViewP
                       inputClassName="w-full rounded-[12px] border border-[color:var(--manager-accent)] bg-white px-3 py-2 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-xl text-[color:var(--manager-ink-strong)] outline-none"
                     />
                     <p className="mt-2 line-clamp-2 text-sm leading-7 text-[color:var(--manager-ink-soft)]">
-                      {note.content || '无正文'}
+                      {summarizeContentWithoutImageMarkdown(note.content) || '无正文'}
                     </p>
                   </div>
                   <div className="text-sm text-[color:var(--manager-ink-subtle)]">

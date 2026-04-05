@@ -2,7 +2,7 @@ use chrono::Utc;
 use rusqlite::{Connection, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use uuid::Uuid;
 
@@ -447,6 +447,37 @@ pub struct SaveImageResponse {
     pub path: String,
 }
 
+fn extension_from_path(path: &Path) -> &str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "png",
+        Some("jpg") | Some("jpeg") => "jpg",
+        Some("gif") => "gif",
+        Some("webp") => "webp",
+        Some("svg") => "svg",
+        Some("bmp") => "bmp",
+        _ => "png",
+    }
+}
+
+fn persist_image_bytes(app: &tauri::AppHandle, image_data: &[u8], ext: &str) -> Result<SaveImageResponse, String> {
+    let filename = format!("{}.{}", Uuid::new_v4(), ext);
+    let assets_dir = assets_path(app)?;
+    let file_path = assets_dir.join(&filename);
+
+    fs::write(&file_path, image_data).map_err(|e| format!("Failed to write image: {}", e))?;
+
+    Ok(SaveImageResponse {
+        ok: true,
+        filename,
+        path: file_path.to_string_lossy().to_string(),
+    })
+}
+
 /// Save an image to assets directory
 #[tauri::command]
 pub fn save_image(app: tauri::AppHandle, data_url: String) -> Result<SaveImageResponse, String> {
@@ -478,20 +509,17 @@ pub fn save_image(app: tauri::AppHandle, data_url: String) -> Result<SaveImageRe
     let image_data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
 
-    // Generate filename
-    let filename = format!("{}.{}", Uuid::new_v4(), ext);
+    persist_image_bytes(&app, &image_data, ext)
+}
 
-    // Save to assets directory
-    let assets_dir = assets_path(&app)?;
-    let file_path = assets_dir.join(&filename);
-
-    fs::write(&file_path, &image_data).map_err(|e| format!("Failed to write image: {}", e))?;
-
-    Ok(SaveImageResponse {
-        ok: true,
-        filename: filename.clone(),
-        path: file_path.to_string_lossy().to_string(),  // 返回完整路径
-    })
+/// Copy an image from a local filesystem path to assets directory
+#[tauri::command]
+pub fn save_image_from_path(app: tauri::AppHandle, file_path: String) -> Result<SaveImageResponse, String> {
+    let source_path = PathBuf::from(&file_path);
+    let image_data = fs::read(&source_path)
+        .map_err(|e| format!("Failed to read image from path {}: {}", file_path, e))?;
+    let ext = extension_from_path(&source_path);
+    persist_image_bytes(&app, &image_data, ext)
 }
 
 /// Create a new empty note

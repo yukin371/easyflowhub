@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { createFolderWidget } from '../../lib/tauri/widget';
 import { useAppearance } from '../../hooks/useAppearance';
+import { ManagerPanelHeader } from './shared/ManagerPanelHeader';
 
 interface ComponentInfo {
   id: string;
@@ -191,10 +192,11 @@ export function ComponentPreviewPanel() {
     <div className="flex h-full flex-col">
       {/* Header */}
       <header className="border-b border-[color:var(--manager-border)] px-6 py-4">
-        <h1 className="text-lg font-semibold text-[color:var(--manager-ink-strong)]">组件预览</h1>
-        <p className="mt-1 text-sm text-[color:var(--manager-ink-soft)]">
-          浏览可用的桌面组件和主题样式，点击卡片查看详情
-        </p>
+        <ManagerPanelHeader
+          kicker="Components"
+          title="组件预览"
+          description="浏览可用的桌面组件和主题样式，点击卡片查看详情"
+        />
       </header>
 
       {/* Category Filter */}

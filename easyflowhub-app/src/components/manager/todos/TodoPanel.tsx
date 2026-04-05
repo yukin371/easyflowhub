@@ -3,12 +3,19 @@
  * 展示所有笔记中的 checkbox 待办，支持筛选、勾选和跳转
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { listNotes, saveNote, getNote, createTodoCardWindow } from '../../../lib/tauri/notes';
 import { getSettings } from '../../../lib/tauri/settings';
-import { extractAllTodos, getTodoStats, toggleTodoInContent, isWithinRetention } from '../../../lib/todoParser';
+import {
+  extractAllTodos,
+  getTodoStats,
+  toggleTodoInContent,
+  isWithinRetention,
+  updateTodoTextInContent,
+} from '../../../lib/todoParser';
 import type { TodoItem, TodoFilter } from '../../../types/todo';
 import { MANAGER_ACTIVATED_EVENT } from '../ManagerPage';
+import { ManagerPanelHeader } from '../shared/ManagerPanelHeader';
 
 interface TodoPanelProps {
   onNavigateToNote?: (noteId: string) => void;
@@ -19,6 +26,9 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
   const [filter, setFilter] = useState<TodoFilter>('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
+  const [todoDraft, setTodoDraft] = useState('');
+  const [savingTodoId, setSavingTodoId] = useState<string | null>(null);
   const loadTodos = useCallback(async () => {
     try {
       setLoading(true);
@@ -62,11 +72,75 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
     }
   }, [loadTodos]);
 
+  const handleStartEdit = useCallback((todo: TodoItem) => {
+    setEditingTodoId(todo.id);
+    setTodoDraft(todo.text);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingTodoId(null);
+    setTodoDraft('');
+    setSavingTodoId(null);
+  }, []);
+
+  const handleSaveEdit = useCallback(async (todo: TodoItem) => {
+    const normalizedText = todoDraft.trim();
+    if (!normalizedText) {
+      handleCancelEdit();
+      return;
+    }
+
+    if (normalizedText === todo.text) {
+      handleCancelEdit();
+      return;
+    }
+
+    try {
+      setSavingTodoId(todo.id);
+      const note = await getNote(todo.noteId);
+      if (!note) {
+        handleCancelEdit();
+        return;
+      }
+
+      const newContent = updateTodoTextInContent(note.content, todo.lineIndex, normalizedText);
+      if (newContent === null) {
+        handleCancelEdit();
+        return;
+      }
+
+      await saveNote({ id: todo.noteId, content: newContent });
+      await loadTodos();
+    } catch (err) {
+      console.error('Failed to update todo:', err);
+    } finally {
+      handleCancelEdit();
+    }
+  }, [handleCancelEdit, loadTodos, todoDraft]);
+
   const filteredTodos = todos.filter((todo) => {
     if (filter === 'pending') return !todo.checked;
     if (filter === 'done') return todo.checked;
     return true;
   });
+  const groupedTodos = useMemo(() => {
+    const groups = new Map<string, { noteId: string; noteTitle: string; todos: TodoItem[] }>();
+    for (const todo of filteredTodos) {
+      const existing = groups.get(todo.noteId);
+      if (existing) {
+        existing.todos.push(todo);
+        continue;
+      }
+
+      groups.set(todo.noteId, {
+        noteId: todo.noteId,
+        noteTitle: todo.noteTitle,
+        todos: [todo],
+      });
+    }
+
+    return Array.from(groups.values());
+  }, [filteredTodos]);
 
   const stats = getTodoStats(todos);
 
@@ -96,32 +170,28 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
     <section className="flex h-full flex-col">
       {/* Header */}
       <header className="border-b border-[color:var(--manager-border)] px-7 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="manager-kicker">Todos</p>
-            <h2 className="mt-1 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-2xl text-[color:var(--manager-ink-strong)]">
-              待办事项
-            </h2>
-            <p className="mt-1 text-sm text-[color:var(--manager-ink-soft)]">
-              共 {stats.total} 项 · 已完成 {stats.done} · 待处理 {stats.pending}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => void createTodoCardWindow()}
-              className="rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] px-3 py-1.5 text-sm text-[color:var(--manager-ink-strong)] transition hover:opacity-80"
-              title="在桌面悬浮显示待办卡片"
-            >
-              悬浮卡片
-            </button>
-            <button
-              onClick={loadTodos}
-              className="rounded-lg border border-[color:var(--manager-border)] px-3 py-1.5 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
-            >
-              刷新
-            </button>
-          </div>
-        </div>
+        <ManagerPanelHeader
+          kicker="Todos"
+          title="待办事项"
+          description={`共 ${stats.total} 项 · 已完成 ${stats.done} · 待处理 ${stats.pending}`}
+          actions={
+            <>
+              <button
+                onClick={() => void createTodoCardWindow()}
+                className="rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] px-3 py-1.5 text-sm text-[color:var(--manager-ink-strong)] transition hover:opacity-80"
+                title="在桌面悬浮显示待办卡片"
+              >
+                悬浮卡片
+              </button>
+              <button
+                onClick={loadTodos}
+                className="rounded-lg border border-[color:var(--manager-border)] px-3 py-1.5 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+              >
+                刷新
+              </button>
+            </>
+          }
+        />
 
         {/* Filter tabs */}
         <div className="mt-4 flex gap-2">
@@ -156,39 +226,115 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
               {filter === 'pending' ? '没有待处理的事项' : filter === 'done' ? '没有已完成的事项' : '笔记中没有待办事项'}
             </p>
             <p className="mt-2 text-sm">
-              在笔记中使用 <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs">- [ ]</code> 语法添加待办
+              在笔记中使用 <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs">- [ ]</code> 或 <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs">1. [ ]</code> 语法添加待办
             </p>
           </div>
         ) : (
-          <ul className="space-y-2">
-            {filteredTodos.map((todo) => (
-              <li key={todo.id}>
-                <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-white/55">
+          <div className="space-y-6">
+            {groupedTodos.map((group, groupIndex) => (
+              <section key={group.noteId}>
+                {groupIndex > 0 ? <hr className="mb-6 border-[color:var(--manager-border)]/60" /> : null}
+                <div className="mb-3 flex items-center justify-between gap-3 px-1">
                   <button
-                    onClick={() => void handleToggle(todo)}
-                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
-                      todo.checked
-                        ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                        : 'border-[color:var(--manager-border)] bg-white/80 hover:border-[color:var(--manager-accent)]'
-                    }`}
+                    onClick={() => onNavigateToNote?.(group.noteId)}
+                    className="min-w-0 text-left"
                   >
-                    {todo.checked ? '✓' : ''}
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-sm leading-relaxed ${todo.checked ? 'text-[color:var(--manager-ink-muted)] line-through' : 'text-[color:var(--manager-ink)]'}`}>
-                      {todo.text}
+                    <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
+                      {group.noteTitle}
                     </p>
-                    <button
-                      onClick={() => onNavigateToNote?.(todo.noteId)}
-                      className="mt-1 text-[11px] uppercase tracking-[0.15em] text-[color:var(--manager-ink-subtle)] hover:text-[color:var(--manager-accent)]"
-                    >
-                      来自「{todo.noteTitle}」
-                    </button>
-                  </div>
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
+                      来源文件
+                    </p>
+                  </button>
+                  <span className="shrink-0 text-xs text-[color:var(--manager-ink-subtle)]">
+                    {group.todos.length} 项
+                  </span>
                 </div>
-              </li>
+
+                <ul className="space-y-2">
+                  {group.todos.map((todo) => {
+                    const isEditing = editingTodoId === todo.id;
+                    const isSaving = savingTodoId === todo.id;
+
+                    return (
+                      <li key={todo.id}>
+                        <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-white/55">
+                          <button
+                            onClick={() => void handleToggle(todo)}
+                            className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
+                              todo.checked
+                                ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
+                                : 'border-[color:var(--manager-border)] bg-white/80 hover:border-[color:var(--manager-accent)]'
+                            }`}
+                          >
+                            {todo.checked ? '✓' : ''}
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            {isEditing ? (
+                              <input
+                                autoFocus
+                                value={todoDraft}
+                                disabled={isSaving}
+                                onChange={(event) => setTodoDraft(event.target.value)}
+                                onBlur={() => void handleSaveEdit(todo)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    void handleSaveEdit(todo);
+                                  }
+
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    handleCancelEdit();
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-white px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
+                              />
+                            ) : (
+                              <p className={`text-sm leading-relaxed ${todo.checked ? 'text-[color:var(--manager-ink-muted)] line-through' : 'text-[color:var(--manager-ink)]'}`}>
+                                {todo.text}
+                              </p>
+                            )}
+                            <button
+                              onClick={() => onNavigateToNote?.(todo.noteId)}
+                              className="mt-1 text-[11px] uppercase tracking-[0.15em] text-[color:var(--manager-ink-subtle)] hover:text-[color:var(--manager-accent)]"
+                            >
+                              打开原笔记
+                            </button>
+                          </div>
+                          {!isEditing ? (
+                            <button
+                              onClick={() => handleStartEdit(todo)}
+                              className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] opacity-0 transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] group-hover:opacity-100"
+                            >
+                              编辑
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => void handleSaveEdit(todo)}
+                                className="rounded-full bg-[color:var(--manager-accent)] px-3 py-1 text-xs text-white transition hover:opacity-90"
+                              >
+                                保存
+                              </button>
+                              <button
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={handleCancelEdit}
+                                className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)]"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </section>

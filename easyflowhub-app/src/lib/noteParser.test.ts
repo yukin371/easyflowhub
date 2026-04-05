@@ -6,10 +6,17 @@ import {
   isEmptyContent,
   buildNoteContent,
   formatNoteForDisplay,
+  normalizeStoredTitle,
 } from './noteParser';
 
 describe('noteParser', () => {
   // ==================== deriveDisplayTitle ====================
+  describe('normalizeStoredTitle', () => {
+    it('should trim explicit titles before persistence', () => {
+      expect(normalizeStoredTitle('  explicit title  ')).toBe('explicit title');
+    });
+  });
+
   describe('deriveDisplayTitle', () => {
     it('should return trimmed title when title is provided', () => {
       expect(deriveDisplayTitle('  My Title  ', 'content')).toBe('My Title');
