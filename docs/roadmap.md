@@ -24,9 +24,9 @@
 - owner scope: `scriptmgr-go/internal/relay`, `scriptmgr-go/internal/extensions`, `easyflowhub-app/src/components/manager/relay`
 - 目标：把 relay 与扩展系统从“已能演示”推进到“可以持续迭代并有真实回归依据”的状态。
 - 可并行任务包：
-  - `V1-B1` 真实上游回归：流式响应、429、timeout、不同鉴权方式
+  - `V1-B1` `[in_progress]` 真实上游回归：流式响应、429、timeout、不同鉴权方式
   - `V1-B2` provider 密钥迁移：从明文 JSON 收敛到环境变量或独立密钥层
-  - `V1-B3` extension 生命周期设计：安装、启停、签名、目录约束
+  - `V1-B3` `[done]` extension 生命周期设计：安装、启停、签名、目录约束
   - `V1-B4` `[done]` extension relay preset 导入：让 manifest 中的 provider / route 贡献可直接进入当前 relay 配置
 
 #### Track C. Quality And Release Readiness
@@ -102,10 +102,13 @@
 - `2026-04-07` 已完成 `V1-C1`，新增 Windows 打包 smoke checklist 与 `scripts/check-release-artifacts.ps1`，把产物校验和人工验收入口固定下来。
 - `2026-04-07` 已完成 `V1-C2`，让 GitHub Actions 的 Go setup 直接读取 `scriptmgr-go/go.mod`，消除 workflow 中的版本硬编码漂移。
 - `2026-04-07` 已完成 `V1-C3`，新增 `scripts/run-smoke.ps1` 与 `docs/checklists/scripted-smoke.md`，把默认验证链固定为单入口命令。
+- `2026-04-07` 已完成 `V1-B3`，新增扩展生命周期设计文档，明确 managed install、enable/disable、signature 与目录约束的下一阶段边界。
 - `2026-04-07` 已完成 `V1-D1`，新增 `docs/checklists/review-checklist.md`，并把 docs 入口与 guardrails 引到这份 review / import / ownership checklist。
 - `2026-04-07` 已完成 `V1-D2`，将旧 `scriptmgr` roadmap 收敛为 superseded 指针文档，并把 README / 设计文档入口统一回 `docs/roadmap.md`。
 - `2026-04-07` 已完成 `V1-D3`，通过 `ADR-0002` 固化 `scriptmgr-go` 不接管仓库级截图与文档同步，仓库自动化继续由 `scripts/` + `docs/checklists/` 负责。
 - `2026-04-07` 已完成 `V1-B4`，manager 可将扩展 manifest 中的 relay provider / route 贡献导入当前编辑器；同名 provider / route 会中止导入并显式报错，新增项会写入 `source=extension:<id>`，且 provider 默认禁用。
+- `2026-04-07` 已完成 `V1-B1` 的自动化子步骤：`internal/relay/service_test.go` 已覆盖流式响应、`429` 限流、timeout failover 与 provider 鉴权头回归，并通过 `scripts/run-smoke.ps1`。
+- `2026-04-07` 当前阶段进行中：`V1-B1`，先补 relay 对流式响应、`429`、timeout 与不同鉴权头的自动化回归，再决定是否引入外部真实 provider smoke。
 
 ### Validation Debt
 
@@ -116,7 +119,6 @@
 - `CP2 / V1-B1` 需要在 Codex 与 Claude 侧分别验证新增 MCP 的真实可用性，而不是只完成配置。
 - `CP2 / V1-B2` 需要把敏感密钥从用户配置中的明文形式迁移到环境变量或独立密钥管理层。
 - `CP2 / V1-B1` 需要补 relay 的真实上游回归，包括流式响应、不同鉴权方式、`429` 限流与 timeout 行为。
-- `CP2 / V1-B3` 需要决定扩展清单何时从只读 manifest 升级到受控安装 / 启停流程。
 - `CP2 / V1-B1` 需要验证 manager 中的 Relay 面板在 `scriptmgr serve` 未启动、relay runtime 未启动、配置 JSON 非法三类场景下的人工交互体验。
 - `CP2 / V1-B4` 需要补一轮 manager 人工验证，覆盖非法 JSON、重复导入、保存前刷新与保存后回读场景。
 

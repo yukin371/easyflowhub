@@ -18,3 +18,4 @@ relay config -> route match by path/model -> pick healthy provider -> forward re
 - v1 只保证 OpenAI 兼容路径和基础 `429` / `5xx` failover，不代表所有 provider 差异都已统一。
 - route 和 provider 的默认策略是最小可用版本，后续熔断、配额和观测应继续在本模块内演进。
 - relay config 中的 `source` 只用于来源追踪和管理层展示，不参与路由选择语义；扩展导入时会写成 `extension:<id>`。
+- relay 的协议级回归样例优先收敛在 `service_test.go`，使用真实 HTTP upstream 行为覆盖 stream / `429` / timeout / auth；`internal/http` 和 CLI 只验证 wiring。
