@@ -160,4 +160,6 @@ scriptmgr relay serve --port 8787
 
 当前版本：1.0.0
 
-查看完整 Roadmap：[docs/plans/scriptmgr-v1.0-roadmap.md](../docs/plans/scriptmgr-v1.0-roadmap.md)
+查看当前项目 Roadmap：[docs/roadmap.md](../docs/roadmap.md)
+
+relay / extension 第一阶段设计见：[docs/plans/2026-04-07-api-relay-and-extension-phase1.md](../docs/plans/2026-04-07-api-relay-and-extension-phase1.md)

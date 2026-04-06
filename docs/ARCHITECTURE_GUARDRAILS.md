@@ -118,6 +118,7 @@ Record exceptions in:
 
 Recommended enforcement mechanisms:
 
+- 共享 owner 或跨层改动先过 `docs/checklists/review-checklist.md`
 - `bun run test`
 - `bunx tsc --noEmit`
 - `cargo check --manifest-path src-tauri/Cargo.toml`
