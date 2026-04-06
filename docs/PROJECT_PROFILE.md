@@ -28,7 +28,7 @@
 - Frontend test command: `cd easyflowhub-app && bun run test`
 - Native check command: `cd easyflowhub-app && cargo check --manifest-path src-tauri/Cargo.toml`
 - Go backend test command: `cd scriptmgr-go && go test ./...`
-- Integration / E2E command: `TBD`
+- Integration / E2E command: `pwsh -File .\scripts\run-smoke.ps1`
 - Smoke test path: `bun tauri dev -> 打开 manager -> 新建 quick note -> 打开 todo card -> 切换 settings / scripts / notes / relay 面板`
 
 ### 2026-04-07 本地验证结果

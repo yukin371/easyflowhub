@@ -32,6 +32,7 @@
 - 当前目标与验证债: [roadmap.md](./roadmap.md)
 - 架构边界: [ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
 - 实施 / review 清单: [checklists/review-checklist.md](./checklists/review-checklist.md)
+- Scripted smoke: [checklists/scripted-smoke.md](./checklists/scripted-smoke.md)
 - Windows 打包 smoke: [checklists/windows-package-smoke.md](./checklists/windows-package-smoke.md)
 - 通用模板入口: [templates/AI_REPO_BOOTSTRAP_PLAYBOOK.md](./templates/AI_REPO_BOOTSTRAP_PLAYBOOK.md)
 

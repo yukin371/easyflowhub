@@ -36,7 +36,7 @@
 - 可并行任务包：
   - `V1-C1` `[done]` Windows 打包 smoke checklist 与人工验收脚本
   - `V1-C2` `[done]` CI toolchain 对齐，重点修复 Go 版本漂移
-  - `V1-C3` 建立最小可重复的端到端或 scripted smoke 路径
+  - `V1-C3` `[done]` 建立最小可重复的端到端或 scripted smoke 路径
 
 #### Track D. Docs And AI Workflow Governance
 
@@ -45,7 +45,7 @@
 - 可并行任务包：
   - `V1-D1` `[done]` 补 review checklist、import / ownership checklist
   - `V1-D2` `[done]` 清点并收敛过期 plan / 架构文档，避免双源
-  - `V1-D3` 评估 `scriptmgr` 是否接管常用验证、截图、文档同步动作
+  - `V1-D3` `[done]` 评估 `scriptmgr` 是否接管常用验证、截图、文档同步动作
 
 ### Release Checkpoints
 
@@ -101,8 +101,10 @@
 - `2026-04-07` 已让 `scriptmgr serve` 暴露 relay / extension 管理接口，并在 manager 中新增 Relay 面板，可编辑 `relay.json`、查看 provider health 与扩展清单。
 - `2026-04-07` 已完成 `V1-C1`，新增 Windows 打包 smoke checklist 与 `scripts/check-release-artifacts.ps1`，把产物校验和人工验收入口固定下来。
 - `2026-04-07` 已完成 `V1-C2`，让 GitHub Actions 的 Go setup 直接读取 `scriptmgr-go/go.mod`，消除 workflow 中的版本硬编码漂移。
+- `2026-04-07` 已完成 `V1-C3`，新增 `scripts/run-smoke.ps1` 与 `docs/checklists/scripted-smoke.md`，把默认验证链固定为单入口命令。
 - `2026-04-07` 已完成 `V1-D1`，新增 `docs/checklists/review-checklist.md`，并把 docs 入口与 guardrails 引到这份 review / import / ownership checklist。
 - `2026-04-07` 已完成 `V1-D2`，将旧 `scriptmgr` roadmap 收敛为 superseded 指针文档，并把 README / 设计文档入口统一回 `docs/roadmap.md`。
+- `2026-04-07` 已完成 `V1-D3`，通过 `ADR-0002` 固化 `scriptmgr-go` 不接管仓库级截图与文档同步，仓库自动化继续由 `scripts/` + `docs/checklists/` 负责。
 - `2026-04-07` 已完成 `V1-B4`，manager 可将扩展 manifest 中的 relay provider / route 贡献导入当前编辑器；同名 provider / route 会中止导入并显式报错，新增项会写入 `source=extension:<id>`，且 provider 默认禁用。
 
 ### Validation Debt
