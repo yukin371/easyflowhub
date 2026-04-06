@@ -100,7 +100,6 @@
 - TS / Rust / Go 三层并存，命令名、类型形状和行为约束很容易不同步。
 - 多窗口、快捷键、autostart、桌面固定等行为强依赖 Windows，回归成本高。
 - `go test ./...` 本地耗时明显长于前端测试，容易被忽略但必须保留。
-- GitHub Actions 当前仍固定 `setup-go: 1.21`，而 `scriptmgr-go/go.mod` 声明 `go 1.25.1`，需要显式对齐以避免 CI toolchain 漂移。
 - 负载均衡 relay 目前只实现 OpenAI 兼容 HTTP 路径、基础权重和 failover，尚未覆盖更复杂的 provider 认证差异与流量配额策略。
 - manager 中的 Relay 面板当前直接编辑 JSON，结构校验主要依赖后端 `relay.SaveConfig`，尚未收敛为表单式配置体验。
 
@@ -108,8 +107,6 @@
 
 - `TBD`: 统一 logging owner 仍未成形，当前 TS / Rust / Go 侧日志策略分散。  
   Confirm via: `src`, `src-tauri/src`, `scriptmgr-go/internal` 全仓搜索日志入口并形成 ADR。
-- `TBD`: 生产打包产物的完整人工 smoke checklist 尚未沉淀。  
-  Confirm via: 新建 `docs/plans` 或 `docs/decisions` 中的 release / smoke 文档。
 - `TBD`: E2E / Playwright 验收流尚未进入仓库默认验证链。  
   Confirm via: 新增浏览器或桌面验收脚本并写入 CI / runbook。
 
