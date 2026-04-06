@@ -115,6 +115,7 @@ scriptmgr relay serve --port 8787
       "id": "primary",
       "name": "Primary OpenAI-Compatible",
       "base_url": "https://api.example.com",
+      "api_key_env": "OPENAI_API_KEY",
       "enabled": true,
       "weight": 2,
       "model_patterns": ["gpt-*"]
@@ -139,6 +140,11 @@ scriptmgr relay serve --port 8787
   ]
 }
 ```
+
+说明：
+
+- 推荐使用 `api_key_env` 引用环境变量，而不是把密钥直接写进 `relay.json`
+- 旧 `api_key` 仍兼容，但应视为迁移期字段
 
 端点：
 - `GET /health`

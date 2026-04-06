@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	pathpkg "path"
 	"sort"
 	"strings"
@@ -312,8 +313,12 @@ func (s *Service) forward(original *http.Request, body []byte, provider Provider
 
 	copyHeaders(req.Header, original.Header)
 	req.Header.Set("X-EasyFlowHub-Relay-Provider", provider.ID)
-	if provider.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	apiKey, err := resolveProviderAPIKey(provider)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	for key, value := range provider.Headers {
 		req.Header.Set(key, value)
@@ -326,6 +331,24 @@ func (s *Service) forward(original *http.Request, body []byte, provider Provider
 
 	client := &http.Client{Timeout: timeout}
 	return client.Do(req)
+}
+
+func resolveProviderAPIKey(provider Provider) (string, error) {
+	if provider.APIKeyEnv == "" {
+		return provider.APIKey, nil
+	}
+
+	value, ok := os.LookupEnv(provider.APIKeyEnv)
+	if !ok {
+		return "", fmt.Errorf("provider %s missing env %s", provider.ID, provider.APIKeyEnv)
+	}
+
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("provider %s env %s is empty", provider.ID, provider.APIKeyEnv)
+	}
+
+	return value, nil
 }
 
 func (s *Service) providerSnapshots(cfg Config) []ProviderSnapshot {

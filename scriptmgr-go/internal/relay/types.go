@@ -28,6 +28,7 @@ type Provider struct {
 	Name          string            `json:"name"`
 	BaseURL       string            `json:"base_url"`
 	APIKey        string            `json:"api_key,omitempty"`
+	APIKeyEnv     string            `json:"api_key_env,omitempty"`
 	Source        string            `json:"source,omitempty"`
 	Weight        int               `json:"weight,omitempty"`
 	Enabled       bool              `json:"enabled"`
@@ -92,6 +93,8 @@ func (cfg Config) Normalize() Config {
 		cfg.Providers[i].ID = strings.TrimSpace(cfg.Providers[i].ID)
 		cfg.Providers[i].Name = strings.TrimSpace(cfg.Providers[i].Name)
 		cfg.Providers[i].BaseURL = strings.TrimSpace(cfg.Providers[i].BaseURL)
+		cfg.Providers[i].APIKey = strings.TrimSpace(cfg.Providers[i].APIKey)
+		cfg.Providers[i].APIKeyEnv = strings.TrimSpace(cfg.Providers[i].APIKeyEnv)
 	}
 	for i := range cfg.Routes {
 		if cfg.Routes[i].ID == "" {
@@ -115,6 +118,9 @@ func (cfg Config) Validate() error {
 		}
 		if provider.BaseURL == "" {
 			return fmt.Errorf("provider %q missing base_url", provider.ID)
+		}
+		if provider.APIKey != "" && provider.APIKeyEnv != "" {
+			return fmt.Errorf("provider %q cannot set both api_key and api_key_env", provider.ID)
 		}
 		if seenProviders[provider.ID] {
 			return fmt.Errorf("duplicate provider id %q", provider.ID)

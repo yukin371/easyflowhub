@@ -212,7 +212,7 @@ export function RelayPanel() {
                   Relay Config
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
-                  直接编辑 `relay.json` 的结构。当前只支持 OpenAI 兼容路径、加权轮询和基础 failover。
+                  直接编辑 `relay.json` 的结构。当前只支持 OpenAI 兼容路径、加权轮询和基础 failover；敏感密钥优先使用 `api_key_env`，避免继续写入明文 `api_key`。
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">

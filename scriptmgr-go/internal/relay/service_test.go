@@ -92,6 +92,26 @@ func TestStoreLoadSaveRoundTrip(t *testing.T) {
 	}
 }
 
+func TestConfigValidateRejectsPlainAndEnvAPIKeyTogether(t *testing.T) {
+	cfg := Config{
+		Version: 1,
+		Providers: []Provider{
+			{
+				ID:        "primary",
+				Name:      "Primary",
+				BaseURL:   "https://example.com",
+				Enabled:   true,
+				APIKey:    "plain-secret",
+				APIKeyEnv: "PRIMARY_API_KEY",
+			},
+		},
+	}
+
+	if err := cfg.Normalize().Validate(); err == nil || !strings.Contains(err.Error(), "api_key_env") {
+		t.Fatalf("expected api_key/api_key_env validation error, got %v", err)
+	}
+}
+
 func TestProxyRetriesSecondProviderOnFailure(t *testing.T) {
 	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream failed", http.StatusBadGateway)
@@ -263,6 +283,113 @@ func TestProxyRetriesOn429AndUsesProviderSpecificAuth(t *testing.T) {
 	}
 	if got := snapshots["primary"].Status.LastError; !strings.Contains(got, "429") {
 		t.Fatalf("expected primary error to mention 429, got %q", got)
+	}
+}
+
+func TestProxyUsesAPIKeyFromEnvironment(t *testing.T) {
+	t.Setenv("EASYFLOWHUB_RELAY_PRIMARY_KEY", "env-secret")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer env-secret" {
+			t.Fatalf("expected env-based authorization, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{
+			{
+				ID:        "primary",
+				Name:      "Primary",
+				BaseURL:   server.URL,
+				Enabled:   true,
+				APIKeyEnv: "EASYFLOWHUB_RELAY_PRIMARY_KEY",
+			},
+		},
+		Routes: []Route{
+			{
+				ID:           "chat",
+				PathPrefixes: []string{"/v1/"},
+				ProviderIDs:  []string{"primary"},
+			},
+		},
+	})
+
+	rec := performRelayRequest(
+		t,
+		service,
+		http.MethodPost,
+		"/v1/chat/completions",
+		[]byte(`{"model":"gpt-5","messages":[]}`),
+		nil,
+	)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProxyFallsBackWhenAPIKeyEnvMissing(t *testing.T) {
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("primary server should not receive request when api_key_env is missing")
+	}))
+	defer primaryServer.Close()
+
+	secondaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"provider":"secondary"}`))
+	}))
+	defer secondaryServer.Close()
+
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{
+			{
+				ID:        "primary",
+				Name:      "Primary",
+				BaseURL:   primaryServer.URL,
+				Enabled:   true,
+				APIKeyEnv: "EASYFLOWHUB_RELAY_MISSING_KEY",
+			},
+			{
+				ID:      "secondary",
+				Name:    "Secondary",
+				BaseURL: secondaryServer.URL,
+				Enabled: true,
+			},
+		},
+		Routes: []Route{
+			{
+				ID:            "chat",
+				PathPrefixes:  []string{"/v1/"},
+				ModelPatterns: []string{"gpt-*"},
+				ProviderIDs:   []string{"primary", "secondary"},
+			},
+		},
+	})
+
+	rec := performRelayRequest(
+		t,
+		service,
+		http.MethodPost,
+		"/v1/chat/completions",
+		[]byte(`{"model":"gpt-5","messages":[]}`),
+		nil,
+	)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if provider := rec.Header().Get("X-EasyFlowHub-Relay-Provider"); provider != "secondary" {
+		t.Fatalf("expected secondary to answer, got %q", provider)
+	}
+
+	snapshots := snapshotByProviderID(t, service)
+	if got := snapshots["primary"].Status.LastError; !strings.Contains(got, "missing env") {
+		t.Fatalf("expected missing env error, got %q", got)
 	}
 }
 

@@ -25,7 +25,7 @@
 - 目标：把 relay 与扩展系统从“已能演示”推进到“可以持续迭代并有真实回归依据”的状态。
 - 可并行任务包：
   - `V1-B1` `[in_progress]` 真实上游回归：流式响应、429、timeout、不同鉴权方式
-  - `V1-B2` provider 密钥迁移：从明文 JSON 收敛到环境变量或独立密钥层
+  - `V1-B2` `[in_progress]` provider 密钥迁移：从明文 JSON 收敛到环境变量或独立密钥层
   - `V1-B3` `[done]` extension 生命周期设计：安装、启停、签名、目录约束
   - `V1-B4` `[done]` extension relay preset 导入：让 manifest 中的 provider / route 贡献可直接进入当前 relay 配置
 
@@ -108,7 +108,9 @@
 - `2026-04-07` 已完成 `V1-D3`，通过 `ADR-0002` 固化 `scriptmgr-go` 不接管仓库级截图与文档同步，仓库自动化继续由 `scripts/` + `docs/checklists/` 负责。
 - `2026-04-07` 已完成 `V1-B4`，manager 可将扩展 manifest 中的 relay provider / route 贡献导入当前编辑器；同名 provider / route 会中止导入并显式报错，新增项会写入 `source=extension:<id>`，且 provider 默认禁用。
 - `2026-04-07` 已完成 `V1-B1` 的自动化子步骤：`internal/relay/service_test.go` 已覆盖流式响应、`429` 限流、timeout failover 与 provider 鉴权头回归，并通过 `scripts/run-smoke.ps1`。
+- `2026-04-07` 已完成 `V1-B2` 的第一子步骤：relay provider 新增 `api_key_env`，运行时可从环境变量解析密钥并在缺失时 failover；`api_key` 继续仅作兼容字段。
 - `2026-04-07` 当前阶段进行中：`V1-B1`，先补 relay 对流式响应、`429`、timeout 与不同鉴权头的自动化回归，再决定是否引入外部真实 provider smoke。
+- `2026-04-07` 当前阶段进行中：`V1-B2`，继续把 manager 提示、README 和后续配置迁移收敛到 `api_key_env` 路径。
 
 ### Validation Debt
 
@@ -117,7 +119,7 @@
 - `CP1 / V1-A1` 需要验证 quick note 图片插入、删除、大图展示与旧笔记兼容性。
 - `CP1 / V1-A2` 需要继续评估 todo 新建入口是否应进一步下放到管理中心聚合面板。
 - `CP2 / V1-B1` 需要在 Codex 与 Claude 侧分别验证新增 MCP 的真实可用性，而不是只完成配置。
-- `CP2 / V1-B2` 需要把敏感密钥从用户配置中的明文形式迁移到环境变量或独立密钥管理层。
+- `CP2 / V1-B2` 需要继续把存量配置从明文 `api_key` 迁移到 `api_key_env` 或独立密钥管理层，并决定何时移除兼容字段。
 - `CP2 / V1-B1` 需要补 relay 的真实上游回归，包括流式响应、不同鉴权方式、`429` 限流与 timeout 行为。
 - `CP2 / V1-B1` 需要验证 manager 中的 Relay 面板在 `scriptmgr serve` 未启动、relay runtime 未启动、配置 JSON 非法三类场景下的人工交互体验。
 - `CP2 / V1-B4` 需要补一轮 manager 人工验证，覆盖非法 JSON、重复导入、保存前刷新与保存后回读场景。

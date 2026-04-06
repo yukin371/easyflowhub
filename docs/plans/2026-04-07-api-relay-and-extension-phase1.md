@@ -65,5 +65,6 @@
 1. 为 relay 增加真实上游回归，覆盖流式响应、`429`、timeout 与不同鉴权方式
    - progress: `internal/relay/service_test.go` 已补自动化样例，当前剩余 external provider smoke
 2. 收敛 provider 密钥管理，避免继续依赖明文 JSON
+   - progress: provider 已支持 `api_key_env`，当前剩余存量配置迁移与兼容字段退役策略
 3. 为扩展系统增加安装、启停、签名和权限模型
    - design: `2026-04-07-extension-lifecycle-design.md`
