@@ -51,6 +51,7 @@
 - manager integration
   - `scriptmgr serve` 代理暴露 relay / extension 管理接口
   - manager 新增 Relay 面板，可查看 provider health、编辑 `relay.json`、查看 manifest 扩展
+  - 扩展卡片支持将 manifest 中的 relay provider / route 贡献导入当前编辑器；冲突时中止导入并显式报错，新增项写入 `source=extension:<id>`，provider 默认禁用
 
 ## Deliberately Deferred
 
@@ -61,6 +62,6 @@
 
 ## Next Phase
 
-1. 给 relay 增加 manager UI 和配置编辑能力
-2. 增加流式响应与更细的 provider 认证适配
+1. 为 relay 增加真实上游回归，覆盖流式响应、`429`、timeout 与不同鉴权方式
+2. 收敛 provider 密钥管理，避免继续依赖明文 JSON
 3. 为扩展系统增加安装、启停、签名和权限模型

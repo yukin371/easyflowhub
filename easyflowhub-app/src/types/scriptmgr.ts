@@ -162,6 +162,7 @@ export interface RelayProvider {
   name: string;
   base_url: string;
   api_key?: string;
+  source?: string;
   weight?: number;
   enabled: boolean;
   model_patterns?: string[];
@@ -172,6 +173,7 @@ export interface RelayProvider {
 export interface RelayRoute {
   id: string;
   name?: string;
+  source?: string;
   path_prefixes?: string[];
   model_patterns?: string[];
   provider_ids?: string[];

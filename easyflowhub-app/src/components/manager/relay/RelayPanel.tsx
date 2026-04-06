@@ -6,6 +6,11 @@ import {
   relayApi,
 } from '../../../lib/api/scriptmgr';
 import type { ListedExtension, RelayConfig, RelaySnapshot } from '../../../types/scriptmgr';
+import {
+  getRelayContributionSummary,
+  hasRelayContributions,
+  importRelayContributions,
+} from './importRelayContributions';
 
 type ServiceStatus = 'checking' | 'online' | 'offline';
 
@@ -108,6 +113,33 @@ export function RelayPanel() {
       setSaving(false);
     }
   }, [configText]);
+
+  const handleImportRelayPreset = useCallback(
+    (extension: ListedExtension) => {
+      setSaveMessage(null);
+      setError(null);
+
+      try {
+        let parsedConfig: RelayConfig;
+        try {
+          parsedConfig = JSON.parse(configText) as RelayConfig;
+        } catch {
+          throw new Error('当前编辑器中的 relay JSON 非法，请先修复后再导入扩展预设');
+        }
+
+        const result = importRelayContributions(parsedConfig, extension);
+        const extensionLabel =
+          extension.manifest?.name ?? extension.manifest?.id ?? extension.manifest_path;
+        setConfigText(JSON.stringify(result.config, null, 2));
+        setSaveMessage(
+          `已从 ${extensionLabel} 导入 ${result.addedProviders.length} 个 provider、${result.addedRoutes.length} 个 route 到编辑器，点击保存配置生效`
+        );
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '导入扩展 relay 预设失败');
+      }
+    },
+    [configText]
+  );
 
   const healthyProviders = useMemo(
     () => snapshot?.providers.filter((item) => item.status.healthy).length ?? 0,
@@ -298,43 +330,69 @@ scriptmgr relay serve --port 8787`}
           </div>
 
           <div className="mt-4 space-y-3">
-            {extensions.map((extension) => (
-              <div
-                key={extension.manifest_path}
-                className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-medium text-[color:var(--manager-ink-strong)]">
-                      {extension.manifest?.name ?? extension.manifest_path}
-                    </p>
-                    <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">
-                      {extension.manifest?.id ?? 'invalid-extension'} · {extension.manifest?.version ?? 'n/a'}
-                    </p>
+            {extensions.map((extension) => {
+              const relaySummary = getRelayContributionSummary(extension);
+              const canImportRelay = hasRelayContributions(extension);
+
+              return (
+                <div
+                  key={extension.manifest_path}
+                  className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-[color:var(--manager-ink-strong)]">
+                        {extension.manifest?.name ?? extension.manifest_path}
+                      </p>
+                      <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">
+                        {extension.manifest?.id ?? 'invalid-extension'} · {extension.manifest?.version ?? 'n/a'}
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs ${
+                        extension.status === 'loaded' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {extension.status}
+                    </span>
                   </div>
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs ${
-                      extension.status === 'loaded' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                    }`}
-                  >
-                    {extension.status}
-                  </span>
+
+                  {extension.manifest?.description && (
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
+                      {extension.manifest.description}
+                    </p>
+                  )}
+
+                  <div className="mt-3 grid gap-2 text-xs text-[color:var(--manager-ink-soft)] md:grid-cols-2">
+                    <div>root: {extension.root}</div>
+                    <div>contributions: {summarizeContributions(extension)}</div>
+                  </div>
+
+                  {canImportRelay && (
+                    <div className="mt-3 rounded-[14px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.75)] px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-xs leading-6 text-[color:var(--manager-ink-soft)]">
+                          <p className="uppercase tracking-[0.14em] text-[color:var(--manager-ink-subtle)]">
+                            Relay Preset
+                          </p>
+                          <p className="mt-1">
+                            provider {relaySummary.providerCount} 个，route {relaySummary.routeCount} 个。导入后只写入上方编辑器，默认新增 provider 为禁用状态。
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleImportRelayPreset(extension)}
+                          className="shrink-0 rounded-full border border-[color:var(--manager-accent)] bg-white px-4 py-2 text-sm text-[color:var(--manager-accent)] transition hover:bg-[color:var(--manager-accent)] hover:text-white"
+                        >
+                          导入到配置
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {extension.error && <p className="mt-2 text-xs text-red-700">{extension.error}</p>}
                 </div>
-
-                {extension.manifest?.description && (
-                  <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
-                    {extension.manifest.description}
-                  </p>
-                )}
-
-                <div className="mt-3 grid gap-2 text-xs text-[color:var(--manager-ink-soft)] md:grid-cols-2">
-                  <div>root: {extension.root}</div>
-                  <div>contributions: {summarizeContributions(extension)}</div>
-                </div>
-
-                {extension.error && <p className="mt-2 text-xs text-red-700">{extension.error}</p>}
-              </div>
-            ))}
+              );
+            })}
 
             {!loading && extensions.length === 0 && (
               <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">

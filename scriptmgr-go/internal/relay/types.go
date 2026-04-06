@@ -28,6 +28,7 @@ type Provider struct {
 	Name          string            `json:"name"`
 	BaseURL       string            `json:"base_url"`
 	APIKey        string            `json:"api_key,omitempty"`
+	Source        string            `json:"source,omitempty"`
 	Weight        int               `json:"weight,omitempty"`
 	Enabled       bool              `json:"enabled"`
 	ModelPatterns []string          `json:"model_patterns,omitempty"`
@@ -38,6 +39,7 @@ type Provider struct {
 type Route struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name,omitempty"`
+	Source        string   `json:"source,omitempty"`
 	PathPrefixes  []string `json:"path_prefixes,omitempty"`
 	ModelPatterns []string `json:"model_patterns,omitempty"`
 	ProviderIDs   []string `json:"provider_ids,omitempty"`
