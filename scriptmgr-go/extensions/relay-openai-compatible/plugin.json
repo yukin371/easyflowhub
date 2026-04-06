@@ -1,0 +1,36 @@
+{
+  "id": "relay-openai-compatible",
+  "name": "OpenAI-Compatible Relay Pack",
+  "version": "0.1.0",
+  "description": "Provides starter provider and route manifests for OpenAI-compatible upstream gateways.",
+  "author": "EasyFlowHub",
+  "contributions": {
+    "relay_providers": [
+      {
+        "id": "openai-compatible-template",
+        "name": "OpenAI-Compatible Template",
+        "base_url": "https://api.example.com",
+        "weight": 1,
+        "model_patterns": [
+          "*"
+        ]
+      }
+    ],
+    "relay_routes": [
+      {
+        "id": "default-openai",
+        "name": "Default OpenAI Route",
+        "path_prefixes": [
+          "/v1/"
+        ],
+        "model_patterns": [
+          "*"
+        ],
+        "provider_ids": [
+          "openai-compatible-template"
+        ],
+        "strategy": "weighted_round_robin"
+      }
+    ]
+  }
+}

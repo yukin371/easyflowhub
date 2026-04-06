@@ -13,6 +13,7 @@ import (
 
 	"scriptmgr/internal/api"
 	httpsrv "scriptmgr/internal/http"
+	"scriptmgr/internal/relay"
 	"scriptmgr/internal/runtime"
 )
 
@@ -70,7 +71,13 @@ func runServe(args []string, svc *api.API, stateDir string) error {
 	// 3. Cleanup stale files from zombie process
 	rt.CleanupStaleFiles()
 
-	srv := httpsrv.NewServer(svc)
+	relayService, err := relay.NewService(stateDir)
+	if err != nil {
+		rt.ReleaseLock()
+		return fmt.Errorf("failed to initialize relay service: %w", err)
+	}
+
+	srv := httpsrv.NewServerWithRelay(svc, relayService)
 
 	slog.Info("HTTP API server starting", "addr", addr)
 	fmt.Fprintln(os.Stderr, "Endpoints:")

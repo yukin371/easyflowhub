@@ -74,6 +74,10 @@ func Run(args []string, svc *api.API) error {
 		return runMCPImportClaude()
 	case "serve":
 		return runServe(args[1:], svc, svc.StateDir())
+	case "relay":
+		return runRelayCommand(args[1:], svc.StateDir())
+	case "extensions", "plugins":
+		return runExtensionsCommand(args[1:], svc.StateDir())
 	default:
 		printUsage()
 		return fmt.Errorf("unknown command: %s", args[0])
@@ -616,6 +620,8 @@ func printUsage() {
 	fmt.Println("  mcp-remove <name>        - Remove an MCP server")
 	fmt.Println("  mcp-import-claude        - Import MCP servers from Claude config")
 	fmt.Println("  serve [addr]             - Start HTTP API server (default :8765)")
+	fmt.Println("  relay <subcommand>       - Start or inspect the OpenAI-compatible relay")
+	fmt.Println("  extensions [list]        - List manifest-based extension contributions")
 }
 
 func tagsOrDash(tags []string) string {

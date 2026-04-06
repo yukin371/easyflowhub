@@ -7,6 +7,10 @@ import type {
   TaskInfo,
   ListResponse,
   DescribeResponse,
+  RelayConfig,
+  RelaySnapshot,
+  RelaySnapshotResponse,
+  ExtensionsResponse,
 } from '../../types/scriptmgr';
 
 // ============================================================================
@@ -14,8 +18,10 @@ import type {
 // ============================================================================
 
 const DEFAULT_BASE_URL = 'http://localhost:8765';
+const DEFAULT_RELAY_RUNTIME_URL = 'http://localhost:8787';
 
 let baseUrl = DEFAULT_BASE_URL;
+let relayRuntimeUrl = DEFAULT_RELAY_RUNTIME_URL;
 
 export function setBaseUrl(url: string): void {
   baseUrl = url;
@@ -23,6 +29,14 @@ export function setBaseUrl(url: string): void {
 
 export function getBaseUrl(): string {
   return baseUrl;
+}
+
+export function setRelayRuntimeUrl(url: string): void {
+  relayRuntimeUrl = url;
+}
+
+export function getRelayRuntimeUrl(): string {
+  return relayRuntimeUrl;
 }
 
 // ============================================================================
@@ -259,6 +273,31 @@ export const mcpApi = {
 };
 
 // ============================================================================
+// Relay / Extensions API
+// ============================================================================
+
+export const relayApi = {
+  getSnapshot: async (): Promise<RelaySnapshot> => {
+    const response = await fetchJSON<RelaySnapshotResponse>(`${baseUrl}/api/relay/config`);
+    return response.snapshot;
+  },
+
+  saveConfig: async (config: RelayConfig): Promise<RelaySnapshot> => {
+    const response = await fetchJSON<RelaySnapshotResponse>(`${baseUrl}/api/relay/config`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    });
+    return response.snapshot;
+  },
+};
+
+export const extensionsApi = {
+  list: async (): Promise<ExtensionsResponse> => {
+    return fetchJSON<ExtensionsResponse>(`${baseUrl}/api/extensions`);
+  },
+};
+
+// ============================================================================
 // Health Check
 // ============================================================================
 
@@ -274,6 +313,22 @@ export async function checkServerHealth(): Promise<{ ok: boolean; message: strin
       return {
         ok: false,
         message: 'ScriptMgr 服务未启动，请先运行 scriptmgr serve',
+      };
+    }
+    return { ok: false, message };
+  }
+}
+
+export async function checkRelayRuntimeHealth(): Promise<{ ok: boolean; message: string }> {
+  try {
+    const response = await fetch(`${relayRuntimeUrl}/health`);
+    return { ok: response.ok, message: response.ok ? 'Relay is running' : 'Relay error' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    if (message.includes('fetch') || message.includes('ECONNREFUSED')) {
+      return {
+        ok: false,
+        message: 'Relay 未启动，请运行 scriptmgr relay serve --port 8787',
       };
     }
     return { ok: false, message };

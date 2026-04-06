@@ -13,9 +13,11 @@ export { builtinModules, registerBuiltinModules } from './builtin';
 export {
   notesModule,
   scriptsModule,
+  relayModule,
   mcpModule,
   tasksModule,
   componentsModule,
   trashModule,
+  todosModule,
   settingsModule,
 } from './builtin';

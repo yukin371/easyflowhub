@@ -3,7 +3,7 @@
 > status: active
 > owner: EasyFlowHub maintainers
 > last_verified: 2026-04-07
-> verified_against: e524f8522ecf0a15e40af3e6f7627a34e319e81d
+> verified_against: 752435f + 2026-04-07 working tree
 
 ## 1. Summary
 
@@ -29,7 +29,7 @@
 - Native check command: `cd easyflowhub-app && cargo check --manifest-path src-tauri/Cargo.toml`
 - Go backend test command: `cd scriptmgr-go && go test ./...`
 - Integration / E2E command: `TBD`
-- Smoke test path: `bun tauri dev -> 打开 manager -> 新建 quick note -> 打开 todo card -> 切换 settings / scripts / notes 面板`
+- Smoke test path: `bun tauri dev -> 打开 manager -> 新建 quick note -> 打开 todo card -> 切换 settings / scripts / notes / relay 面板`
 
 ### 2026-04-07 本地验证结果
 
@@ -44,7 +44,7 @@
 |---|---|---|
 | `easyflowhub-app/src` | frontend app | React UI、模块注册、解析器、IPC wrapper、前端测试 |
 | `easyflowhub-app/src-tauri/src` | native desktop shell | Tauri 命令、窗口生命周期、SQLite 持久化、sidecar 集成 |
-| `scriptmgr-go/internal` | backend services | 脚本发现、执行、HTTP、MCP、notes sync、runtime 管理 |
+| `scriptmgr-go/internal` | backend services | 脚本发现、执行、HTTP、MCP、API relay、扩展清单、notes sync、runtime 管理 |
 | `docs` | project governance | roadmap、画像、架构边界、计划、决策、模板 |
 | `scripts` | repo automation | 仓库维护与辅助脚本 |
 | `image` | assets / docs images | README 与设计说明用截图资源 |
@@ -80,6 +80,8 @@
 | Script discovery / execution / tasks | `scriptmgr-go/internal/api`, `discovery`, `executor`, `runtime`, `store` | 脚本业务逻辑归 Go 侧，不应在 Rust/TS 侧重复实现 |
 | MCP server protocol | `scriptmgr-go/internal/mcp` | JSON-RPC、tool schema、dynamic tool routing、notifications |
 | External MCP client wrappers | `scriptmgr-go/internal/mcpcli` | 连接外部 MCP 服务器，不与服务端实现混用 |
+| API relay / provider routing | `scriptmgr-go/internal/relay` | OpenAI 兼容代理、加权路由、failover、provider health |
+| Extension manifest registry | `scriptmgr-go/internal/extensions` | 扩展清单扫描与贡献发现，v1 不执行任意插件代码 |
 | Notes file sync repo | `scriptmgr-go/internal/notes` | 文件仓库同步，与桌面内 SQLite CRUD 分离 |
 
 ## 8. Non-Negotiable Constraints
@@ -88,6 +90,8 @@
 - 不要在 `src-tauri/src` 中重复实现 `scriptmgr-go` 已拥有的脚本发现、执行或 MCP 路由逻辑。
 - 不要把跨模块共享能力直接塞进随机 `utils` 文件；必须先确认 canonical owner。
 - 新原生命令若被前端调用，必须同时补齐 Rust 注册与前端 typed wrapper。
+- API relay 的 provider 选择、失败切换和健康状态必须集中在 `scriptmgr-go/internal/relay`。
+- v1 扩展系统只接受 manifest 贡献，不在 `internal/extensions` 中执行任意代码插件。
 - `docs/roadmap.md` 只保留 active 内容，长期边界决策进入 `docs/decisions`。
 
 ## 9. Known Risks / Recurring Pitfalls
@@ -97,6 +101,8 @@
 - 多窗口、快捷键、autostart、桌面固定等行为强依赖 Windows，回归成本高。
 - `go test ./...` 本地耗时明显长于前端测试，容易被忽略但必须保留。
 - GitHub Actions 当前仍固定 `setup-go: 1.21`，而 `scriptmgr-go/go.mod` 声明 `go 1.25.1`，需要显式对齐以避免 CI toolchain 漂移。
+- 负载均衡 relay 目前只实现 OpenAI 兼容 HTTP 路径、基础权重和 failover，尚未覆盖更复杂的 provider 认证差异与流量配额策略。
+- manager 中的 Relay 面板当前直接编辑 JSON，结构校验主要依赖后端 `relay.SaveConfig`，尚未收敛为表单式配置体验。
 
 ## 10. Unknowns
 

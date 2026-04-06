@@ -75,4 +75,4 @@ export function ManagerSidebar({ modules, activePanel, onPanelChange }: ManagerS
 }
 
 // 保持向后兼容的类型导出（废弃，但保留以避免破坏性更改）
-export type ManagerPanel = 'notes' | 'todos' | 'scripts' | 'mcp' | 'tasks' | 'components' | 'trash' | 'settings';
+export type ManagerPanel = 'notes' | 'todos' | 'scripts' | 'relay' | 'mcp' | 'tasks' | 'components' | 'trash' | 'settings';

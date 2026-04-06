@@ -28,6 +28,8 @@
 - Script discovery / execution / tasks: `scriptmgr-go/internal/{api,discovery,executor,runtime,store}`
 - MCP server protocol and dynamic tools: `scriptmgr-go/internal/mcp`
 - External MCP client wrappers: `scriptmgr-go/internal/mcpcli`
+- OpenAI-compatible API relay and provider routing: `scriptmgr-go/internal/relay`
+- Manifest-based extension discovery: `scriptmgr-go/internal/extensions`
 
 ## Core Working Rules
 
@@ -53,6 +55,8 @@ Before adding any of the following, search the repo for existing owners:
 - settings persistence helpers
 - script discovery / execution helpers
 - MCP schema / routing logic
+- relay provider selection / failover logic
+- extension manifest scanning / contribution loading
 - shared parsers for markdown / todo / image assets
 
 If an existing implementation exists, prefer extending it.  
@@ -63,6 +67,8 @@ If it cannot be reused, explain why and record the new owner.
 - UI components should not scatter raw Tauri `invoke()` command names when `src/lib/tauri` can own them.
 - `src-tauri/src` should not duplicate Go-side script runtime logic.
 - `scriptmgr-go/internal/mcp` should stay protocol-focused, not absorb discovery / executor business logic.
+- `scriptmgr-go/internal/relay` should own provider routing and failover, not `internal/http` or ad hoc CLI helpers.
+- `scriptmgr-go/internal/extensions` should stay declarative and manifest-based in v1, not execute arbitrary plugin code.
 - New manager panels should enter through `src/modules` rather than ad hoc sidebar wiring.
 
 ## Required Pre-Change Output For Risky Work

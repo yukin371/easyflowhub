@@ -152,3 +152,126 @@ export interface RootsResponse {
   roots: string[];
   generated_at: string;
 }
+
+// ============================================================================
+// Relay / Extensions
+// ============================================================================
+
+export interface RelayProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key?: string;
+  weight?: number;
+  enabled: boolean;
+  model_patterns?: string[];
+  headers?: Record<string, string>;
+  timeout_ms?: number;
+}
+
+export interface RelayRoute {
+  id: string;
+  name?: string;
+  path_prefixes?: string[];
+  model_patterns?: string[];
+  provider_ids?: string[];
+  strategy?: string;
+}
+
+export interface RelayConfig {
+  version: number;
+  default_route?: string;
+  providers?: RelayProvider[];
+  routes?: RelayRoute[];
+}
+
+export interface RelayProviderStatus {
+  provider_id: string;
+  healthy: boolean;
+  consecutive_failures: number;
+  last_status_code?: number;
+  last_error?: string;
+  last_picked_at?: string;
+  last_success_at?: string;
+  last_failure_at?: string;
+}
+
+export interface RelayProviderSnapshot {
+  provider: RelayProvider;
+  status: RelayProviderStatus;
+}
+
+export interface ExtensionContributions {
+  relay_providers?: Array<{
+    id: string;
+    name: string;
+    base_url: string;
+    weight?: number;
+    model_patterns?: string[];
+    headers?: Record<string, string>;
+  }>;
+  relay_routes?: Array<{
+    id: string;
+    name?: string;
+    model_patterns?: string[];
+    path_prefixes?: string[];
+    provider_ids?: string[];
+    strategy?: string;
+  }>;
+  script_roots?: Array<{
+    path: string;
+    description?: string;
+  }>;
+  mcp_servers?: Array<{
+    id: string;
+    name: string;
+    command: string;
+    args?: string[];
+    description?: string;
+  }>;
+  manager_modules?: Array<{
+    id: string;
+    name: string;
+    caption?: string;
+    icon?: string;
+    description?: string;
+  }>;
+}
+
+export interface ExtensionManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  homepage?: string;
+  contributions?: ExtensionContributions;
+}
+
+export interface ListedExtension {
+  manifest_path: string;
+  root: string;
+  status: string;
+  error?: string;
+  manifest?: ExtensionManifest;
+}
+
+export interface RelaySnapshot {
+  config: RelayConfig;
+  providers: RelayProviderSnapshot[];
+  extension_roots?: string[];
+  extensions?: ListedExtension[];
+  extension_error?: string;
+}
+
+export interface RelaySnapshotResponse {
+  ok: boolean;
+  snapshot: RelaySnapshot;
+}
+
+export interface ExtensionsResponse {
+  ok: boolean;
+  roots: string[];
+  count: number;
+  extensions: ListedExtension[];
+}

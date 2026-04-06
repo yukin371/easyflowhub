@@ -3,7 +3,7 @@
 > status: active
 > owner: EasyFlowHub maintainers
 > last_verified: 2026-04-07
-> verified_against: e524f8522ecf0a15e40af3e6f7627a34e319e81d
+> verified_against: 752435f + 2026-04-07 working tree
 
 ## 1. Purpose
 
@@ -21,7 +21,7 @@
 | `easyflowhub-app/src/hooks` + `src/modules` | 前端状态组织、模块注册、模块启停 | 不散落新的 Tauri 命令名或复制原生 bridge |
 | `easyflowhub-app/src/lib` | 解析器、typed wrappers、共享前端工具 | 不偷放 feature 业务状态或管理中心布局逻辑 |
 | `easyflowhub-app/src-tauri/src` | 桌面壳、窗口生命周期、SQLite、原生命令 | 不重复实现 Go 侧脚本发现、执行和 MCP 路由 |
-| `scriptmgr-go/internal/*` | 脚本发现、执行、任务、HTTP、MCP、notes sync | 不反向拥有 Tauri UI 状态或桌面窗口行为 |
+| `scriptmgr-go/internal/*` | 脚本发现、执行、任务、HTTP、MCP、relay、extensions、notes sync | 不反向拥有 Tauri UI 状态或桌面窗口行为 |
 | `docs/*` | 当前目标、架构约束、模块上下文、决策生命周期 | 不复制源码可直接推导的大段结构说明 |
 
 ## 3. Dependency Direction
@@ -42,6 +42,8 @@ Forbidden examples:
 - `src/components` 不应直接硬编码 Tauri `invoke('...')` 命令名
 - `src-tauri/src` 不应新增脚本发现 / 执行 / MCP 动态路由的平行实现
 - `scriptmgr-go/internal/mcp` 不应吸收 discovery / executor 的核心业务逻辑
+- `scriptmgr-go/internal/http` 不应私自拥有 relay 的 provider 选择和失败切换逻辑
+- `scriptmgr-go/internal/extensions` 在 v1 不应执行任意插件代码，只加载声明式贡献
 - 文档层不应继续维护与源码分叉的大型“全量结构抄录”文档
 
 ## 4. Canonical Owners
@@ -59,6 +61,8 @@ Every cross-cutting concern must have one canonical owner.
 | Script discovery / execution | `scriptmgr-go/internal/api`, `discovery`, `executor`, `runtime` | 扩展脚本业务时优先进入 Go 侧 | `forbidden` |
 | MCP server + dynamic tool routing | `scriptmgr-go/internal/mcp` | schema、router、notification 只在此维护 | `forbidden` |
 | External MCP client wrappers | `scriptmgr-go/internal/mcpcli` | 调用外部 MCP 用 client，不与 server 混用 | `forbidden` |
+| API relay / provider routing | `scriptmgr-go/internal/relay` | provider config、route selection、failover、proxy 只在此维护 | `forbidden` |
+| Extension manifest loading | `scriptmgr-go/internal/extensions` | 插件清单扫描与贡献发现只在此维护 | `forbidden` |
 | Notes repo sync | `scriptmgr-go/internal/notes` | 文件仓库同步只在此维护 | `restricted` |
 | Shared frontend parsing helpers | `easyflowhub-app/src/lib` | Markdown / todo / image parsing 优先扩展现有 helper | `restricted` |
 
@@ -81,6 +85,8 @@ Before adding a new shared helper, service or abstraction, the implementer must 
 - 前端 parser / formatter 只放 `easyflowhub-app/src/lib`
 - 桌面原生命令只放 `easyflowhub-app/src-tauri/src`
 - `scriptmgr` 协议层代码只放 `scriptmgr-go/internal/http`、`internal/mcp`、`internal/mcpcli`
+- relay 代理与 provider 逻辑只放 `scriptmgr-go/internal/relay`
+- manifest 扩展发现只放 `scriptmgr-go/internal/extensions`
 - 临时迁移适配层必须在注释或文档中显式标记 cleanup 条件
 
 ## 7. Forbidden Patterns
@@ -89,6 +95,8 @@ Before adding a new shared helper, service or abstraction, the implementer must 
 - 把 domain 规则塞进名字泛化的 `utils` 文件夹
 - 为了赶进度绕开 `src/lib/tauri` 直接在组件中写命令名
 - 在 Rust 侧复制 Go 侧已有的脚本业务逻辑
+- 在 `internal/http`、`internal/mcpcli` 或随机 `utils` 中复制 relay 选路逻辑
+- 让 v1 插件系统直接执行第三方代码而没有边界和权限设计
 - 在 `docs/plans` 长期堆积已完成方案而不收敛到 roadmap / ADR / MODULE
 
 ## 8. Exception Process

@@ -6,10 +6,12 @@
 
 - **CLI 工具** - 管理本地 PowerShell、Python、Batch 脚本
 - **MCP 服务器** - 为 AI 助手提供脚本调用接口
+- **API Relay** - OpenAI 兼容的多 provider 中转、加权路由与基础 failover
 - **渐进式工具披露** - MCP 工具按需加载，避免上下文过长
 - **异步执行** - 后台运行脚本，追踪任务状态
 - **脚本分类** - 支持 category/tag 组织脚本
 - **笔记集成** - 与 Claude 笔记同步
+- **Manifest 扩展** - 通过 `plugin.json` 暴露 relay / MCP / manager 扩展贡献
 
 ## 安装
 
@@ -58,6 +60,9 @@ Claude Code 配置示例：
 | `tasks [--status STATUS]` | 列出任务 |
 | `favorites [list\|add\|remove]` | 管理收藏 |
 | `mcp` | 启动 MCP 服务器 |
+| `relay serve` | 启动 OpenAI 兼容 relay |
+| `relay config` | 查看当前 relay 配置与 provider health |
+| `extensions list` | 列出 manifest 扩展 |
 | `serve [addr]` | 启动 HTTP API 服务器 |
 | `--version` | 显示版本 |
 
@@ -86,11 +91,70 @@ scriptmgr serve :8765
 - `POST /api/run` - 运行脚本
 - `GET /api/tasks` - 任务列表
 - `GET /api/tasks/{id}` - 任务详情
+- `GET /api/relay/config` - 读取 relay 配置快照（供 manager 使用）
+- `PUT /api/relay/config` - 保存 relay 配置
+- `GET /api/extensions` - 列出 manifest 扩展
+
+说明：
+- `scriptmgr serve` 负责管理接口
+- `scriptmgr relay serve` 负责真正的 OpenAI 兼容转发入口
+
+## Relay API
+
+启动 relay：
+```bash
+scriptmgr relay serve --port 8787
+```
+
+示例 `relay.json`：
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "primary",
+      "name": "Primary OpenAI-Compatible",
+      "base_url": "https://api.example.com",
+      "enabled": true,
+      "weight": 2,
+      "model_patterns": ["gpt-*"]
+    },
+    {
+      "id": "backup",
+      "name": "Backup OpenAI-Compatible",
+      "base_url": "https://backup.example.com",
+      "enabled": true,
+      "weight": 1,
+      "model_patterns": ["gpt-*"]
+    }
+  ],
+  "routes": [
+    {
+      "id": "default-openai",
+      "path_prefixes": ["/v1/"],
+      "model_patterns": ["gpt-*"],
+      "provider_ids": ["primary", "backup"],
+      "strategy": "weighted_round_robin"
+    }
+  ]
+}
+```
+
+端点：
+- `GET /health`
+- `GET /api/relay/config`
+- `PUT /api/relay/config`
+- `GET /api/extensions`
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+- `GET /v1/models`
 
 ## 配置
 
 - 状态目录：`~/.config/scriptmgr/`
 - MCP 配置：`~/.config/scriptmgr/mcp_config.json`
+- Relay 配置：`~/.config/scriptmgr/relay.json`
+- 扩展目录：`~/.config/scriptmgr/extensions/` 或可执行文件同级 `extensions/`
 
 ## 版本
 

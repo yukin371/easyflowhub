@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"scriptmgr/internal/model"
+	"scriptmgr/internal/relay"
 )
 
 // API defines the interface for script operations needed by HTTP server
@@ -26,26 +27,33 @@ type API interface {
 
 // Server handles HTTP API requests
 type Server struct {
-	api  API
-	mux  *http.ServeMux
-	hub  *Hub
-	mcp  *MCPServer
+	api   API
+	mux   *http.ServeMux
+	hub   *Hub
+	mcp   *MCPServer
+	relay *relay.Service
 }
 
 // MCPServer handles MCP-related state tracking
 type MCPServer struct {
-	mu           sync.RWMutex
+	mu               sync.RWMutex
 	loadedCategories map[string]bool
-	api           API
+	api              API
 }
 
 // NewServer creates a new HTTP server
 func NewServer(api API) *Server {
+	return NewServerWithRelay(api, nil)
+}
+
+// NewServerWithRelay creates a new HTTP server with optional relay integration.
+func NewServerWithRelay(api API, relayService *relay.Service) *Server {
 	s := &Server{
-		api:  api,
-		mux:  http.NewServeMux(),
-		hub:  NewHub(),
-		mcp:  &MCPServer{
+		api:   api,
+		mux:   http.NewServeMux(),
+		hub:   NewHub(),
+		relay: relayService,
+		mcp: &MCPServer{
 			loadedCategories: make(map[string]bool),
 			api:              api,
 		},
@@ -68,6 +76,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/mcp/categories", s.handleListMCPCategories)
 	s.mux.HandleFunc("POST /api/mcp/load/{category}", s.handleMCPLoadCategory)
 	s.mux.HandleFunc("POST /api/mcp/unload/{category}", s.handleMCPUnloadCategory)
+	if s.relay != nil {
+		s.mux.HandleFunc("GET /api/relay/config", s.handleRelayGetConfig)
+		s.mux.HandleFunc("PUT /api/relay/config", s.handleRelayPutConfig)
+		s.mux.HandleFunc("GET /api/extensions", s.handleListExtensions)
+	}
 }
 
 // Hub returns the WebSocket hub for external integration
@@ -84,7 +97,7 @@ func (s *Server) StartHub() {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Add CORS headers for Tauri
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 	if r.Method == "OPTIONS" {
@@ -105,11 +118,11 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"count":       len(scripts),
-		"search":      search,
-		"roots":       roots,
-		"scripts":     scripts,
+		"ok":           true,
+		"count":        len(scripts),
+		"search":       search,
+		"roots":        roots,
+		"scripts":      scripts,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -128,8 +141,8 @@ func (s *Server) handleDescribeScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"script":      script,
+		"ok":           true,
+		"script":       script,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -163,8 +176,8 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"script":      script,
+		"ok":           true,
+		"script":       script,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -220,10 +233,10 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"count":       len(tasks),
-		"status":      status,
-		"tasks":       tasks,
+		"ok":           true,
+		"count":        len(tasks),
+		"status":       status,
+		"tasks":        tasks,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -301,8 +314,8 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"session":     session,
+		"ok":           true,
+		"session":      session,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -344,8 +357,8 @@ func (s *Server) handleListMCPCategories(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
-		"categories":  result,
+		"ok":           true,
+		"categories":   result,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -364,7 +377,7 @@ func (s *Server) handleMCPLoadCategory(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
-		"category":  category,
+		"category": category,
 		"loaded":   true,
 	})
 }
@@ -383,7 +396,50 @@ func (s *Server) handleMCPUnloadCategory(w http.ResponseWriter, r *http.Request)
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
-		"category":  category,
+		"category": category,
 		"loaded":   false,
+	})
+}
+
+func (s *Server) handleRelayGetConfig(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := s.relay.Snapshot()
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"snapshot": snapshot,
+	})
+}
+
+func (s *Server) handleRelayPutConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg relay.Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if err := s.relay.SaveConfig(cfg); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.handleRelayGetConfig(w, r)
+}
+
+func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
+	items, roots, err := s.relay.ListExtensions()
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"roots":      roots,
+		"count":      len(items),
+		"extensions": items,
 	})
 }

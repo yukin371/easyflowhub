@@ -5,10 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"scriptmgr/internal/model"
+	"scriptmgr/internal/relay"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -292,5 +295,95 @@ func TestHandleGetTask_NotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleRelayGetConfig(t *testing.T) {
+	stateDir := t.TempDir()
+	relayService, err := relay.NewService(stateDir)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	if err := relayService.SaveConfig(relay.Config{
+		Version: 1,
+		Providers: []relay.Provider{
+			{ID: "primary", Name: "Primary", BaseURL: "https://api.example.com", Enabled: true},
+		},
+		Routes: []relay.Route{
+			{ID: "default", PathPrefixes: []string{"/v1/"}, ProviderIDs: []string{"primary"}},
+		},
+	}); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	srv := NewServerWithRelay(&MockAPI{}, relayService)
+	req := httptest.NewRequest(http.MethodGet, "/api/relay/config", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		OK       bool `json:"ok"`
+		Snapshot struct {
+			Config struct {
+				Providers []relay.Provider `json:"providers"`
+			} `json:"config"`
+		} `json:"snapshot"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if !response.OK || len(response.Snapshot.Config.Providers) != 1 {
+		t.Fatalf("unexpected relay response: %+v", response)
+	}
+}
+
+func TestHandleListExtensions(t *testing.T) {
+	stateDir := t.TempDir()
+	root := filepath.Join(stateDir, "extensions", "sample")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{"id":"sample","name":"Sample","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	relayService, err := relay.NewService(stateDir)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+
+	srv := NewServerWithRelay(&MockAPI{}, relayService)
+	req := httptest.NewRequest(http.MethodGet, "/api/extensions", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		OK         bool `json:"ok"`
+		Count      int  `json:"count"`
+		Extensions []struct {
+			Status   string `json:"status"`
+			Manifest *struct {
+				ID string `json:"id"`
+			} `json:"manifest"`
+		} `json:"extensions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if !response.OK || response.Count != 1 {
+		t.Fatalf("unexpected extension response: %+v", response)
+	}
+	if response.Extensions[0].Manifest == nil || response.Extensions[0].Manifest.ID != "sample" {
+		t.Fatalf("unexpected manifest payload: %+v", response.Extensions[0].Manifest)
 	}
 }
