@@ -78,6 +78,14 @@ func (r *Registry) List() ([]ListedExtension, error) {
 	return listed, nil
 }
 
+func (r *Registry) EffectiveContributions() (EffectiveContributions, error) {
+	items, err := r.List()
+	if err != nil {
+		return EffectiveContributions{}, err
+	}
+	return NewContributionAggregator().Merge(items), nil
+}
+
 func loadManifest(root, manifestPath string) ListedExtension {
 	item := ListedExtension{
 		ManifestPath: manifestPath,

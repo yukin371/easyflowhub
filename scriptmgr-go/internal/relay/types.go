@@ -64,11 +64,12 @@ type ProviderSnapshot struct {
 }
 
 type Snapshot struct {
-	Config         Config                       `json:"config"`
-	Providers      []ProviderSnapshot           `json:"providers"`
-	ExtensionRoots []string                     `json:"extension_roots,omitempty"`
-	Extensions     []extensions.ListedExtension `json:"extensions,omitempty"`
-	ExtensionError string                       `json:"extension_error,omitempty"`
+	Config          Config                       `json:"config"`
+	EffectiveConfig Config                       `json:"effective_config,omitempty"`
+	Providers       []ProviderSnapshot           `json:"providers"`
+	ExtensionRoots  []string                     `json:"extension_roots,omitempty"`
+	Extensions      []extensions.ListedExtension `json:"extensions,omitempty"`
+	ExtensionError  string                       `json:"extension_error,omitempty"`
 }
 
 func DefaultConfig() Config {

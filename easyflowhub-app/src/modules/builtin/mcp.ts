@@ -1,14 +1,16 @@
 /**
  * MCP 模块定义
  */
-import type { FeatureModule } from '../types';
 import { McpPanel } from '../../components/manager/mcp/McpPanel';
+import { defineBuiltinModule } from './defineBuiltinModule';
 
-export const mcpModule: FeatureModule = {
-  id: 'mcp',
-  name: 'MCP',
-  icon: '链',
-  caption: 'MCP Server',
-  defaultEnabled: false,
-  component: McpPanel,
-};
+export const mcpModule = defineBuiltinModule(
+  {
+    id: 'mcp',
+    name: 'MCP',
+    icon: '链',
+    caption: 'MCP Server',
+    defaultEnabled: false,
+  },
+  McpPanel
+);

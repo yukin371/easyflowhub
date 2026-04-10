@@ -11,23 +11,14 @@ import {
   hasRelayContributions,
   importRelayContributions,
 } from './importRelayContributions';
+import {
+  getEffectiveRelayContributionSummary,
+  getEffectiveRelayContributionTotals,
+} from './effectiveRelayContributions';
+import type { EffectiveExtensionContributions } from '../../../types/scriptmgr';
+import { navigateToManagerExtension } from '../shared/extensionNavigation';
 
 type ServiceStatus = 'checking' | 'online' | 'offline';
-
-function summarizeContributions(extension: ListedExtension): number {
-  const contributions = extension.manifest?.contributions;
-  if (!contributions) {
-    return 0;
-  }
-
-  return (
-    (contributions.relay_providers?.length ?? 0) +
-    (contributions.relay_routes?.length ?? 0) +
-    (contributions.script_roots?.length ?? 0) +
-    (contributions.mcp_servers?.length ?? 0) +
-    (contributions.manager_modules?.length ?? 0)
-  );
-}
 
 function formatDate(value?: string): string {
   if (!value) {
@@ -42,6 +33,8 @@ export function RelayPanel() {
   const [relayStatus, setRelayStatus] = useState<ServiceStatus>('checking');
   const [snapshot, setSnapshot] = useState<RelaySnapshot | null>(null);
   const [extensions, setExtensions] = useState<ListedExtension[]>([]);
+  const [effectiveContributions, setEffectiveContributions] =
+    useState<EffectiveExtensionContributions | null>(null);
   const [extensionRoots, setExtensionRoots] = useState<string[]>([]);
   const [configText, setConfigText] = useState('{\n  "version": 1\n}');
   const [error, setError] = useState<string | null>(null);
@@ -53,11 +46,12 @@ export function RelayPanel() {
     setLoading(true);
     setError(null);
 
-    const [scriptmgrHealth, relayHealth, snapshotResult, extensionsResult] = await Promise.allSettled([
+    const [scriptmgrHealth, relayHealth, snapshotResult, extensionsResult, contributionsResult] = await Promise.allSettled([
       checkServerHealth(),
       checkRelayRuntimeHealth(),
       relayApi.getSnapshot(),
       extensionsApi.list(),
+      extensionsApi.contributions(),
     ]);
 
     if (scriptmgrHealth.status === 'fulfilled') {
@@ -87,6 +81,15 @@ export function RelayPanel() {
     } else if (snapshotResult.status === 'fulfilled') {
       setExtensions(snapshotResult.value.extensions ?? []);
       setExtensionRoots(snapshotResult.value.extension_roots ?? []);
+    }
+
+    if (contributionsResult.status === 'fulfilled') {
+      setEffectiveContributions(contributionsResult.value.contributions);
+      if (extensionsResult.status !== 'fulfilled') {
+        setExtensionRoots(contributionsResult.value.roots);
+      }
+    } else {
+      setEffectiveContributions(null);
     }
 
     setLoading(false);
@@ -146,8 +149,16 @@ export function RelayPanel() {
     [snapshot]
   );
 
-  const routesCount = snapshot?.config.routes?.length ?? 0;
-  const providersCount = snapshot?.config.providers?.length ?? 0;
+  const configuredRoutesCount = snapshot?.config.routes?.length ?? 0;
+  const configuredProvidersCount = snapshot?.config.providers?.length ?? 0;
+  const runtimeRoutesCount =
+    snapshot?.effective_config?.routes?.length ?? snapshot?.config.routes?.length ?? 0;
+  const runtimeProvidersCount =
+    snapshot?.effective_config?.providers?.length ?? snapshot?.config.providers?.length ?? 0;
+  const effectiveRelayTotals = useMemo(
+    () => getEffectiveRelayContributionTotals(effectiveContributions),
+    [effectiveContributions]
+  );
   const loadedExtensions = extensions.filter((item) => item.status === 'loaded').length;
 
   return (
@@ -180,9 +191,11 @@ export function RelayPanel() {
         <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Providers / Routes</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
-            {providersCount} / {routesCount}
+            {runtimeProvidersCount} / {runtimeRoutesCount}
           </p>
-          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">健康 provider {healthyProviders} 个</p>
+          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">
+            运行时视图，健康 provider {healthyProviders} 个
+          </p>
         </div>
         <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Extensions</p>
@@ -254,7 +267,7 @@ scriptmgr relay serve --port 8787`}
                 Provider Health
               </h3>
               <p className="text-xs text-[color:var(--manager-ink-subtle)]">
-                {loading ? '加载中...' : `${healthyProviders} / ${providersCount} healthy`}
+                {loading ? '加载中...' : `${healthyProviders} / ${runtimeProvidersCount} healthy`}
               </p>
             </div>
 
@@ -329,9 +342,25 @@ scriptmgr relay serve --port 8787`}
             </div>
           </div>
 
+          <div className="mt-3 rounded-[16px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.7)] px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
+              Effective Relay Overlay
+            </p>
+            <div className="mt-2 grid gap-2 text-xs text-[color:var(--manager-ink-soft)] md:grid-cols-2">
+              <div>static config: provider {configuredProvidersCount} / route {configuredRoutesCount}</div>
+              <div>
+                extension overlay: provider {effectiveRelayTotals.providerCount} / route {effectiveRelayTotals.routeCount}
+              </div>
+            </div>
+          </div>
+
           <div className="mt-4 space-y-3">
             {extensions.map((extension) => {
               const relaySummary = getRelayContributionSummary(extension);
+              const effectiveRelaySummary = getEffectiveRelayContributionSummary(
+                extension,
+                effectiveContributions
+              );
               const canImportRelay = hasRelayContributions(extension);
 
               return (
@@ -365,7 +394,10 @@ scriptmgr relay serve --port 8787`}
 
                   <div className="mt-3 grid gap-2 text-xs text-[color:var(--manager-ink-soft)] md:grid-cols-2">
                     <div>root: {extension.root}</div>
-                    <div>contributions: {summarizeContributions(extension)}</div>
+                    <div>
+                      effective relay: provider {effectiveRelaySummary.providerCount} / route{' '}
+                      {effectiveRelaySummary.routeCount}
+                    </div>
                   </div>
 
                   {canImportRelay && (
@@ -376,7 +408,7 @@ scriptmgr relay serve --port 8787`}
                             Relay Preset
                           </p>
                           <p className="mt-1">
-                            provider {relaySummary.providerCount} 个，route {relaySummary.routeCount} 个。导入后只写入上方编辑器，默认新增 provider 为禁用状态。
+                            manifest 中 provider {relaySummary.providerCount} 个，route {relaySummary.routeCount} 个。当前 effective overlay 为 provider {effectiveRelaySummary.providerCount} 个、route {effectiveRelaySummary.routeCount} 个；导入后只写入上方编辑器，默认新增 provider 为禁用状态。
                           </p>
                         </div>
                         <button
@@ -387,6 +419,15 @@ scriptmgr relay serve --port 8787`}
                         </button>
                       </div>
                     </div>
+                  )}
+
+                  {extension.manifest?.id && (
+                    <button
+                      onClick={() => navigateToManagerExtension(extension.manifest!.id)}
+                      className="mt-3 rounded-full border border-[color:var(--manager-border)] bg-white/70 px-4 py-2 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                    >
+                      查看扩展详情
+                    </button>
                   )}
 
                   {extension.error && <p className="mt-2 text-xs text-red-700">{extension.error}</p>}

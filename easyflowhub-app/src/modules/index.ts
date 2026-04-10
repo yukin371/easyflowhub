@@ -7,12 +7,14 @@ export type { FeatureModule, ModuleConfig, ModulesConfig, ModulesConfigResponse,
 
 // 注册表
 export { moduleRegistry, ModuleRegistry } from './registry';
+export { useEnabledModules, useToggleableModules } from './hooks';
 
 // 内置模块
 export { builtinModules, registerBuiltinModules } from './builtin';
 export {
   notesModule,
   scriptsModule,
+  extensionsModule,
   relayModule,
   mcpModule,
   tasksModule,

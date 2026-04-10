@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"scriptmgr/internal/extensions"
+	"scriptmgr/internal/mcpcli"
 	"scriptmgr/internal/model"
 	"scriptmgr/internal/relay"
 )
@@ -74,12 +76,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /ws", ServeWS(s.hub, DefaultUpgrader))
 	// MCP category management endpoints
 	s.mux.HandleFunc("GET /api/mcp/categories", s.handleListMCPCategories)
+	s.mux.HandleFunc("GET /api/mcp/servers", s.handleListMCPServers)
 	s.mux.HandleFunc("POST /api/mcp/load/{category}", s.handleMCPLoadCategory)
 	s.mux.HandleFunc("POST /api/mcp/unload/{category}", s.handleMCPUnloadCategory)
 	if s.relay != nil {
 		s.mux.HandleFunc("GET /api/relay/config", s.handleRelayGetConfig)
 		s.mux.HandleFunc("PUT /api/relay/config", s.handleRelayPutConfig)
 		s.mux.HandleFunc("GET /api/extensions", s.handleListExtensions)
+		s.mux.HandleFunc("GET /api/extensions/contributions", s.handleListExtensionContributions)
 	}
 }
 
@@ -363,6 +367,29 @@ func (s *Server) handleListMCPCategories(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (s *Server) handleListMCPServers(w http.ResponseWriter, r *http.Request) {
+	effectiveContributions := extensions.EffectiveContributions{}
+	if s.relay != nil {
+		var err error
+		effectiveContributions, err = s.relay.EffectiveContributions()
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	catalog, err := mcpcli.LoadEffectiveCatalog(effectiveContributions)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"catalog": catalog,
+	})
+}
+
 // handleMCPLoadCategory marks a category as loaded
 func (s *Server) handleMCPLoadCategory(w http.ResponseWriter, r *http.Request) {
 	category := r.PathValue("category")
@@ -441,5 +468,19 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 		"roots":      roots,
 		"count":      len(items),
 		"extensions": items,
+	})
+}
+
+func (s *Server) handleListExtensionContributions(w http.ResponseWriter, r *http.Request) {
+	contributions, err := s.relay.EffectiveContributions()
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":            true,
+		"roots":         s.relay.ExtensionRoots(),
+		"contributions": contributions,
 	})
 }

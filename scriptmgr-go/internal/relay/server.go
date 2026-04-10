@@ -32,6 +32,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/relay/config", s.handleGetConfig)
 	s.mux.HandleFunc("PUT /api/relay/config", s.handlePutConfig)
 	s.mux.HandleFunc("GET /api/extensions", s.handleListExtensions)
+	s.mux.HandleFunc("GET /api/extensions/contributions", s.handleEffectiveContributions)
 	s.mux.Handle("/v1/", s.service.ProxyHandler(""))
 	s.mux.Handle("/relay/v1/", s.service.ProxyHandler("/relay"))
 }
@@ -120,5 +121,22 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 		"roots":      roots,
 		"count":      len(items),
 		"extensions": items,
+	})
+}
+
+func (s *Server) handleEffectiveContributions(w http.ResponseWriter, r *http.Request) {
+	contributions, err := s.service.EffectiveContributions()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"ok":    false,
+			"error": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":            true,
+		"roots":         s.service.ExtensionRoots(),
+		"contributions": contributions,
 	})
 }

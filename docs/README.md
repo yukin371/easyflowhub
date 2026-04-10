@@ -13,6 +13,33 @@
 7. 相关 `docs/decisions/ADR-*.md`
 8. 相关 `docs/plans/YYYY-MM-DD-*.md`
 
+## Fast Paths
+
+如果目标是“快速进入开发”，不要先扫完整个 `docs/plans` 目录，按任务类型走最短路径：
+
+### 扩展平台 / VSCode 风格扩展
+
+1. [roadmap.md](./roadmap.md)
+2. [plans/2026-04-11-vscode-style-extension-platform-roadmap.md](./plans/2026-04-11-vscode-style-extension-platform-roadmap.md)
+3. [plans/2026-04-08-extension-enhancement-plan.md](./plans/2026-04-08-extension-enhancement-plan.md)
+4. [plans/2026-04-07-extension-lifecycle-design.md](./plans/2026-04-07-extension-lifecycle-design.md)
+5. 相关 `MODULE.md`
+
+### Manager 模块化 / 面板接入
+
+1. [roadmap.md](./roadmap.md)
+2. [../easyflowhub-app/src/modules/MODULE.md](../easyflowhub-app/src/modules/MODULE.md)
+3. [plans/2026-04-11-vscode-style-extension-platform-roadmap.md](./plans/2026-04-11-vscode-style-extension-platform-roadmap.md)
+4. 最近一次相关的 `manager` 子模块文档
+
+### 打包 / 本地验收
+
+1. [roadmap.md](./roadmap.md)
+2. [checklists/windows-package-smoke.md](./checklists/windows-package-smoke.md)
+3. [checklists/scripted-smoke.md](./checklists/scripted-smoke.md)
+
+更细的 plans 索引见 [plans/README.md](./plans/README.md)。
+
 ## Document Types
 
 | Path | Purpose | Maintenance rule |
@@ -34,7 +61,15 @@
 - 实施 / review 清单: [checklists/review-checklist.md](./checklists/review-checklist.md)
 - Scripted smoke: [checklists/scripted-smoke.md](./checklists/scripted-smoke.md)
 - Windows 打包 smoke: [checklists/windows-package-smoke.md](./checklists/windows-package-smoke.md)
+- plans 快速索引: [plans/README.md](./plans/README.md)
 - 通用模板入口: [templates/AI_REPO_BOOTSTRAP_PLAYBOOK.md](./templates/AI_REPO_BOOTSTRAP_PLAYBOOK.md)
+
+## Known Historical Plans
+
+- [2026-03-23-modular-architecture-design.md](./plans/2026-03-23-modular-architecture-design.md)
+  - 这是早期 `Deskflow` 命名阶段的模块化设计，现已降级为历史指针文档，不再作为 active source of truth
+  - manager 模块入口以 `easyflowhub-app/src/modules/MODULE.md` 为准
+  - 扩展平台演进以 `2026-04-11-vscode-style-extension-platform-roadmap.md` 与 `2026-04-08-extension-enhancement-plan.md` 为准
 
 ## Doc Hygiene Rules
 

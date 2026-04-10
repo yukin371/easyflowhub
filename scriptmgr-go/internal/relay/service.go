@@ -77,8 +77,9 @@ func (s *Service) Snapshot() (Snapshot, error) {
 	}
 
 	snapshot := Snapshot{
-		Config:    cfg,
-		Providers: s.providerSnapshots(cfg),
+		Config:          cfg,
+		EffectiveConfig: cfg.Normalize(),
+		Providers:       s.providerSnapshots(cfg.Normalize()),
 	}
 
 	if s.extensions != nil {
@@ -88,6 +89,12 @@ func (s *Service) Snapshot() (Snapshot, error) {
 			snapshot.ExtensionError = err.Error()
 		} else {
 			snapshot.Extensions = items
+			if effectiveCfg, err := s.mergeEffectiveConfig(cfg); err == nil {
+				snapshot.EffectiveConfig = effectiveCfg
+				snapshot.Providers = s.providerSnapshots(effectiveCfg)
+			} else {
+				snapshot.ExtensionError = err.Error()
+			}
 		}
 	}
 
@@ -101,7 +108,7 @@ func (s *Service) ProxyHandler(stripPrefix string) http.Handler {
 }
 
 func (s *Service) handleProxy(w http.ResponseWriter, r *http.Request, stripPrefix string) {
-	cfg, err := s.LoadConfig()
+	cfg, err := s.EffectiveConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"ok":    false,

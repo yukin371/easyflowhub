@@ -6,6 +6,7 @@ export { ManagerPage } from './ManagerPage';
 export { ManagerSidebar } from './ManagerSidebar';
 export type { ManagerPanel } from './ManagerSidebar';
 export { NotesPanel } from './NotesPanel';
+export { ExtensionsPanel } from './extensions/ExtensionsPanel';
 export { ScriptsPanel } from './scripts/ScriptsPanel';
 export { RelayPanel } from './relay/RelayPanel';
 export { McpPanel } from './mcp/McpPanel';

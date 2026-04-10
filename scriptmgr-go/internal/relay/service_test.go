@@ -53,6 +53,17 @@ func snapshotByProviderID(t *testing.T, service *Service) map[string]ProviderSna
 	return items
 }
 
+func writeManifest(t *testing.T, path string, content string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+}
+
 func TestStoreLoadSaveRoundTrip(t *testing.T) {
 	store := NewStore(t.TempDir())
 	cfg := Config{
@@ -246,7 +257,7 @@ func TestProxyRetriesOn429AndUsesProviderSpecificAuth(t *testing.T) {
 				BaseURL: secondaryServer.URL,
 				Enabled: true,
 				Headers: map[string]string{
-					"Authorization": "Token secondary-secret",
+					"Authorization":  "Token secondary-secret",
 					"X-Provider-Key": "secondary-secret",
 				},
 			},
@@ -501,5 +512,136 @@ func TestServerListsExtensions(t *testing.T) {
 	}
 	if response.Extensions[0].Manifest == nil || response.Extensions[0].Manifest.ID != "sample" {
 		t.Fatalf("expected sample manifest, got %+v", response.Extensions[0].Manifest)
+	}
+}
+
+func TestEffectiveConfigMergesExtensionRelayContributions(t *testing.T) {
+	stateDir := t.TempDir()
+	store := NewStore(stateDir)
+	if err := store.Save(DefaultConfig()); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	root := filepath.Join(stateDir, "extensions")
+	writeManifest(t, filepath.Join(root, "sample", "plugin.json"), `{
+  "id": "sample",
+  "name": "Sample",
+  "version": "1.0.0",
+  "contributions": {
+    "relay_providers": [
+      { "id": "provider-ext", "name": "Extension Provider", "base_url": "https://ext.example.com" }
+    ],
+    "relay_routes": [
+      { "id": "route-ext", "provider_ids": ["provider-ext"], "path_prefixes": ["/v1/"] }
+    ]
+  }
+}`)
+
+	service := NewServiceWithDeps(store, extensions.NewRegistryWithRoots([]string{root}))
+	cfg, err := service.EffectiveConfig()
+	if err != nil {
+		t.Fatalf("EffectiveConfig failed: %v", err)
+	}
+
+	if len(cfg.Providers) != 1 || cfg.Providers[0].ID != "provider-ext" {
+		t.Fatalf("unexpected providers %+v", cfg.Providers)
+	}
+	if cfg.Providers[0].Source != "extension:sample" {
+		t.Fatalf("unexpected provider source %q", cfg.Providers[0].Source)
+	}
+	if len(cfg.Routes) != 1 || cfg.Routes[0].ID != "route-ext" {
+		t.Fatalf("unexpected routes %+v", cfg.Routes)
+	}
+}
+
+func TestProxyUsesExtensionRelayContributions(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"provider":"extension"}`))
+	}))
+	defer upstream.Close()
+
+	stateDir := t.TempDir()
+	store := NewStore(stateDir)
+	if err := store.Save(DefaultConfig()); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	root := filepath.Join(stateDir, "extensions")
+	writeManifest(t, filepath.Join(root, "sample", "plugin.json"), `{
+  "id": "sample",
+  "name": "Sample",
+  "version": "1.0.0",
+  "contributions": {
+    "relay_providers": [
+      { "id": "provider-ext", "name": "Extension Provider", "base_url": "`+upstream.URL+`" }
+    ]
+  }
+}`)
+
+	service := NewServiceWithDeps(store, extensions.NewRegistryWithRoots([]string{root}))
+	rec := performRelayRequest(
+		t,
+		service,
+		http.MethodPost,
+		"/v1/chat/completions",
+		[]byte(`{"model":"gpt-5","messages":[]}`),
+		nil,
+	)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if provider := rec.Header().Get("X-EasyFlowHub-Relay-Provider"); provider != "provider-ext" {
+		t.Fatalf("expected extension provider, got %q", provider)
+	}
+}
+
+func TestServerListsEffectiveContributions(t *testing.T) {
+	stateDir := t.TempDir()
+	root := filepath.Join(stateDir, "extensions")
+	writeManifest(t, filepath.Join(root, "sample", "plugin.json"), `{
+  "id": "sample",
+  "name": "Sample",
+  "version": "1.0.0",
+  "contributions": {
+    "relay_providers": [
+      { "id": "provider-ext", "name": "Extension Provider", "base_url": "https://ext.example.com" }
+    ]
+  }
+}`)
+
+	server, err := NewServer(stateDir)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/extensions/contributions", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var response struct {
+		OK            bool `json:"ok"`
+		Contributions struct {
+			RelayProviders []struct {
+				ID     string `json:"id"`
+				Source struct {
+					ExtensionID string `json:"extension_id"`
+				} `json:"source"`
+			} `json:"relay_providers"`
+		} `json:"contributions"`
+	}
+	if err := json.NewDecoder(strings.NewReader(rec.Body.String())).Decode(&response); err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+	if !response.OK || len(response.Contributions.RelayProviders) != 1 {
+		t.Fatalf("unexpected response %+v", response)
+	}
+	if response.Contributions.RelayProviders[0].Source.ExtensionID != "sample" {
+		t.Fatalf("unexpected contribution source %+v", response.Contributions.RelayProviders[0].Source)
 	}
 }

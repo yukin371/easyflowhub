@@ -8,6 +8,7 @@ import { notesModule } from './notes';
 import { scriptsModule } from './scripts';
 import { relayModule } from './relay';
 import { mcpModule } from './mcp';
+import { extensionsModule } from './extensions';
 import { tasksModule } from './tasks';
 import { componentsModule } from './components';
 import { trashModule } from './trash';
@@ -20,6 +21,7 @@ import { settingsModule } from './settings';
 export const builtinModules: FeatureModule[] = [
   notesModule,
   scriptsModule,
+  extensionsModule,
   relayModule,
   mcpModule,
   tasksModule,
@@ -40,6 +42,7 @@ export function registerBuiltinModules(): void {
 export {
   notesModule,
   scriptsModule,
+  extensionsModule,
   relayModule,
   mcpModule,
   tasksModule,

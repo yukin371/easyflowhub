@@ -9,6 +9,7 @@ import (
 	"scriptmgr/internal/config"
 	"scriptmgr/internal/discovery"
 	"scriptmgr/internal/executor"
+	"scriptmgr/internal/extensions"
 	"scriptmgr/internal/store"
 )
 
@@ -25,7 +26,12 @@ func main() {
 	}
 
 	s := store.New(cfg)
-	d := discovery.New(s)
+	registry, err := extensions.NewRegistry(cfg.StateDir)
+	if err != nil {
+		slog.Error("failed to init extensions registry", "error", err)
+		os.Exit(1)
+	}
+	d := discovery.NewWithExtensionsRegistry(s, registry)
 	e := executor.New(s, d)
 
 	// Initialize override store

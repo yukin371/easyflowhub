@@ -11,6 +11,9 @@ import type {
   RelaySnapshot,
   RelaySnapshotResponse,
   ExtensionsResponse,
+  ExtensionContributionsResponse,
+  MCPServerCatalogEntry,
+  MCPServerCatalogResponse,
 } from '../../types/scriptmgr';
 
 // ============================================================================
@@ -251,6 +254,12 @@ export const mcpApi = {
     ).then((r) => r.categories);
   },
 
+  listServers: async (): Promise<MCPServerCatalogEntry[]> => {
+    return fetchJSON<MCPServerCatalogResponse>(`${baseUrl}/api/mcp/servers`).then(
+      (response) => response.catalog.servers
+    );
+  },
+
   /**
    * Load a category (mark as loaded for MCP)
    */
@@ -294,6 +303,10 @@ export const relayApi = {
 export const extensionsApi = {
   list: async (): Promise<ExtensionsResponse> => {
     return fetchJSON<ExtensionsResponse>(`${baseUrl}/api/extensions`);
+  },
+
+  contributions: async (): Promise<ExtensionContributionsResponse> => {
+    return fetchJSON<ExtensionContributionsResponse>(`${baseUrl}/api/extensions/contributions`);
   },
 };
 

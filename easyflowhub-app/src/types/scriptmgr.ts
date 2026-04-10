@@ -241,6 +241,46 @@ export interface ExtensionContributions {
   }>;
 }
 
+export interface ContributionSource {
+  extension_id: string;
+  extension_name: string;
+  extension_version: string;
+  manifest_path: string;
+  root: string;
+}
+
+export interface EffectiveExtensionContributions {
+  relay_providers?: Array<
+    {
+      source: ContributionSource;
+    } & NonNullable<ExtensionContributions['relay_providers']>[number]
+  >;
+  relay_routes?: Array<
+    {
+      source: ContributionSource;
+    } & NonNullable<ExtensionContributions['relay_routes']>[number]
+  >;
+  script_roots?: Array<
+    {
+      source: ContributionSource;
+    } & NonNullable<ExtensionContributions['script_roots']>[number]
+  >;
+  mcp_servers?: Array<
+    {
+      source: ContributionSource;
+    } & NonNullable<ExtensionContributions['mcp_servers']>[number]
+  >;
+  manager_modules?: Array<
+    {
+      source: ContributionSource;
+    } & NonNullable<ExtensionContributions['manager_modules']>[number]
+  >;
+}
+
+export type EffectiveManagerModuleEntry = NonNullable<
+  EffectiveExtensionContributions['manager_modules']
+>[number];
+
 export interface ExtensionManifest {
   id: string;
   name: string;
@@ -261,6 +301,7 @@ export interface ListedExtension {
 
 export interface RelaySnapshot {
   config: RelayConfig;
+  effective_config?: RelayConfig;
   providers: RelayProviderSnapshot[];
   extension_roots?: string[];
   extensions?: ListedExtension[];
@@ -277,4 +318,34 @@ export interface ExtensionsResponse {
   roots: string[];
   count: number;
   extensions: ListedExtension[];
+}
+
+export interface ExtensionContributionsResponse {
+  ok: boolean;
+  roots: string[];
+  contributions: EffectiveExtensionContributions;
+}
+
+export type MCPServerCatalogStatus = 'persisted' | 'extension' | 'conflicted';
+
+export interface MCPServerCatalogEntry {
+  key: string;
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  description?: string;
+  status: MCPServerCatalogStatus;
+  source: string;
+  conflict_with?: string;
+}
+
+export interface MCPServerCatalog {
+  config_path?: string;
+  servers: MCPServerCatalogEntry[];
+}
+
+export interface MCPServerCatalogResponse {
+  ok: boolean;
+  catalog: MCPServerCatalog;
 }

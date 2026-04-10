@@ -3,15 +3,23 @@
  * 支持动态模块渲染
  */
 
+import type { EffectiveExtensionContributions } from '../../types/scriptmgr';
 import type { FeatureModule } from '../../modules';
+import { ManagerExtensionEntries } from './ManagerExtensionEntries';
 
 interface ManagerSidebarProps {
   modules: FeatureModule[];
+  extensionEntries: NonNullable<EffectiveExtensionContributions['manager_modules']>;
   activePanel: string;
   onPanelChange: (panelId: string) => void;
 }
 
-export function ManagerSidebar({ modules, activePanel, onPanelChange }: ManagerSidebarProps) {
+export function ManagerSidebar({
+  modules,
+  extensionEntries,
+  activePanel,
+  onPanelChange,
+}: ManagerSidebarProps) {
   return (
     <aside className="hidden min-w-[196px] max-w-[196px] flex-col gap-3 rounded-[20px] bg-[rgba(255,251,245,0.44)] px-3 py-3 lg:flex">
       <div className="space-y-2 px-1 py-1">
@@ -65,6 +73,13 @@ export function ManagerSidebar({ modules, activePanel, onPanelChange }: ManagerS
         </div>
       </nav>
 
+      <ManagerExtensionEntries
+        entries={extensionEntries}
+        enabledModules={modules}
+        activePanel={activePanel}
+        onPanelChange={onPanelChange}
+      />
+
       <div className="mt-auto px-1 pb-1">
         <p className="text-[11px] leading-5 tracking-[0.12em] text-[color:var(--manager-ink-subtle)]">
           Zen layout
@@ -75,4 +90,14 @@ export function ManagerSidebar({ modules, activePanel, onPanelChange }: ManagerS
 }
 
 // 保持向后兼容的类型导出（废弃，但保留以避免破坏性更改）
-export type ManagerPanel = 'notes' | 'todos' | 'scripts' | 'relay' | 'mcp' | 'tasks' | 'components' | 'trash' | 'settings';
+export type ManagerPanel =
+  | 'notes'
+  | 'todos'
+  | 'scripts'
+  | 'extensions'
+  | 'relay'
+  | 'mcp'
+  | 'tasks'
+  | 'components'
+  | 'trash'
+  | 'settings';

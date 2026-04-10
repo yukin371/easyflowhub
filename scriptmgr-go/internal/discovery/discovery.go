@@ -9,18 +9,25 @@ import (
 	"sort"
 	"strings"
 
+	"scriptmgr/internal/extensions"
 	"scriptmgr/internal/model"
 	"scriptmgr/internal/store"
 )
 
 type Service struct {
 	store       *store.Store
+	extensions  *extensions.Registry
 	scriptTypes map[string]string
 }
 
 func New(s *store.Store) *Service {
+	return NewWithExtensionsRegistry(s, nil)
+}
+
+func NewWithExtensionsRegistry(s *store.Store, registry *extensions.Registry) *Service {
 	return &Service{
-		store: s,
+		store:      s,
+		extensions: registry,
 		scriptTypes: map[string]string{
 			".ps1": "powershell",
 			".py":  "python",
@@ -132,11 +139,14 @@ func (s *Service) ScriptRoots() ([]string, error) {
 		return nil, err
 	}
 	for _, root := range custom.Roots {
-		if info, statErr := os.Stat(root); statErr == nil && info.IsDir() {
-			cleaned := filepath.Clean(root)
-			if _, ok := seen[cleaned]; !ok {
-				seen[cleaned] = struct{}{}
-				roots = append(roots, cleaned)
+		roots = appendExistingRoot(roots, seen, root)
+	}
+
+	if s.extensions != nil {
+		contributions, err := s.extensions.EffectiveContributions()
+		if err == nil {
+			for _, item := range contributions.ScriptRoots {
+				roots = appendExistingRoot(roots, seen, resolveExtensionScriptRoot(item))
 			}
 		}
 	}
@@ -228,6 +238,39 @@ func executableDir() string {
 		return "."
 	}
 	return filepath.Dir(exePath)
+}
+
+func appendExistingRoot(roots []string, seen map[string]struct{}, root string) []string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return roots
+	}
+
+	if info, err := os.Stat(root); err == nil && info.IsDir() {
+		cleaned := filepath.Clean(root)
+		if _, ok := seen[cleaned]; !ok {
+			seen[cleaned] = struct{}{}
+			roots = append(roots, cleaned)
+		}
+	}
+
+	return roots
+}
+
+func resolveExtensionScriptRoot(item extensions.EffectiveScriptRootContribution) string {
+	path := strings.TrimSpace(item.Path)
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+
+	baseDir := filepath.Dir(item.Source.ManifestPath)
+	if baseDir == "" || baseDir == "." {
+		baseDir = item.Source.Root
+	}
+	return filepath.Clean(filepath.Join(baseDir, path))
 }
 
 func isSameOrNestedRoot(root, candidate string) bool {

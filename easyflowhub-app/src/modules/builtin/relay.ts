@@ -1,11 +1,13 @@
-import type { FeatureModule } from '../types';
 import { RelayPanel } from '../../components/manager/relay/RelayPanel';
+import { defineBuiltinModule } from './defineBuiltinModule';
 
-export const relayModule: FeatureModule = {
-  id: 'relay',
-  name: '中转',
-  icon: '衡',
-  caption: 'Relay',
-  defaultEnabled: false,
-  component: RelayPanel,
-};
+export const relayModule = defineBuiltinModule(
+  {
+    id: 'relay',
+    name: '中转',
+    icon: '衡',
+    caption: 'Relay',
+    defaultEnabled: false,
+  },
+  RelayPanel
+);

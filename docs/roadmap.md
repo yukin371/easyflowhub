@@ -47,6 +47,18 @@
   - `V1-D2` `[done]` 清点并收敛过期 plan / 架构文档，避免双源
   - `V1-D3` `[done]` 评估 `scriptmgr` 是否接管常用验证、截图、文档同步动作
 
+#### Track E. Extension Enhancement（新增）
+
+- owner scope: `scriptmgr-go/internal/extensions`, `scriptmgr-go/internal/relay`, `easyflowhub-app`
+- 目标：让应用具备 VSCode 风格的声明式扩展机制，支持贡献聚合、启用/停用、目录监控热重载。
+- 参考设计：`docs/plans/2026-04-08-extension-enhancement-plan.md`
+- 可并行任务包：
+  - `V1-E1` `[in_progress]` **Phase 1** — Contribution Aggregation：已落地 `ContributionAggregator`、`EffectiveConfig()`、`/api/extensions/contributions` 后端主链路，剩余前端真实消费与更细粒度校验待继续推进
+  - `V1-E2` `[planned]` **Phase 2** — Activation Model：实现 `state.json` 读写，enable/disable CLI 和 API，manager 面板状态展示
+  - `V1-E3` `[planned]` **Phase 3** — File Watching + Hot Reload：引入 fsnotify 监视扩展目录，变更自动触发 registry 刷新和 contributions 重新聚合
+  - `V1-E4` `[planned]` **Phase 4** — Install / Uninstall：本地目录安装流程，staging + atomic move，manager 安装/卸载 UI
+  - `V1-E5` `[future]` **Phase 5** — Signature Verification：`plugin.sig` detached signature + trust key 管理
+
 ### Release Checkpoints
 
 #### CP1. Experience Stability Gate `[active]`
@@ -90,6 +102,17 @@
 
 ### Recent Progress
 
+- `2026-04-11` 已把 Stage B3 再向前推进一段：新增 builtin `Extensions` 面板，集中展示 manifest 扩展、effective `script_roots`、MCP server catalog 和 `manager_modules` host entries；`manager_modules` host、Relay 面板和 MCP 面板中的扩展条目都已接入统一的“查看扩展详情”深链，并在 `Extensions` 面板中高亮对应扩展卡片。
+- `2026-04-11` 已推进 Stage B3 的第一段：manager 开始把 extension `manager_modules` 渲染为只读 extension entry host，显示来源扩展并仅允许跳转到已存在的 builtin panel，不再把它们注入 `src/modules` registry 或 sidebar workspace 列表。
+- `2026-04-11` 已推进 Stage B2 的第一段：`internal/mcpcli` 新增 persisted + extension `mcp_servers` 的 effective catalog，`GET /api/mcp/servers` 已可返回 `persisted` / `extension` / `conflicted` 三类条目，manager MCP 面板开始只读展示来源与冲突状态。
+- `2026-04-11` 已推进 Stage B1：`internal/discovery` 开始真实消费 extension `script_roots`，脚本发现链路现已合并 repo roots、`roots.json` 和 effective extension roots，不再要求手工把扩展脚本目录导入到 `roots.json`。
+- `2026-04-11` 已推进 Track E Phase 1 后端主链路：在 `scriptmgr-go/internal/extensions` 新增 `ContributionAggregator` 与 `EffectiveContributions`，relay runtime 新增 `EffectiveConfig()` merged view，并暴露 `GET /api/extensions/contributions`；前端已补最小 TS 类型与 API wrapper，供后续 manager 消费。
+- `2026-04-11` 已新增 `docs/plans/2026-04-11-stage-b-contribution-consumption-plan.md`，把 `script_roots`、`mcp_servers`、`manager_modules` 三类 contribution 的真实消费链、owner 边界与分阶段落地顺序写清，作为扩展平台 Stage B 的 DDD 输入。
+- `2026-04-11` 已新增 `docs/plans/README.md` 和 docs 快速开发入口，按“扩展平台 / manager 模块化 / 打包验收”三条路径整理最短阅读链，减少在 `docs/plans` 整目录中翻找上下文的成本。
+- `2026-04-11` 已新增 `docs/plans/2026-04-11-vscode-style-extension-platform-roadmap.md`，把当前 Track E 的声明式扩展阶段与后续 SDK / 权限模型 / Isolated Extension Host 的长期演进关系写清，避免“像 VSCode 一样”只停留在口号层。
+- `2026-04-10` 已继续推进 manager 模块化：为 `easyflowhub-app/src/modules` 补 `MODULE.md`，新增统一的 registry React hooks，并收敛 builtin module 定义骨架，减少 `ManagerPage` / `SettingsPanel` 对 registry 订阅细节的重复依赖。
+- `2026-04-08` 已完成扩展性增强方案设计，新增 `docs/plans/2026-04-08-extension-enhancement-plan.md`，规划 Phase 1-5 实施路径，覆盖贡献聚合、启停状态、热重载、安装卸载和签名验证。
+- `2026-04-08` 已在 roadmap 中新增 Track E（Extension Enhancement），对齐 VSCode 风格的 A+B+C 扩展模型（Contribution Points + Activation + File Watching）。
 - `2026-04-05` 已修复正文首行被误持久化为标题的问题，并统一管理中心与快速笔记的 Markdown 自动补全逻辑。
 - `2026-04-05` 已扩展全局 todo 解析与分组显示，并补上 todo 卡片的来源回跳与内联编辑能力。
 - `2026-04-05` 已修正图片落盘、拖拽和窗口关闭路径，优先恢复 quick note 的可见性、可编辑性和可关闭性。
@@ -126,6 +149,8 @@
 
 ### Next Queue
 
+- 在 Stage A 接近可用后，按 `docs/plans/2026-04-11-stage-b-contribution-consumption-plan.md` 依次落地 `script_roots`、`mcp_servers`、`manager_modules` 的真实消费链。
+- 继续把 manager 面板新增流程收敛到 `src/modules` 标准骨架，评估是否需要为模块元数据、排序和分组补统一约束。
 - `V1-A1` 先形成 quick note 图片与旧笔记兼容的回归清单，再决定是否继续补编辑器能力。
 - `V1-A3` 先做 Windows 打包 smoke 与 autostart 验证，把“开发态正常”与“产物正常”区分开。
 - `V1-B1` 为 relay 增加真实上游回归样例和失败场景记录，避免后续只靠本地 mock。
@@ -135,6 +160,7 @@
 
 ### v1.1.0
 
+- 完成 Track E（Extension Enhancement）Phase 1-4，让扩展系统从"声明式扫描"进化为"可安装、可启停、可热重载"。
 - 引入更完整的 Markdown 工具栏和块级编辑增强。
 - 补齐 todo 的跨笔记批量操作、排序和过滤能力。
 - 持续推进 manager 面板组件化，形成新增模块的标准骨架。

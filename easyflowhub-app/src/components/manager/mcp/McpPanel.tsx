@@ -4,7 +4,13 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { checkServerHealth, mcpApi, type MCPCategoryInfo } from '../../../lib/api/scriptmgr';
+import {
+  checkServerHealth,
+  mcpApi,
+  type MCPCategoryInfo,
+} from '../../../lib/api/scriptmgr';
+import type { MCPServerCatalogEntry } from '../../../types/scriptmgr';
+import { navigateToManagerExtension } from '../shared/extensionNavigation';
 
 // Types
 interface StaticTool {
@@ -32,6 +38,7 @@ const STATIC_TOOLS: StaticTool[] = [
 export function McpPanel() {
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [categories, setCategories] = useState<MCPCategoryInfo[]>([]);
+  const [servers, setServers] = useState<MCPServerCatalogEntry[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
 
   // Check server status
@@ -51,10 +58,20 @@ export function McpPanel() {
     }
   }, []);
 
+  const fetchServers = useCallback(async () => {
+    try {
+      const nextServers = await mcpApi.listServers();
+      setServers(nextServers);
+    } catch (err) {
+      console.error('Failed to fetch MCP servers:', err);
+    }
+  }, []);
+
   useEffect(() => {
     checkStatus();
     fetchCategories();
-  }, [checkStatus, fetchCategories]);
+    fetchServers();
+  }, [checkStatus, fetchCategories, fetchServers]);
 
   // Toggle category loaded state
   const handleToggleCategory = async (categoryName: string, currentlyLoaded: boolean) => {
@@ -76,6 +93,15 @@ export function McpPanel() {
   // Count loaded categories
   const loadedCount = categories.filter((c) => c.loaded).length;
   const totalScripts = categories.reduce((sum, c) => sum + c.count, 0);
+  const extensionServers = servers.filter((server) => server.status === 'extension').length;
+  const conflictedServers = servers.filter((server) => server.status === 'conflicted').length;
+
+  const extensionIdFromSource = (source: string): string | null => {
+    if (!source.startsWith('extension:')) {
+      return null;
+    }
+    return source.slice('extension:'.length) || null;
+  };
 
   return (
     <section className="flex h-full flex-col gap-4 px-4 py-4">
@@ -132,7 +158,7 @@ export function McpPanel() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
           <p className="text-3xl font-light text-[color:var(--manager-accent)]">{STATIC_TOOLS.length}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">静态工具</p>
@@ -144,6 +170,12 @@ export function McpPanel() {
         <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
           <p className="text-3xl font-light text-[color:var(--manager-accent)]">{totalScripts}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">可用脚本</p>
+        </div>
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
+          <p className="text-3xl font-light text-[color:var(--manager-accent)]">
+            {extensionServers} / {conflictedServers}
+          </p>
+          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">扩展 MCP / 冲突</p>
         </div>
       </div>
 
@@ -166,6 +198,75 @@ export function McpPanel() {
               </p>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
+              External MCP Servers
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
+              persisted config 与 extension `mcp_servers` 的只读 merged view。extension 条目不会自动写回本地配置。
+            </p>
+          </div>
+          <button
+            onClick={fetchServers}
+            className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+          >
+            刷新目录
+          </button>
+        </div>
+        <div className="space-y-2">
+          {servers.map((server) => (
+            <div
+              key={server.key}
+              className="rounded-[14px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-[color:var(--manager-ink-strong)]">{server.name}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-[color:var(--manager-ink-muted)]">
+                    {server.command} {server.args?.join(' ') ?? ''}
+                  </p>
+                  <p className="mt-1 text-xs text-[color:var(--manager-ink-soft)]">source: {server.source}</p>
+                </div>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs ${
+                    server.status === 'persisted'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : server.status === 'extension'
+                        ? 'bg-sky-100 text-sky-700'
+                        : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {server.status}
+                </span>
+              </div>
+              {server.description && (
+                <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
+                  {server.description}
+                </p>
+              )}
+              {extensionIdFromSource(server.source) && (
+                <button
+                  onClick={() => navigateToManagerExtension(extensionIdFromSource(server.source)!)}
+                  className="mt-3 rounded-full border border-[color:var(--manager-border)] bg-white/70 px-4 py-2 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                >
+                  查看扩展详情
+                </button>
+              )}
+              {server.conflict_with && (
+                <p className="mt-2 text-xs text-amber-700">conflict with {server.conflict_with}</p>
+              )}
+            </div>
+          ))}
+          {servers.length === 0 && (
+            <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
+              当前未发现外部 MCP server 配置或扩展 overlay。
+            </div>
+          )}
         </div>
       </div>
 

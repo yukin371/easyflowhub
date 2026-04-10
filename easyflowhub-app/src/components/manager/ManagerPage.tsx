@@ -6,60 +6,67 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ManagerSidebar } from './ManagerSidebar';
-import { moduleRegistry } from '../../modules';
-import type { FeatureModule } from '../../modules';
+import { extensionsApi } from '../../lib/api/scriptmgr';
+import type { EffectiveExtensionContributions } from '../../types/scriptmgr';
+import { useEnabledModules } from '../../modules';
+import {
+  MANAGER_OPEN_EXTENSION_EVENT,
+  MANAGER_NAVIGATE_TO_EXTENSION_EVENT,
+  type ManagerExtensionNavigationDetail,
+} from './shared/extensionNavigation';
 
 export const MANAGER_ACTIVATED_EVENT = 'easyflowhub:manager-activated';
 export const MANAGER_OPEN_NOTE_EVENT = 'easyflowhub:open-note';
 export const MANAGER_NAVIGATE_TO_NOTE_EVENT = 'easyflowhub:navigate-to-note';
 
 export function ManagerPage() {
-  const [enabledModules, setEnabledModules] = useState<FeatureModule[]>([]);
+  const enabledModules = useEnabledModules();
   const [activePanel, setActivePanel] = useState<string | null>(null);
+  const [extensionEntries, setExtensionEntries] = useState<
+    NonNullable<EffectiveExtensionContributions['manager_modules']>
+  >([]);
+  const [pendingExtensionNavigation, setPendingExtensionNavigation] = useState<string | null>(null);
   const [pendingNoteNavigation, setPendingNoteNavigation] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // 加载模块配置
   useEffect(() => {
-    let mounted = true;
-
-    const loadModules = async () => {
-      try {
-        await moduleRegistry.loadConfig();
-      } catch (error) {
-        console.error('Failed to load module config, using defaults:', error);
+    setActivePanel((currentPanel) => {
+      if (enabledModules.length === 0) {
+        return null;
       }
 
-      if (!mounted) return;
+      if (!currentPanel) {
+        return enabledModules[0].id;
+      }
 
-      const modules = moduleRegistry.getEnabledModules();
-      setEnabledModules(modules);
+      if (!enabledModules.find((module) => module.id === currentPanel)) {
+        return enabledModules[0].id;
+      }
 
-      // 设置默认激活面板（第一个启用的模块）
-      if (modules.length > 0) {
-        setActivePanel((prev) => prev ?? modules[0].id);
+      return currentPanel;
+    });
+  }, [enabledModules]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadExtensionEntries = async () => {
+      try {
+        const response = await extensionsApi.contributions();
+        if (!cancelled) {
+          setExtensionEntries(response.contributions.manager_modules ?? []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setExtensionEntries([]);
+        }
+        console.error('Failed to load manager extension entries:', error);
       }
     };
 
-    loadModules();
-
-    // 订阅配置变更
-    const unsubscribe = moduleRegistry.subscribe(() => {
-      const modules = moduleRegistry.getEnabledModules();
-      setEnabledModules(modules);
-
-      // 如果当前激活的面板被禁用，切换到第一个启用的模块
-      setActivePanel((currentPanel) => {
-        if (currentPanel && !modules.find((m) => m.id === currentPanel)) {
-          return modules.length > 0 ? modules[0].id : null;
-        }
-        return currentPanel;
-      });
-    });
-
+    void loadExtensionEntries();
     return () => {
-      mounted = false;
-      unsubscribe();
+      cancelled = true;
     };
   }, []);
 
@@ -131,6 +138,26 @@ export function ManagerPage() {
   }, []);
 
   useEffect(() => {
+    const handleExtensionNavigation = (event: Event) => {
+      const detail = (event as CustomEvent<ManagerExtensionNavigationDetail>).detail;
+      if (!detail?.extensionId) {
+        return;
+      }
+
+      setPendingExtensionNavigation(detail.extensionId);
+      setActivePanel('extensions');
+    };
+
+    window.addEventListener(MANAGER_NAVIGATE_TO_EXTENSION_EVENT, handleExtensionNavigation as EventListener);
+    return () => {
+      window.removeEventListener(
+        MANAGER_NAVIGATE_TO_EXTENSION_EVENT,
+        handleExtensionNavigation as EventListener
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     if (activePanel !== 'notes' || !pendingNoteNavigation) {
       return;
     }
@@ -147,11 +174,27 @@ export function ManagerPage() {
     return () => window.clearTimeout(timer);
   }, [activePanel, pendingNoteNavigation]);
 
+  useEffect(() => {
+    if (activePanel !== 'extensions' || !pendingExtensionNavigation) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent<ManagerExtensionNavigationDetail>(MANAGER_OPEN_EXTENSION_EVENT, {
+          detail: { extensionId: pendingExtensionNavigation },
+        })
+      );
+      setPendingExtensionNavigation(null);
+    }, 16);
+
+    return () => window.clearTimeout(timer);
+  }, [activePanel, pendingExtensionNavigation]);
+
   const handlePanelChange = useCallback((panelId: string) => {
     setActivePanel(panelId);
   }, []);
 
-  // 渲染当前激活的面板
   const renderPanel = () => {
     if (!activePanel) {
       return (
@@ -183,6 +226,7 @@ export function ManagerPage() {
       <div className="flex h-full gap-3">
         <ManagerSidebar
           modules={enabledModules}
+          extensionEntries={extensionEntries}
           activePanel={activePanel || ''}
           onPanelChange={handlePanelChange}
         />
