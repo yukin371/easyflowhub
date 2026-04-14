@@ -13,8 +13,7 @@ import {
 } from '../../types/shortcut';
 import { getSettings, updateSettings } from '../../lib/tauri/settings';
 import type { AppSettings } from '../../types/settings';
-import { moduleRegistry } from '../../modules';
-import type { FeatureModule } from '../../modules';
+import { moduleRegistry, useToggleableModules } from '../../modules';
 import { isEnabled as isAutostartEnabled, enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 import { SettingsSectionCard } from './shared/SettingsSectionCard';
 
@@ -71,8 +70,7 @@ export function SettingsPanel() {
   });
   const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty'>('saved');
 
-  // 模块状态
-  const [toggleableModules, setToggleableModules] = useState<FeatureModule[]>([]);
+  const toggleableModules = useToggleableModules();
 
   // 自启动状态
   const [autostartOn, setAutostartOn] = useState(false);
@@ -97,16 +95,6 @@ export function SettingsPanel() {
 
     // 读取自启动状态
     isAutostartEnabled().then(setAutostartOn).catch(() => setAutostartOn(false));
-
-    // 加载可切换的模块
-    setToggleableModules(moduleRegistry.getToggleableModules());
-
-    // 订阅模块配置变更
-    const unsubscribe = moduleRegistry.subscribe(() => {
-      setToggleableModules(moduleRegistry.getToggleableModules());
-    });
-
-    return unsubscribe;
   }, []);
 
   // 滚动到指定区块

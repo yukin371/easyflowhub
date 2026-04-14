@@ -102,6 +102,7 @@
 
 ### Recent Progress
 
+- `2026-04-14` 已继续推进 manager 模块化收敛：`SettingsPanel` 不再手写订阅 `moduleRegistry`，改为消费共享 `useToggleableModules()` hook；并新增 `SettingsPanel.test.tsx`，把设置页模块列表渲染与开关仍通过 `moduleRegistry.toggleModule()` 生效的路径固定为回归约束。
 - `2026-04-14` 已为 `manager_modules` 单一宿主入口补齐前端自动化回归：`ManagerExtensionEntries.test.tsx` 现覆盖 builtin 命中、`extensions` 回退、详情深链与非 builtin 来源保护；新增 `ExtensionsPanel.test.tsx` 覆盖只读审计目录语义、空态、深链高亮以及扩展列表 / contribution 接口失败时的降级路径；新增 `ManagerPage.test.tsx` 覆盖侧边栏 extension entry 到页面级 `extensions` 面板切换与 `MANAGER_OPEN_EXTENSION_EVENT` 派发，避免 `Extensions` 面板再次被演化成第二个可操作入口。
 - `2026-04-11` 已把 Stage B3 再向前推进一段：新增 builtin `Extensions` 面板，集中展示 manifest 扩展、effective `script_roots`、MCP server catalog 和 `manager_modules` 只读审计目录；唯一可操作宿主入口现已收口到 `ManagerSidebar -> ManagerExtensionEntries`，并继续通过统一深链在 `Extensions` 面板中高亮对应扩展卡片。
 - `2026-04-11` 已推进 Stage B3 的第一段：manager 开始把 extension `manager_modules` 渲染为只读 extension entry host，显示来源扩展并仅允许跳转到已存在的 builtin panel，不再把它们注入 `src/modules` registry 或 sidebar workspace 列表。

@@ -51,7 +51,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: scriptmgr-go/go.mod
 
       - name: Run tests
         run: go test ./...
@@ -71,7 +71,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: scriptmgr-go/go.mod
 
       - name: Lint
         run: go vet ./...
@@ -91,7 +91,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: scriptmgr-go/go.mod
 
       - name: Build
         run: go build -o scriptmgr.exe ./cmd/scriptmgr

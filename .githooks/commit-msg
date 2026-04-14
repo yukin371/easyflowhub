@@ -13,10 +13,10 @@ COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
 
 HAS_ERROR=0
 
-# 检查 AI 协作者标识 (Co-Authored-By 行中包含已知 AI 名称)
-if echo "$COMMIT_MSG" | grep -qE "Co-Authored-By:.*(noreply|bot|assistant)@"; then
-    echo -e "${RED}[XX] 提交信息包含 AI 协作者标识${NC}"
-    echo "  请移除 Co-Authored-By 中的 AI 邮箱"
+# 禁止任何 Co-Authored-By 标识
+if echo "$COMMIT_MSG" | grep -qE "^Co-Authored-By:"; then
+    echo -e "${RED}[XX] 提交信息不应包含 Co-Authored-By 标识${NC}"
+    echo "  请移除 Co-Authored-By 行"
     HAS_ERROR=1
 fi
 
