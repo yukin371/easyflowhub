@@ -12,6 +12,8 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.serena/
+**/.serena/
 
 # Logs
 *.log
