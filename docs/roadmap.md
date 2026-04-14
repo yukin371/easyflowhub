@@ -102,7 +102,8 @@
 
 ### Recent Progress
 
-- `2026-04-11` 已把 Stage B3 再向前推进一段：新增 builtin `Extensions` 面板，集中展示 manifest 扩展、effective `script_roots`、MCP server catalog 和 `manager_modules` host entries；`manager_modules` host、Relay 面板和 MCP 面板中的扩展条目都已接入统一的“查看扩展详情”深链，并在 `Extensions` 面板中高亮对应扩展卡片。
+- `2026-04-14` 已为 `manager_modules` 单一宿主入口补齐前端自动化回归：`ManagerExtensionEntries.test.tsx` 现覆盖 builtin 命中、`extensions` 回退、详情深链与非 builtin 来源保护；新增 `ExtensionsPanel.test.tsx` 覆盖只读审计目录语义、空态、深链高亮以及扩展列表 / contribution 接口失败时的降级路径；新增 `ManagerPage.test.tsx` 覆盖侧边栏 extension entry 到页面级 `extensions` 面板切换与 `MANAGER_OPEN_EXTENSION_EVENT` 派发，避免 `Extensions` 面板再次被演化成第二个可操作入口。
+- `2026-04-11` 已把 Stage B3 再向前推进一段：新增 builtin `Extensions` 面板，集中展示 manifest 扩展、effective `script_roots`、MCP server catalog 和 `manager_modules` 只读审计目录；唯一可操作宿主入口现已收口到 `ManagerSidebar -> ManagerExtensionEntries`，并继续通过统一深链在 `Extensions` 面板中高亮对应扩展卡片。
 - `2026-04-11` 已推进 Stage B3 的第一段：manager 开始把 extension `manager_modules` 渲染为只读 extension entry host，显示来源扩展并仅允许跳转到已存在的 builtin panel，不再把它们注入 `src/modules` registry 或 sidebar workspace 列表。
 - `2026-04-11` 已推进 Stage B2 的第一段：`internal/mcpcli` 新增 persisted + extension `mcp_servers` 的 effective catalog，`GET /api/mcp/servers` 已可返回 `persisted` / `extension` / `conflicted` 三类条目，manager MCP 面板开始只读展示来源与冲突状态。
 - `2026-04-11` 已推进 Stage B1：`internal/discovery` 开始真实消费 extension `script_roots`，脚本发现链路现已合并 repo roots、`roots.json` 和 effective extension roots，不再要求手工把扩展脚本目录导入到 `roots.json`。
@@ -146,6 +147,7 @@
 - `CP2 / V1-B1` 需要补 relay 的真实上游回归，包括流式响应、不同鉴权方式、`429` 限流与 timeout 行为。
 - `CP2 / V1-B1` 需要验证 manager 中的 Relay 面板在 `scriptmgr serve` 未启动、relay runtime 未启动、配置 JSON 非法三类场景下的人工交互体验。
 - `CP2 / V1-B4` 需要补一轮 manager 人工验证，覆盖非法 JSON、重复导入、保存前刷新与保存后回读场景。
+- `CP2 / Stage B3` 需要补一轮 manager 人工回归，确认 `ManagerSidebar -> ManagerExtensionEntries` 是 `manager_modules` 唯一可操作宿主入口，而 `Extensions` 面板仅保留只读审计目录。
 
 ### Next Queue
 

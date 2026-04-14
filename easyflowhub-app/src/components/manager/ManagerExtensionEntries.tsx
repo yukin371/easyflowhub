@@ -41,7 +41,7 @@ export function ManagerExtensionEntries({
       <div>
         <p className="manager-kicker">Extensions</p>
         <p className="mt-1 text-xs leading-5 text-[color:var(--manager-ink-subtle)]">
-          受控 extension entry，只能跳转到已有面板。
+          唯一受控宿主入口；仅允许切换到既有 builtin 面板，扩展目录页只保留只读审计。
         </p>
       </div>
 

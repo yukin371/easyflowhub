@@ -113,6 +113,21 @@ export function ExtensionsPanel() {
     (data.contributions?.relay_routes?.length ?? 0);
   const totalExtensionMcpServers = data.servers.filter((item) => item.status === 'extension').length;
   const conflictedMcpServers = data.servers.filter((item) => item.status === 'conflicted').length;
+  const managerEntryAuditItems = useMemo(
+    () =>
+      (data.contributions?.manager_modules ?? []).map((entry) => {
+        const mappedExtension = data.extensions.find(
+          (extension) => extension.manifest?.id === entry.source.extension_id
+        );
+        const auditStatus = mappedExtension?.status === 'loaded' ? 'loaded' : 'unresolved';
+
+        return {
+          entry,
+          auditStatus,
+        };
+      }),
+    [data.contributions?.manager_modules, data.extensions]
+  );
 
   return (
     <section ref={rootRef} className="flex h-full flex-col gap-4 px-4 py-4">
@@ -152,9 +167,11 @@ export function ExtensionsPanel() {
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">extension / conflicted</p>
         </div>
         <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Manager Entries</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
+            Manager Entry Audit
+          </p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">{totalManagerEntries}</p>
-          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">受控 host entry</p>
+          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">只读目录，操作入口仅保留在侧边栏</p>
         </div>
       </div>
 
@@ -199,10 +216,15 @@ export function ExtensionsPanel() {
           </div>
 
           <div className="mt-4 space-y-3">
-            <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
-              Manager Entries
-            </h3>
-            {(data.contributions?.manager_modules ?? []).map((entry) => (
+            <div>
+              <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
+                Manager Entry Audit
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
+                这里只保留扩展声明、来源与受控映射审计；不再提供第二个 manager entry 可操作入口。
+              </p>
+            </div>
+            {managerEntryAuditItems.map(({ entry, auditStatus }) => (
               <div
                 key={`${entry.source.extension_id}:${entry.id}`}
                 className="rounded-[14px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
@@ -223,11 +245,35 @@ export function ExtensionsPanel() {
                     {entry.description}
                   </p>
                 )}
+                <dl className="mt-3 grid gap-2 text-xs text-[color:var(--manager-ink-subtle)] sm:grid-cols-2">
+                  <div>
+                    <dt className="uppercase tracking-[0.14em]">host status</dt>
+                    <dd className="mt-1 text-[color:var(--manager-ink-muted)]">只读审计，不提供直接操作</dd>
+                  </div>
+                  <div>
+                    <dt className="uppercase tracking-[0.14em]">controlled host</dt>
+                    <dd className="mt-1 text-[color:var(--manager-ink-muted)]">
+                      ManagerSidebar → ManagerExtensionEntries
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="uppercase tracking-[0.14em]">audit status</dt>
+                    <dd className="mt-1 text-[color:var(--manager-ink-muted)]">
+                      {auditStatus === 'loaded' ? '来源扩展已加载' : '来源扩展当前未解析'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="uppercase tracking-[0.14em]">target policy</dt>
+                    <dd className="mt-1 text-[color:var(--manager-ink-muted)]">
+                      仅允许受控宿主切换到既有 builtin 面板
+                    </dd>
+                  </div>
+                </dl>
               </div>
             ))}
-            {!loading && (data.contributions?.manager_modules?.length ?? 0) === 0 && (
+            {!loading && managerEntryAuditItems.length === 0 && (
               <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
-                当前没有 manager entry overlay。
+                当前没有 manager entry audit 条目。
               </div>
             )}
           </div>
