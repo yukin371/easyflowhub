@@ -68,14 +68,16 @@ export function useHistory<T>(
       pendingValueRef.current = null;
 
       setState((prev) => {
+        const previousRecordedValue = lastRecordedValueRef.current;
+
         // 检查值是否真的改变了
-        if (prev.present === value) {
+        if (previousRecordedValue === value) {
           return prev;
         }
 
         // 限制历史步数（使用 ref 获取最新值）
         const maxSteps = maxStepsRef.current;
-        const newPast = [...prev.past, prev.present].slice(-maxSteps);
+        const newPast = [...prev.past, previousRecordedValue].slice(-maxSteps);
         lastRecordedValueRef.current = value;
 
         return {

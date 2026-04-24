@@ -35,6 +35,11 @@ pwsh -File .\scripts\check-release-artifacts.ps1
 - `easyflowhub-app/src-tauri/target/release/bundle/msi/*.msi`
 - `easyflowhub-app/src-tauri/target/release/easyflowhub.exe` 或 `EasyFlowHub.exe`
 
+说明：
+
+- 当前仓库可能同时出现历史 `DeskFlow_*` 与当前 `EasyFlowHub_*` 命名的安装包。
+- 发版验收时应明确以当前正式产品命名为准，并记录旧命名产物是否仍需要保留。
+
 ## Manual Smoke Checklist
 
 ### A. Installer / Launch
@@ -55,8 +60,11 @@ pwsh -File .\scripts\check-release-artifacts.ps1
 ### C. Quick Note / Todo
 
 - [ ] 全局或应用内入口可打开 quick note
-- [ ] quick note 可输入 Markdown，并能保存图片插入结果不报错
-- [ ] `Esc`、`Alt+F4`、关闭按钮都只关闭当前 quick note 窗口
+- [ ] quick note 可输入 Markdown，并在关闭后重开时保留最新内容
+- [ ] quick note 图片插入后不报错，重开笔记后仍能显示缩略图或预览
+- [ ] 如存在旧笔记图片资源，legacy asset 路径在打包产物下仍可显示
+- [ ] quick note 中移除图片后，当前窗口预览与重开后的内容一致
+- [ ] `Esc`、`Alt+F4`、关闭按钮都只关闭当前 quick note 窗口，不误伤其他 quick note / manager 窗口
 - [ ] todo card 可从 manager 或笔记路径打开
 - [ ] todo card 回跳到来源笔记路径正常
 

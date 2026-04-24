@@ -5,6 +5,7 @@
 - Project: `EasyFlowHub`
 - Type: `hybrid desktop app (React + Tauri + Go sidecar)`
 - Primary stack: `React 19 + TypeScript 5 + Tauri 2 + Rust + Go + SQLite`
+- Source of truth for version requirements: `docs/PRD-v1.0.0.md`
 - Source of truth for current priorities: `docs/roadmap.md`
 - Source of truth for project facts: `docs/PROJECT_PROFILE.md`
 - Source of truth for architecture boundaries: `docs/ARCHITECTURE_GUARDRAILS.md`
@@ -14,10 +15,11 @@
 1. Root `AGENTS.md`
 2. `docs/README.md`
 3. `docs/PROJECT_PROFILE.md`
-4. `docs/roadmap.md`
-5. `docs/ARCHITECTURE_GUARDRAILS.md`
-6. Nearest `MODULE.md`
-7. Related `ADR` / `plan` document when relevant
+4. `docs/PRD-v1.0.0.md`
+5. `docs/roadmap.md`
+6. `docs/ARCHITECTURE_GUARDRAILS.md`
+7. Nearest `MODULE.md`
+8. Related `ADR` / `plan` document when relevant
 
 ## Repo-Specific Owners
 

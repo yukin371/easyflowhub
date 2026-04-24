@@ -25,6 +25,7 @@ import { deriveDisplayTitle } from '../../lib/noteParser';
 import { applyTextareaSelectionUpdate, focusTextareaAtEnd } from '../../lib/editorSelection';
 import { useEditorPreferences } from '../../hooks/useEditorPreferences';
 import { useEditorImageInsertion } from '../../hooks/useEditorImageInsertion';
+import { useHistory } from '../../hooks/useHistory';
 
 type ViewMode = 'list' | 'grid' | 'timeline';
 type FilterLogic = 'and' | 'or';
@@ -105,7 +106,6 @@ export function NotesPanel() {
   const [filterLogic, setFilterLogic] = useState<FilterLogic>('or');
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
-  const [draftContent, setDraftContent] = useState('');
   const [draftTags, setDraftTags] = useState('');
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
 
@@ -114,6 +114,16 @@ export function NotesPanel() {
   const { shortcutConfig, editorSettings, refreshEditorPreferences } = useEditorPreferences({
     refreshEvent: MANAGER_ACTIVATED_EVENT,
   });
+  const {
+    value: draftContent,
+    setValue: setDraftContent,
+    undo: undoDraftContent,
+    redo: redoDraftContent,
+    canUndo: canUndoDraftContent,
+    canRedo: canRedoDraftContent,
+    clear: clearDraftHistory,
+    flush: flushDraftHistory,
+  } = useHistory('', { maxSteps: editorSettings.undo_steps, debounceMs: 400 });
 
   const loadNotes = useCallback(async () => {
     setIsLoading(true);
@@ -233,7 +243,7 @@ export function NotesPanel() {
     onSaved: (updated) => {
       setNotes((prev) => prev.map((note) => (note.id === updated.id ? updated : note)));
       setDraftTitle(updated.title);
-      setDraftContent(updated.content);
+      setDraftContent(updated.content, true);
       setDraftTags(updated.tags);
     },
   });
@@ -256,7 +266,7 @@ export function NotesPanel() {
   } = useBackupRestore({
     onApplyDraft: (draft) => {
       setDraftTitle(draft.title);
-      setDraftContent(draft.content);
+      setDraftContent(draft.content, true);
       setDraftTags(draft.tags);
       if (editingNoteId) {
         scheduleSave({
@@ -291,11 +301,12 @@ export function NotesPanel() {
   const openNote = useCallback((note: Note) => {
     setEditingNoteId(note.id);
     setDraftTitle(note.title);
-    setDraftContent(note.content);
+    setDraftContent(note.content, true);
     setDraftTags(note.tags);
+    clearDraftHistory();
     resetSaveFeedback();
     inspectBackup(note);
-  }, [inspectBackup, resetSaveFeedback]);
+  }, [clearDraftHistory, inspectBackup, resetSaveFeedback, setDraftContent]);
 
   const openNoteById = useCallback(async (noteId: string) => {
     const existing = notes.find((note) => note.id === noteId);
@@ -318,11 +329,13 @@ export function NotesPanel() {
   }, [notes, openNote]);
 
   const closeEditor = useCallback(async () => {
+    flushDraftHistory();
     await flushSave(currentPersistParams);
     setEditingNoteId(null);
+    clearDraftHistory();
     resetSaveFeedback();
     clearBackupDraft();
-  }, [clearBackupDraft, currentPersistParams, flushSave, resetSaveFeedback]);
+  }, [clearBackupDraft, clearDraftHistory, currentPersistParams, flushDraftHistory, flushSave, resetSaveFeedback]);
 
   useEffect(() => {
     const handleOpenNote = (event: Event) => {
@@ -454,7 +467,7 @@ export function NotesPanel() {
       setNotes((prev) => prev.map((note) => (note.id === noteId ? updated : note)));
       if (editingNoteId === noteId) {
         setDraftTitle(updated.title);
-        setDraftContent(updated.content);
+        setDraftContent(updated.content, true);
         setDraftTags(updated.tags);
       }
     } catch (err) {
@@ -531,6 +544,10 @@ export function NotesPanel() {
     },
     onClose: closeEditor,
     onChange: applyShortcutContentChange,
+    onUndo: undoDraftContent,
+    onRedo: redoDraftContent,
+    canUndo: canUndoDraftContent,
+    canRedo: canRedoDraftContent,
   });
   const imageInsertion = useEditorImageInsertion({
     value: draftContent,

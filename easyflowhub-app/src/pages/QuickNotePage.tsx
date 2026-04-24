@@ -11,6 +11,7 @@ import { deriveDisplayTitle, formatNoteForDisplay } from '../lib/noteParser';
 import { buildPersistParams } from '../lib/notePersistence';
 import type { Note } from '../types/note';
 import { EditorTextarea } from '../components/shared/EditorTextarea';
+import { ImageLightbox } from '../components/shared/ImageLightbox';
 import { useShortcutEngine } from '../hooks/useShortcutEngine';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useEditorPreferences } from '../hooks/useEditorPreferences';
@@ -63,6 +64,7 @@ export function QuickNotePage() {
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [lastVisibleOpacity, setLastVisibleOpacity] = useState(1);
   const [attachedImages, setAttachedImages] = useState<Array<{ alt: string; filename: string }>>([]);
+  const [activeImage, setActiveImage] = useState<{ src: string; alt: string } | null>(null);
 
   // 使用 useHistory 管理内容，支持撤销/重做
   const {
@@ -795,7 +797,9 @@ export function QuickNotePage() {
                 <img
                   src={src}
                   alt={alt || `插入图片 ${index + 1}`}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  title="双击放大"
+                  onDoubleClick={() => setActiveImage({ src, alt })}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
                 />
                 <button
                   onClick={() => removeAttachedImage(index)}
@@ -844,6 +848,9 @@ export function QuickNotePage() {
           autoFocus
         />
       </div>
+      {activeImage ? (
+        <ImageLightbox src={activeImage.src} alt={activeImage.alt} onClose={() => setActiveImage(null)} />
+      ) : null}
     </div>
   );
 }

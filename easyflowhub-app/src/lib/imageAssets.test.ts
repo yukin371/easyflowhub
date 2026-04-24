@@ -22,6 +22,14 @@ describe('imageAssets', () => {
     });
   });
 
+  it('extracts legacy full asset URLs as attached image assets', () => {
+    const content = '![legacy](http://asset.localhost/C%3A%5Cfoo%5Cassets%5Clegacy.png)';
+    expect(extractAttachedImageAssets(content)).toEqual({
+      textContent: '',
+      images: [{ alt: 'legacy', filename: 'legacy.png' }],
+    });
+  });
+
   it('appends attached images after text content', () => {
     const result = appendAttachedImageAssets('hello', [{ alt: 'tmp', filename: 'abc.png' }]);
     expect(result).toBe('hello\n\n![tmp](asset:abc.png)');

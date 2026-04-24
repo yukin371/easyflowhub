@@ -36,11 +36,38 @@
 - 本地脚本发现与执行
 - 执行记录与时间线
 
+### 受控 AI 集成
+- OpenAI 兼容 relay 基础配置与 provider health 视图
+- MCP 类别管理与 external server catalog 只读展示
+- Manifest 扩展贡献聚合与审计入口
+
 ### 其他
 - 模块化架构，可按需启用/禁用
 - 回收站与数据恢复
 - 键盘快捷键自定义
 - 开机自启动（设置 > 通用）
+
+## v1.0.0 发布范围
+
+当前 `v1.0.0` 的正式目标不是做成完整平台，而是先交付稳定的桌面主路径：
+
+- quick note、notes manager、todo、scripts、manager/settings 形成可回归闭环
+- Windows 打包产物下的多窗口、托盘、自启动、关闭行为稳定
+- relay / MCP / extensions 以受控能力纳入，不作为无限扩张的发布阻塞项
+
+明确不在 `v1.0.0` 范围内：
+
+- 云同步、多端协作、账号体系
+- 扩展安装 / 卸载、热重载、签名验证
+- 在扩展系统中执行任意第三方代码
+- 完整的 provider 平台化治理
+
+## 文档入口
+
+- 正式需求基线：[docs/PRD-v1.0.0.md](./docs/PRD-v1.0.0.md)
+- 当前执行状态：[docs/roadmap.md](./docs/roadmap.md)
+- 项目画像与验证命令：[docs/PROJECT_PROFILE.md](./docs/PROJECT_PROFILE.md)
+- 架构边界：[docs/ARCHITECTURE_GUARDRAILS.md](./docs/ARCHITECTURE_GUARDRAILS.md)
 
 ## 技术栈
 

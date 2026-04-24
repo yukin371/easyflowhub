@@ -151,6 +151,33 @@ textarea {
   animation: editor-focus-breathe 2.2s ease-in-out infinite;
 }
 
+.manager-markdown-preview::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+
+.manager-markdown-preview :where(.wmde-markdown, .wmde-markdown-color) {
+  background-color: transparent;
+  color: inherit;
+}
+
+.manager-markdown-preview :where(.wmde-markdown, .wmde-markdown-color) img {
+  float: none;
+  display: inline-block;
+  width: auto;
+  max-width: min(320px, 100%);
+  margin: 0.2rem 0.55rem 0.35rem 0.1rem;
+  border-radius: 14px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.manager-markdown-preview :where(.wmde-markdown, .wmde-markdown-color) p {
+  margin-top: 0;
+  margin-bottom: 0.9rem;
+}
+
 .quick-note-editor::-webkit-scrollbar {
   width: 12px;
 }

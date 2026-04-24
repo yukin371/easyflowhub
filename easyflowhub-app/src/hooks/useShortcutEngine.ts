@@ -16,6 +16,10 @@ interface UseShortcutEngineOptions {
   onSave: () => void | Promise<void>;
   onClose: () => void | Promise<void>;
   onChange: (update: SelectionUpdate) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 function getLineRange(value: string, selectionStart: number, selectionEnd: number) {
@@ -35,7 +39,7 @@ function isNativeCutShortcut(shortcut: string): boolean {
 }
 
 export function useShortcutEngine(options: UseShortcutEngineOptions) {
-  const { enabled, textareaRef, config, onSave, onClose, onChange } = options;
+  const { enabled, textareaRef, config, onSave, onClose, onChange, onUndo, onRedo, canUndo = false, canRedo = false } = options;
 
   useEffect(() => {
     if (!enabled) {
@@ -54,6 +58,22 @@ export function useShortcutEngine(options: UseShortcutEngineOptions) {
 
       const element = textareaRef.current;
       if (!element || document.activeElement !== element) {
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+        if (onUndo && canUndo) {
+          event.preventDefault();
+          onUndo();
+        }
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+        if (onRedo && canRedo) {
+          event.preventDefault();
+          onRedo();
+        }
         return;
       }
 
@@ -159,5 +179,5 @@ export function useShortcutEngine(options: UseShortcutEngineOptions) {
 
     textarea.addEventListener('keydown', handleKeyDown);
     return () => textarea.removeEventListener('keydown', handleKeyDown);
-  }, [config, enabled, onChange, onClose, onSave, textareaRef]);
+  }, [canRedo, canUndo, config, enabled, onChange, onClose, onRedo, onSave, onUndo, textareaRef]);
 }

@@ -49,11 +49,24 @@
 
 ## Active Plans
 
+- [2026-04-24-v1-task-board.md](./2026-04-24-v1-task-board.md)
+- [2026-04-24-v1-delivery-plan.md](./2026-04-24-v1-delivery-plan.md)
 - [2026-04-11-stage-b-contribution-consumption-plan.md](./2026-04-11-stage-b-contribution-consumption-plan.md)
 - [2026-04-11-vscode-style-extension-platform-roadmap.md](./2026-04-11-vscode-style-extension-platform-roadmap.md)
 - [2026-04-08-extension-enhancement-plan.md](./2026-04-08-extension-enhancement-plan.md)
 - [2026-04-07-extension-lifecycle-design.md](./2026-04-07-extension-lifecycle-design.md)
 - [2026-04-07-api-relay-and-extension-phase1.md](./2026-04-07-api-relay-and-extension-phase1.md)
+
+## Release Planning
+
+按这个顺序读：
+
+1. [../PRD-v1.0.0.md](../PRD-v1.0.0.md)
+2. [../roadmap.md](../roadmap.md)
+3. [2026-04-24-v1-delivery-plan.md](./2026-04-24-v1-delivery-plan.md)
+4. [2026-04-24-v1-task-board.md](./2026-04-24-v1-task-board.md)
+5. [../PROJECT_PROFILE.md](../PROJECT_PROFILE.md)
+6. 最近一次相关的专题 plan
 
 ## Reference / Legacy Notes
 
