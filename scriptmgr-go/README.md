@@ -62,6 +62,8 @@ Claude Code 配置示例：
 | `mcp` | 启动 MCP 服务器 |
 | `relay serve` | 启动 OpenAI 兼容 relay |
 | `relay config` | 查看当前 relay 配置与 provider health |
+| `relay hosts status` | 查看 Claude / Codex 当前宿主配置 |
+| `relay hosts switch` | 切换 Claude / Codex 指向的 AI 网关 / relay |
 | `extensions list` | 列出 manifest 扩展 |
 | `serve [addr]` | 启动 HTTP API 服务器 |
 | `--version` | 显示版本 |
@@ -146,6 +148,31 @@ scriptmgr relay serve --port 8787
 - 推荐使用 `api_key_env` 引用环境变量，而不是把密钥直接写进 `relay.json`
 - 旧 `api_key` 仍兼容，但应视为迁移期字段
 
+当前正式支持的 relay / 负载均衡能力：
+
+- OpenAI 兼容路径转发：`/v1/*`
+- provider + route 配置驱动的选路
+- `weighted_round_robin` 作为当前唯一正式承诺的负载策略
+- 最小 failover：`429`、`5xx`、timeout
+- provider health 快照和管理接口
+- extension manifest 注入的 relay provider / route 贡献
+
+当前已验证的回归场景：
+
+- upstream failure fallback
+- streaming passthrough
+- `429` retry
+- explicit `5xx` retry
+- timeout retry
+- provider specific auth / env api key
+
+当前不承诺的能力：
+
+- 非 OpenAI 协议适配
+- 完整熔断恢复与配额调度
+- 自动基于 health 改写 Claude / Codex 宿主配置
+- 完整 `cc-switch` 式运行时编排
+
 端点：
 - `GET /health`
 - `GET /api/relay/config`
@@ -154,6 +181,53 @@ scriptmgr relay serve --port 8787
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
 - `GET /v1/models`
+
+## Host Switch
+
+`scriptmgr relay` 继续只负责 OpenAI 兼容 relay。  
+Claude / Codex 的宿主配置切换由 `relay hosts` 负责，不把不同协议强行塞进同一个 relay owner。
+
+查看当前宿主配置：
+
+```bash
+scriptmgr relay hosts status --json
+```
+
+只切 Claude：
+
+```bash
+scriptmgr relay hosts switch \
+  --dry-run \
+  --host claude \
+  --claude-base-url https://gateway.example.com/anthropic
+```
+
+只切 Codex：
+
+```bash
+scriptmgr relay hosts switch \
+  --dry-run \
+  --host codex \
+  --codex-base-url http://127.0.0.1:8787/v1 \
+  --codex-provider relay
+```
+
+同时切 Claude 和 Codex：
+
+```bash
+scriptmgr relay hosts switch \
+  --dry-run \
+  --claude-base-url https://gateway.example.com/anthropic \
+  --codex-base-url http://127.0.0.1:8787/v1
+```
+
+说明：
+
+- Claude 当前写入 `~/.claude/settings.json` 中的 `env.ANTHROPIC_BASE_URL`
+- Codex 当前写入 `~/.codex/config.toml` 中的 `model_provider` 和 provider `base_url`
+- `--dry-run` 会优先输出结构化 diff 预览，不落盘；`--json` 同时包含结构化 changes 与完整 before/after
+- `--json` 可用于结构化消费 preview 或最终状态
+- 每次写入前都会生成备份，再原子替换原文件
 
 ## 配置
 

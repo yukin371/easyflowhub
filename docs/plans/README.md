@@ -49,6 +49,7 @@
 
 ## Active Plans
 
+- [2026-04-25-ai-host-routing-implementation-plan.md](./2026-04-25-ai-host-routing-implementation-plan.md)
 - [2026-04-24-v1-task-board.md](./2026-04-24-v1-task-board.md)
 - [2026-04-24-v1-delivery-plan.md](./2026-04-24-v1-delivery-plan.md)
 - [2026-04-11-stage-b-contribution-consumption-plan.md](./2026-04-11-stage-b-contribution-consumption-plan.md)

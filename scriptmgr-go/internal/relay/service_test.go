@@ -297,6 +297,59 @@ func TestProxyRetriesOn429AndUsesProviderSpecificAuth(t *testing.T) {
 	}
 }
 
+func TestProxyRetriesOn5xx(t *testing.T) {
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	defer primaryServer.Close()
+
+	secondaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"provider":"secondary"}`))
+	}))
+	defer secondaryServer.Close()
+
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{
+			{ID: "primary", Name: "Primary", BaseURL: primaryServer.URL, Enabled: true},
+			{ID: "secondary", Name: "Secondary", BaseURL: secondaryServer.URL, Enabled: true},
+		},
+		Routes: []Route{
+			{
+				ID:            "chat",
+				PathPrefixes:  []string{"/v1/"},
+				ModelPatterns: []string{"gpt-*"},
+				ProviderIDs:   []string{"primary", "secondary"},
+			},
+		},
+	})
+
+	rec := performRelayRequest(
+		t,
+		service,
+		http.MethodPost,
+		"/v1/chat/completions",
+		[]byte(`{"model":"gpt-5","messages":[]}`),
+		nil,
+	)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if provider := rec.Header().Get("X-EasyFlowHub-Relay-Provider"); provider != "secondary" {
+		t.Fatalf("expected secondary to answer, got %q", provider)
+	}
+
+	snapshots := snapshotByProviderID(t, service)
+	if got := snapshots["primary"].Status.LastStatusCode; got != http.StatusServiceUnavailable {
+		t.Fatalf("expected primary last status 503, got %d", got)
+	}
+	if got := snapshots["primary"].Status.LastError; !strings.Contains(got, "503") {
+		t.Fatalf("expected primary error to mention 503, got %q", got)
+	}
+}
+
 func TestProxyUsesAPIKeyFromEnvironment(t *testing.T) {
 	t.Setenv("EASYFLOWHUB_RELAY_PRIMARY_KEY", "env-secret")
 

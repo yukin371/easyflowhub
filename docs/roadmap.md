@@ -105,6 +105,7 @@
 
 ### Recent Progress
 
+- `2026-04-25` 已新增 `scriptmgr relay hosts status|switch`，用于安全切换 Claude / Codex 宿主配置到指定 AI 网关或本地 relay 上游；实现放在 `scriptmgr-go/internal/hostconfig`，明确与 `internal/relay` 的协议与 owner 边界分离，避免把 Claude 协议误塞进现有 OpenAI relay。
 - `2026-04-24` 已基于上述修复重新完成一轮 Tauri Windows 打包，新的 `EasyFlowHub.exe`、NSIS、MSI 产物已生成，并再次通过 `scripts/check-release-artifacts.ps1` 预检；当前进入“修复后待人工复验”状态。
 - `2026-04-24` 已根据人工验收反馈修复一轮图片与编辑器回归：`useHistory` 历史入栈缺陷已修复并补 `useHistory.test.tsx`；quick note 图片缩略图与 manager markdown 预览已支持双击放大；`NotesPanel` / `NoteEditor` 已改为分离正文与附件图片，避免 manager 打开含图笔记时展示原始 `asset:` markdown。
 - `2026-04-24` 已继续修正 manager 预览排版细节：图片不再默认整块居中，改为与正文绕排，解决图文混排阅读断裂问题。
@@ -127,8 +128,12 @@
 
 ### v1.1.0
 
+- 正式需求基线：[PRD-v1.1.0-ai-host-routing.md](./PRD-v1.1.0-ai-host-routing.md)
+- 实施计划：[plans/2026-04-25-ai-host-routing-implementation-plan.md](./plans/2026-04-25-ai-host-routing-implementation-plan.md)
 - extensions `Phase 2-4`：启停状态持久化、热重载、安装 / 卸载。
+- relay 运行时与负载均衡能力继续收口，明确正式支持的 route selection、weighted round robin 与最小 failover 边界。
 - relay 密钥管理与配置体验进一步收口，减少 raw JSON 依赖。
+- Claude / Codex 宿主配置切换继续收口，补齐 dry-run / diff / preset，而不是把协议不兼容的宿主硬塞进单一 relay。
 - MCP 外部 server 生命周期管理增强。
 - 在不破坏桌面单机场景定位的前提下，再评估更强搜索或扩展生态能力。
 
