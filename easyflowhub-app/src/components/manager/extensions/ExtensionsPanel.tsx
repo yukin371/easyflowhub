@@ -48,17 +48,18 @@ export function ExtensionsPanel() {
     let nextError: string | null = null;
 
     if (extensionsResult.status === 'fulfilled') {
-      nextData.extensions = extensionsResult.value.extensions;
-      nextData.roots = extensionsResult.value.roots;
+      // Defensive: a registry with zero manifests can arrive as `null`.
+      nextData.extensions = extensionsResult.value.extensions ?? [];
+      nextData.roots = extensionsResult.value.roots ?? [];
     } else {
       nextError =
         extensionsResult.reason instanceof Error ? extensionsResult.reason.message : '加载扩展列表失败';
     }
 
     if (contributionsResult.status === 'fulfilled') {
-      nextData.contributions = contributionsResult.value.contributions;
+      nextData.contributions = contributionsResult.value.contributions ?? null;
       if (nextData.roots.length === 0) {
-        nextData.roots = contributionsResult.value.roots;
+        nextData.roots = contributionsResult.value.roots ?? [];
       }
     } else if (!nextError) {
       nextError =
@@ -68,7 +69,7 @@ export function ExtensionsPanel() {
     }
 
     if (serversResult.status === 'fulfilled') {
-      nextData.servers = serversResult.value;
+      nextData.servers = serversResult.value ?? [];
     }
 
     setError(nextError);
@@ -142,31 +143,31 @@ export function ExtensionsPanel() {
       </header>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Extensions</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
             {loadedExtensions} / {data.extensions.length}
           </p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">已加载 / 总扩展</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Script Roots</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">{totalScriptRoots}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">effective overlay</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Relay Overlay</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">{totalRelayOverlay}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">provider + route</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">MCP Servers</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
             {totalExtensionMcpServers} / {conflictedMcpServers}
           </p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">extension / conflicted</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
             Manager Entry Audit
           </p>
@@ -176,13 +177,13 @@ export function ExtensionsPanel() {
       </div>
 
       {error && (
-        <div className="rounded-[16px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="manager-alert-error rounded-[16px] px-4 py-3 text-sm">
           {error}
         </div>
       )}
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <section className="min-h-0 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+        <section className="min-h-0 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
@@ -194,7 +195,7 @@ export function ExtensionsPanel() {
             </div>
             <button
               onClick={() => void loadData()}
-              className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+              className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
             >
               刷新
             </button>
@@ -203,13 +204,13 @@ export function ExtensionsPanel() {
             {data.roots.map((root) => (
               <div
                 key={root}
-                className="rounded-[14px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.7)] px-4 py-3"
+                className="rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-3"
               >
                 <p className="break-all font-mono text-xs text-[color:var(--manager-ink-soft)]">{root}</p>
               </div>
             ))}
             {!loading && data.roots.length === 0 && (
-              <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
+              <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
                 当前没有 extension roots。
               </div>
             )}
@@ -227,7 +228,7 @@ export function ExtensionsPanel() {
             {managerEntryAuditItems.map(({ entry, auditStatus }) => (
               <div
                 key={`${entry.source.extension_id}:${entry.id}`}
-                className="rounded-[14px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+                className="rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -236,7 +237,7 @@ export function ExtensionsPanel() {
                       {entry.caption || entry.id} · source {entry.source.extension_id}
                     </p>
                   </div>
-                  <span className="rounded-full border border-[color:var(--manager-border)] bg-white/70 px-3 py-1 text-xs text-[color:var(--manager-ink-soft)]">
+                  <span className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)]">
                     {entry.icon || 'EX'}
                   </span>
                 </div>
@@ -272,14 +273,14 @@ export function ExtensionsPanel() {
               </div>
             ))}
             {!loading && managerEntryAuditItems.length === 0 && (
-              <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
+              <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
                 当前没有 manager entry audit 条目。
               </div>
             )}
           </div>
         </section>
 
-        <section className="min-h-0 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+        <section className="min-h-0 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
           <div className="space-y-4">
             <div>
               <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
@@ -293,7 +294,7 @@ export function ExtensionsPanel() {
                     className={`rounded-[14px] border px-4 py-3 transition ${
                       highlightedExtensionId && extension.manifest?.id === highlightedExtensionId
                         ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] shadow-[0_18px_40px_rgba(46,58,49,0.12)]'
-                        : 'border-[color:var(--manager-border)] bg-white/40'
+                        : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)]'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -308,8 +309,8 @@ export function ExtensionsPanel() {
                       <span
                         className={`rounded-full px-3 py-1 text-xs ${
                           extension.status === 'loaded'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-red-100 text-red-700'
+                            ? 'manager-status-success'
+                            : 'manager-status-danger'
                         }`}
                       >
                         {extension.status}
@@ -320,7 +321,7 @@ export function ExtensionsPanel() {
                         {extension.manifest.description}
                       </p>
                     )}
-                    {extension.error && <p className="mt-2 text-xs text-red-700">{extension.error}</p>}
+                    {extension.error && <p className="mt-2 text-xs text-[color:var(--manager-danger)]">{extension.error}</p>}
                   </div>
                 ))}
               </div>
@@ -334,7 +335,7 @@ export function ExtensionsPanel() {
                 {(data.contributions?.script_roots ?? []).map((item) => (
                   <div
                     key={`${item.source.extension_id}:${item.path}`}
-                    className="rounded-[14px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.7)] px-4 py-3"
+                    className="rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-3"
                   >
                     <p className="break-all font-mono text-xs text-[color:var(--manager-ink-soft)]">
                       {item.path}
@@ -355,7 +356,7 @@ export function ExtensionsPanel() {
                 {data.servers.map((server) => (
                   <div
                     key={server.key}
-                    className="rounded-[14px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+                    className="rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-3"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -367,10 +368,10 @@ export function ExtensionsPanel() {
                       <span
                         className={`rounded-full px-3 py-1 text-xs ${
                           server.status === 'persisted'
-                            ? 'bg-emerald-100 text-emerald-700'
+                            ? 'manager-status-success'
                             : server.status === 'extension'
-                              ? 'bg-sky-100 text-sky-700'
-                              : 'bg-amber-100 text-amber-700'
+                              ? 'manager-status-warning'
+                              : 'manager-status-warning'
                         }`}
                       >
                         {server.status}
@@ -380,7 +381,7 @@ export function ExtensionsPanel() {
                       source {server.source}
                     </p>
                     {server.conflict_with && (
-                      <p className="mt-2 text-xs text-amber-700">conflict with {server.conflict_with}</p>
+                      <p className="mt-2 text-xs text-[color:var(--manager-warning)]">conflict with {server.conflict_with}</p>
                     )}
                   </div>
                 ))}

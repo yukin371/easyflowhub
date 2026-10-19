@@ -1,9 +1,13 @@
 // src/lib/tauri/appearance.ts
 import { invoke } from '@tauri-apps/api/core';
-import type { AppearanceConfig } from '../../types/appearance';
+import type { AppearanceConfig, ThemeMode } from '../../types/appearance';
 import { DEFAULT_APPEARANCE } from '../../types/appearance';
 
 const STORAGE_KEY = 'easyflowhub-appearance';
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === 'light' || value === 'dark' || value === 'system';
+}
 
 /**
  * 从本地存储加载外观配置
@@ -15,7 +19,7 @@ export async function loadAppearanceConfig(): Promise<AppearanceConfig> {
       const parsed = JSON.parse(stored);
       // 深度合并，确保新增字段有默认值
       return {
-        theme: parsed.theme ?? DEFAULT_APPEARANCE.theme,
+        theme: isThemeMode(parsed.theme) ? parsed.theme : DEFAULT_APPEARANCE.theme,
         window: { ...DEFAULT_APPEARANCE.window, ...parsed.window },
         font: { ...DEFAULT_APPEARANCE.font, ...parsed.font },
       };

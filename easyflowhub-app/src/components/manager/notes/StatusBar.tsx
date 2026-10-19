@@ -47,17 +47,17 @@ export function StatusBar(props: StatusBarProps) {
   };
 
   return (
-    <footer className="border-t border-[color:var(--manager-border)] bg-white/45 px-5 py-2.5 backdrop-blur-sm sm:px-8">
+    <footer className="border-t border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-5 py-2.5 backdrop-blur-sm sm:px-8">
       <div className="mx-auto flex max-w-5xl flex-col gap-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-1 flex-col gap-2 sm:max-w-[560px]">
-            <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-[color:var(--manager-border)] bg-white/80 px-3 py-1.5">
+            <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-3 py-1.5">
               <span className="manager-kicker shrink-0">Tags</span>
               {activeTags.map((tag) => (
                 <button
                   key={tag}
                   onClick={() => onTagRemove(tag)}
-                  className="rounded-full bg-[color:var(--manager-accent-soft)] px-2.5 py-0.5 text-xs tracking-[0.12em] text-[color:var(--manager-ink-soft)] transition hover:bg-white"
+                  className="rounded-full bg-[color:var(--manager-accent-soft)] px-2.5 py-0.5 text-xs tracking-[0.12em] text-[color:var(--manager-ink-soft)] transition hover:bg-[color:var(--manager-panel-strong)]"
                 >
                   #{tag}
                 </button>
@@ -84,7 +84,7 @@ export function StatusBar(props: StatusBarProps) {
                   <button
                     key={tag}
                     onClick={() => commitTag(tag)}
-                    className="rounded-full border border-[color:var(--manager-border)] bg-white/70 px-2.5 py-0.5 text-xs tracking-[0.12em] text-[color:var(--manager-ink-subtle)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                    className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-2.5 py-0.5 text-xs tracking-[0.12em] text-[color:var(--manager-ink-subtle)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
                   >
                     #{tag} <span className="opacity-60">{count}</span>
                   </button>

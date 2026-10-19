@@ -23,11 +23,46 @@ export interface TodoSettings {
   done_retention_hours: number;
 }
 
+export interface TranslationSettings {
+  target_language: 'zh-CN' | 'en' | 'ja' | 'ko';
+  model: string;
+}
+
+/**
+ * Transcription preferences for post-recording speech-to-text.
+ * Only preferences are persisted; provider credentials remain owned by Relay.
+ */
+export interface TranscriptionSettings {
+  model: string;
+  /** Optional language hint sent to the provider; empty means auto-detect. */
+  language: string;
+}
+
+/** Native persisted representation used by the Tauri settings command. */
+export interface LauncherTriggerSettings {
+  enabled: boolean;
+  trigger: 'keyboard' | 'mouse_middle' | 'keyboard_or_mouse_middle';
+  keyboard_shortcut: string;
+  excluded_apps: string[];
+}
+
+/**
+ * Developer / diagnostics preferences. Debug mode only controls log verbosity
+ * and file output; it never bypasses safety rules.
+ */
+export interface DeveloperSettings {
+  debug_mode: boolean;
+}
+
 export interface AppSettings {
   quick_note: QuickNoteSettings;
   trash: TrashSettings;
   editor: EditorSettings;
   todo: TodoSettings;
+  launcher_trigger: LauncherTriggerSettings;
+  translation: TranslationSettings;
+  transcription: TranscriptionSettings;
+  developer: DeveloperSettings;
 }
 
 export interface GetSettingsResponse {
@@ -56,5 +91,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   todo: {
     done_retention_hours: 24,
+  },
+  launcher_trigger: {
+    enabled: true,
+    trigger: 'keyboard_or_mouse_middle',
+    keyboard_shortcut: 'Ctrl+Alt+Space',
+    excluded_apps: [],
+  },
+  translation: {
+    target_language: 'zh-CN',
+    model: '',
+  },
+  transcription: {
+    model: '',
+    language: '',
+  },
+  developer: {
+    debug_mode: false,
   },
 };

@@ -105,7 +105,7 @@ export function NoteEditor(props: NoteEditorProps) {
         <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={() => void onClose()}
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-[color:var(--manager-border)] bg-white/70 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
             aria-label="返回"
           >
             ←
@@ -152,7 +152,7 @@ export function NoteEditor(props: NoteEditorProps) {
             className={`rounded-full border px-4 py-2 text-sm transition ${
               note.is_pinned
                 ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]'
-                : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
+                : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
             }`}
           >
             {note.is_pinned ? '已置顶' : '置顶'}

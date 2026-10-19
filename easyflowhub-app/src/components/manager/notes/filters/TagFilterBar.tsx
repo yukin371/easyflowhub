@@ -11,7 +11,7 @@ export function TagFilterBar(props: TagFilterBarProps) {
   const { selectedTags, allTags, filterLogic, onToggleTag, onChangeLogic, onClear } = props;
 
   return (
-    <div className="rounded-[15px] bg-[rgba(255,251,245,0.52)] px-3 py-2">
+    <div className="rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="manager-kicker">Logic</span>
         <div className="flex items-center gap-1 rounded-full bg-[color:var(--manager-accent-soft)] p-1">
@@ -58,7 +58,7 @@ export function TagFilterBar(props: TagFilterBarProps) {
                 className={`rounded-full border px-3 py-1 text-xs tracking-[0.14em] transition ${
                   active
                     ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                    : 'border-[color:var(--manager-border)] bg-[rgba(255,251,245,0.56)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]'
+                    : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]'
                 }`}
               >
                 #{tag} <span className="opacity-60">{count}</span>

@@ -15,6 +15,7 @@ import { useShortcutEngine } from '../../hooks/useShortcutEngine';
 import { useAutoSave } from '../../hooks/useAutoSave';
 import { useBackupRestore } from '../../hooks/useBackupRestore';
 import { NoteEditor } from './notes/NoteEditor';
+import { InboxPanel } from './notes/InboxPanel';
 import type { SaveState } from './notes/types';
 import {
   relativeTimeLabel,
@@ -97,7 +98,7 @@ function saveStateLabel(saveState: SaveState): string {
   }
 }
 
-export function NotesPanel() {
+function NotesArchivePanel() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -616,8 +617,8 @@ export function NotesPanel() {
   }
 
   return (
-    <section className="flex h-full flex-col gap-2 px-1 py-1 sm:px-2 sm:py-2">
-      <header className="px-3 py-2 sm:px-4 sm:py-2.5">
+    <section className="flex h-full flex-col gap-1 px-0 py-0">
+      <header className="border-b border-[color:var(--manager-border)] px-3 py-3 sm:px-4 sm:py-3">
         <div className="flex flex-col gap-2">
             <div className="grid gap-2 xl:grid-cols-[auto_minmax(0,1fr)_auto] xl:items-center">
               <div className="space-y-1">
@@ -625,9 +626,9 @@ export function NotesPanel() {
                 <h2 className="font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-[32px] leading-[1.04] text-[color:var(--manager-ink-strong)]">笔记管理</h2>
               </div>
               <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-              <div className="rounded-[15px] bg-[rgba(255,251,245,0.52)] px-3 py-2">
+              <div className="rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full border border-[color:var(--manager-border)] bg-[rgba(255,251,245,0.56)] text-xs tracking-[0.24em] text-[color:var(--manager-ink-soft)]">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-[10px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-xs tracking-[0.24em] text-[color:var(--manager-ink-soft)]">
                     检
                   </span>
                   <input
@@ -650,7 +651,7 @@ export function NotesPanel() {
                     <button
                       key={token}
                       onClick={() => appendSearchToken(token)}
-                      className="rounded-full border border-[color:var(--manager-border)] bg-[rgba(255,251,245,0.56)] px-3 py-1 text-xs tracking-[0.14em] text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                      className="rounded-[8px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-2.5 py-1 text-xs tracking-[0.14em] text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
                     >
                       {label}
                     </button>
@@ -675,7 +676,7 @@ export function NotesPanel() {
               />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <div className="flex items-center gap-1 rounded-full border border-[color:var(--manager-border)] bg-white/70 p-1">
+                <div className="flex items-center gap-1 rounded-[10px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-1">
                   {([
                     ['list', '列'],
                     ['grid', '格'],
@@ -684,7 +685,7 @@ export function NotesPanel() {
                     <button
                       key={mode}
                       onClick={() => setViewMode(mode)}
-                      className={`flex h-10 min-w-10 items-center justify-center rounded-full px-4 text-sm transition ${
+                      className={`flex h-9 min-w-9 items-center justify-center rounded-[7px] px-3 text-sm transition ${
                         viewMode === mode
                           ? 'bg-[color:var(--manager-accent)] text-white'
                           : 'text-[color:var(--manager-ink-soft)] hover:bg-[color:var(--manager-accent-soft)] hover:text-[color:var(--manager-ink-strong)]'
@@ -697,7 +698,7 @@ export function NotesPanel() {
                 </div>
                 <button
                   onClick={() => void handleCreateNote()}
-                  className="rounded-full bg-[color:var(--manager-accent)] px-5 py-3 text-sm tracking-[0.16em] text-white transition hover:bg-[color:var(--manager-accent-strong)]"
+                  className="rounded-[10px] bg-[color:var(--manager-accent)] px-4 py-2.5 text-sm tracking-[0.16em] text-white transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   新建笔记
                 </button>
@@ -713,9 +714,9 @@ export function NotesPanel() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto rounded-[16px] bg-[rgba(255,249,242,0.24)] px-2 py-2">
+      <div className="flex-1 overflow-auto px-2 py-2">
         {filteredNotes.length === 0 ? (
-          <div className="flex h-full min-h-[320px] items-center justify-center rounded-[20px] border border-dashed border-[color:var(--manager-border)] bg-white/35 text-center">
+          <div className="flex h-full min-h-[320px] items-center justify-center rounded-[12px] border border-dashed border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-center">
             <div>
               <p className="font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-3xl text-[color:var(--manager-ink-strong)]">暂无匹配内容</p>
               <p className="mt-3 text-sm text-[color:var(--manager-ink-soft)]">调整搜索或标签组合，或者直接新建一条笔记。</p>
@@ -752,5 +753,27 @@ export function NotesPanel() {
         ) : null}
       </div>
     </section>
+  );
+}
+
+export function NotesPanel() {
+  const [activeView, setActiveView] = useState<'inbox' | 'notes'>('inbox');
+
+  useEffect(() => {
+    const openInbox = () => setActiveView('inbox');
+    window.addEventListener('easyflowhub:voice-open-inbox', openInbox);
+    return () => window.removeEventListener('easyflowhub:voice-open-inbox', openInbox);
+  }, []);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--manager-border)] px-3 py-2 sm:px-4" role="tablist" aria-label="笔记工作区">
+        <button type="button" role="tab" aria-selected={activeView === 'inbox'} onClick={() => setActiveView('inbox')} className={`rounded-[7px] px-3 py-1.5 text-sm transition ${activeView === 'inbox' ? 'bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]' : 'text-[color:var(--manager-ink-muted)] hover:bg-[color:var(--manager-panel)]'}`}>收集箱</button>
+        <button type="button" role="tab" aria-selected={activeView === 'notes'} onClick={() => setActiveView('notes')} className={`rounded-[7px] px-3 py-1.5 text-sm transition ${activeView === 'notes' ? 'bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]' : 'text-[color:var(--manager-ink-muted)] hover:bg-[color:var(--manager-panel)]'}`}>笔记</button>
+      </div>
+      <div className="min-h-0 flex-1">
+        {activeView === 'inbox' ? <InboxPanel /> : <NotesArchivePanel />}
+      </div>
+    </div>
   );
 }

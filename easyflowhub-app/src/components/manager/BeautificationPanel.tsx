@@ -23,7 +23,7 @@ export function BeautificationPanel() {
   if (!isLoaded || !config) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-600 border-t-blue-500" />
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[color:var(--manager-border)] border-t-[color:var(--manager-accent)]" />
       </div>
     );
   }
@@ -52,7 +52,7 @@ export function BeautificationPanel() {
       <footer className="flex items-center justify-end gap-3 border-t border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-6 py-4">
         <button
           onClick={reset}
-          className="rounded-lg border border-[color:var(--manager-border)] bg-white/50 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition-colors hover:bg-white/70 hover:text-[color:var(--manager-ink)]"
+          className="rounded-lg border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition-colors hover:bg-[color:var(--manager-panel-strong)] hover:text-[color:var(--manager-ink)]"
         >
           恢复默认
         </button>

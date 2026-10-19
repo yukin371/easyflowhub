@@ -26,7 +26,7 @@ import {
   resolveAssetFilenameToUrl,
 } from '../lib/imageAssets';
 
-const BG_COLOR = '#FAF8F0';
+const BG_COLOR = 'var(--quick-bg)';
 const AUTOSAVE_DELAY = 900;
 
 function dedupeNotes(notes: Note[]): Note[] {
@@ -533,14 +533,14 @@ export function QuickNotePage() {
   if (!note) {
     return (
       <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: BG_COLOR }}>
-        <div style={{ width: 20, height: 20, border: '2px solid #ccc', borderTopColor: '#666', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div style={{ width: 20, height: 20, border: '2px solid var(--quick-border)', borderTopColor: 'var(--quick-accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
       </div>
     );
   }
 
   const bgAlpha = opacity;
-  const mainBg = `rgba(250, 248, 240, ${bgAlpha})`;
-  const dragBg = `rgba(240, 238, 230, ${bgAlpha})`;
+  const mainBg = `color-mix(in srgb, var(--quick-bg) ${Math.round(bgAlpha * 100)}%, transparent)`;
+  const dragBg = `color-mix(in srgb, var(--quick-surface-raised) ${Math.round(bgAlpha * 100)}%, transparent)`;
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', backgroundColor: mainBg }}>
       {isSwitcherOpen ? (
@@ -552,9 +552,9 @@ export function QuickNotePage() {
             right: 18,
             zIndex: 20,
             borderRadius: 18,
-            border: '1px solid rgba(109, 90, 62, 0.16)',
-            background: 'rgba(255, 252, 247, 0.94)',
-            boxShadow: '0 18px 44px rgba(58, 48, 33, 0.12)',
+            border: '1px solid var(--quick-border)',
+            background: 'var(--quick-surface)',
+            boxShadow: 'var(--quick-shadow)',
             backdropFilter: 'blur(20px)',
             padding: 12,
           }}
@@ -589,12 +589,12 @@ export function QuickNotePage() {
             placeholder="切换笔记，输入标题、内容或标签"
             style={{
               width: '100%',
-              border: '1px solid rgba(109, 90, 62, 0.12)',
+              border: '1px solid var(--quick-border)',
               borderRadius: 14,
-              background: 'rgba(255,255,255,0.82)',
+              background: 'var(--quick-input)',
               padding: '10px 12px',
               fontSize: 13,
-              color: '#4b3d2b',
+              color: 'var(--quick-text)',
               outline: 'none',
             }}
           />
@@ -607,12 +607,12 @@ export function QuickNotePage() {
                 void handleCreateAndSwitch();
               }}
               style={{
-                border: selectedIndex === 0 ? '1px solid rgba(129, 151, 111, 0.4)' : '1px solid rgba(109, 90, 62, 0.12)',
-                background: selectedIndex === 0 ? 'rgba(231, 239, 226, 0.9)' : 'rgba(246, 240, 228, 0.9)',
+                border: selectedIndex === 0 ? '1px solid var(--quick-accent)' : '1px solid var(--quick-border)',
+                background: selectedIndex === 0 ? 'var(--quick-accent-soft)' : 'var(--quick-surface-raised)',
                 borderRadius: 14,
                 padding: '10px 12px',
                 textAlign: 'left',
-                color: '#6d5a3e',
+                color: 'var(--quick-text)',
                 cursor: 'pointer',
               }}
             >
@@ -628,17 +628,17 @@ export function QuickNotePage() {
                   void handleSwitchNote(item.id);
                 }}
                 style={{
-                  border: selectedIndex === index + 1 ? '1px solid rgba(129, 151, 111, 0.4)' : item.id === note.id ? '1px solid rgba(129, 151, 111, 0.28)' : '1px solid rgba(109, 90, 62, 0.1)',
-                  background: selectedIndex === index + 1 ? 'rgba(231, 239, 226, 0.85)' : item.id === note.id ? 'rgba(231, 239, 226, 0.7)' : 'rgba(255,255,255,0.76)',
+                  border: selectedIndex === index + 1 ? '1px solid var(--quick-accent)' : item.id === note.id ? '1px solid var(--quick-accent)' : '1px solid var(--quick-border)',
+                  background: selectedIndex === index + 1 ? 'var(--quick-accent-soft)' : item.id === note.id ? 'var(--quick-accent-soft)' : 'var(--quick-surface-raised)',
                   borderRadius: 14,
                   padding: '10px 12px',
                   textAlign: 'left',
                   cursor: 'pointer',
-                  color: '#4b3d2b',
+                  color: 'var(--quick-text)',
                 }}
               >
                 <div style={{ fontSize: 13 }}>{buildSwitchLabel(item)}</div>
-                <div style={{ marginTop: 4, fontSize: 11, color: '#9c8b75' }}>
+                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--quick-muted)' }}>
                   {isContinueCandidate(item) ? '继续编辑' : '空白笔记'}
                 </div>
               </button>
@@ -648,7 +648,7 @@ export function QuickNotePage() {
       ) : null}
       {/* 拖曳栏 */}
       <div data-tauri-drag-region style={{ position: 'relative', height: 32, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingInline: 8, backgroundColor: dragBg, flexShrink: 0 }}>
-        <div style={{ paddingInline: 8, fontSize: 10, letterSpacing: '0.22em', color: `rgba(139, 125, 105, ${Math.max(0.26, bgAlpha * 0.72)})` }}>
+        <div style={{ paddingInline: 8, fontSize: 10, letterSpacing: '0.22em', color: `color-mix(in srgb, var(--quick-muted) ${Math.round(Math.max(0.26, bgAlpha * 0.72) * 100)}%, transparent)` }}>
           {isGhostMode ? 'GHOST' : `${Math.round(opacity * 100)}%`}
         </div>
         <button
@@ -667,7 +667,7 @@ export function QuickNotePage() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: `rgba(109, 90, 62, ${Math.max(0.32, bgAlpha * 0.72)})`,
+            color: `color-mix(in srgb, var(--quick-text) ${Math.round(Math.max(0.32, bgAlpha * 0.72) * 100)}%, transparent)`,
             cursor: 'pointer',
           }}
         >
@@ -675,7 +675,7 @@ export function QuickNotePage() {
         </button>
         <button
           onClick={handleToggleAlwaysOnTop}
-          style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: alwaysOnTop ? '#3b82f6' : '#9ca3af' }}
+          style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: alwaysOnTop ? 'var(--quick-accent)' : 'var(--quick-muted)' }}
           title={alwaysOnTop ? '取消置顶' : '置顶'}
         >
           <svg width="16" height="16" fill={alwaysOnTop ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
@@ -694,9 +694,9 @@ export function QuickNotePage() {
             right: 14,
             zIndex: 18,
             borderRadius: 18,
-            border: '1px solid rgba(109, 90, 62, 0.14)',
-            background: 'rgba(255, 251, 245, 0.94)',
-            boxShadow: '0 20px 44px rgba(58, 48, 33, 0.14)',
+            border: '1px solid var(--quick-border)',
+            background: 'var(--quick-surface)',
+            boxShadow: 'var(--quick-shadow)',
             backdropFilter: 'blur(18px)',
             padding: 12,
           }}
@@ -715,12 +715,12 @@ export function QuickNotePage() {
                 onClick={item.action}
                 style={{
                   borderRadius: 14,
-                  border: '1px solid rgba(109, 90, 62, 0.12)',
-                  background: 'rgba(255,255,255,0.74)',
+                  border: '1px solid var(--quick-border)',
+                  background: 'var(--quick-surface-raised)',
                   padding: '10px 12px',
                   textAlign: 'left',
                   fontSize: 12,
-                  color: '#4b3d2b',
+                  color: 'var(--quick-text)',
                   cursor: 'pointer',
                 }}
               >
@@ -728,16 +728,16 @@ export function QuickNotePage() {
               </button>
             ))}
           </div>
-          <div style={{ marginTop: 10, borderTop: '1px solid rgba(109, 90, 62, 0.08)', paddingTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <div style={{ marginTop: 10, borderTop: '1px solid var(--quick-border)', paddingTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {quickHelpItems.map((item) => (
               <span
                 key={item}
                 style={{
                   borderRadius: 999,
-                  background: 'rgba(246, 240, 228, 0.92)',
+                  background: 'var(--quick-accent-soft)',
                   padding: '4px 8px',
                   fontSize: 11,
-                  color: '#7f6d57',
+                  color: 'var(--quick-muted)',
                 }}
               >
                 {item}
@@ -758,10 +758,10 @@ export function QuickNotePage() {
             zIndex: 25,
             padding: '10px 14px',
             borderRadius: 12,
-            background: imageInsertion.insertResult.startsWith('✅') ? 'rgba(76, 175, 80, 0.92)' : imageInsertion.insertResult.startsWith('❌') ? 'rgba(244, 67, 54, 0.92)' : 'rgba(109, 90, 62, 0.88)',
+            background: imageInsertion.insertResult.startsWith('✅') ? 'rgba(50, 166, 112, 0.92)' : imageInsertion.insertResult.startsWith('❌') ? 'rgba(214, 76, 91, 0.92)' : 'var(--quick-accent)',
             color: '#fff',
             fontSize: 13,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            boxShadow: 'var(--quick-shadow)',
           }}
         >
           {imageInsertion.insertResult}
@@ -789,9 +789,9 @@ export function QuickNotePage() {
                   height: 72,
                   borderRadius: 14,
                   overflow: 'hidden',
-                  border: '1px solid rgba(109, 90, 62, 0.08)',
-                  background: 'rgba(255,255,255,0.72)',
-                  boxShadow: '0 6px 18px rgba(58, 48, 33, 0.06)',
+                  border: '1px solid var(--quick-border)',
+                  background: 'var(--quick-surface-raised)',
+                  boxShadow: '0 6px 18px color-mix(in srgb, var(--quick-text) 12%, transparent)',
                 }}
               >
                 <img
@@ -812,8 +812,8 @@ export function QuickNotePage() {
                     height: 18,
                     borderRadius: 999,
                     border: 'none',
-                    background: 'rgba(255, 251, 245, 0.78)',
-                    color: '#6d5a3e',
+                    background: 'var(--quick-surface)',
+                    color: 'var(--quick-text)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',

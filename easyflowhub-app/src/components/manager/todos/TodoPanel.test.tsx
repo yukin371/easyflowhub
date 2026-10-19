@@ -54,6 +54,15 @@ describe('TodoPanel', () => {
         cursor_trail: true,
       },
       todo: { done_retention_hours: 24 },
+      translation: { target_language: 'zh-CN', model: '' },
+      transcription: { model: '', language: '' },
+      developer: { debug_mode: false },
+      launcher_trigger: {
+        enabled: true,
+        trigger: 'keyboard_or_mouse_middle',
+        keyboard_shortcut: 'Ctrl+Alt+Space',
+        excluded_apps: [],
+      },
     });
   });
 

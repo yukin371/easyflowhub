@@ -17,3 +17,4 @@ manager panel -> `src/lib/api/scriptmgr` -> `/api/mcp/categories` + `/api/mcp/se
 - 此模块只做运营和可视化，不直接改写 `.scriptmgr/mcp-config.json`。
 - extension `mcp_servers` 在当前阶段只应显示为只读 overlay；冲突项必须显式标记，不能静默覆盖 persisted config。
 - `internal/mcp` 与 `internal/mcpcli` 是两条 owner：前者是协议层，后者是外部 server catalog，前端不要混淆。
+- 面板表面、状态徽章和空态使用共享 `manager-*` 主题 token；不要重新引入固定浅色背景，否则深色主题会出现浅色残留。

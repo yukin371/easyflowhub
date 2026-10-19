@@ -54,7 +54,7 @@ export function ManagerExtensionEntries({
           return (
             <div
               key={`${entry.source.extension_id}:${entry.id}`}
-              className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/45 px-3 py-3"
+              className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-3 py-3"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -65,7 +65,7 @@ export function ManagerExtensionEntries({
                     {entry.caption || entry.id}
                   </p>
                 </div>
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] border border-[color:var(--manager-border)] bg-white/70 text-sm text-[color:var(--manager-ink-soft)]">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-sm text-[color:var(--manager-ink-soft)]">
                   {entry.icon || 'EX'}
                 </span>
               </div>
@@ -91,7 +91,7 @@ export function ManagerExtensionEntries({
                     className={`flex-1 rounded-full border px-3 py-2 text-xs transition ${
                       isActive
                         ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-accent)]'
-                        : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]'
+                        : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]'
                     }`}
                   >
                     {isActive && targetPanel === entry.id ? '当前已在对应面板' : `打开 ${targetPanel} 面板`}
@@ -104,7 +104,7 @@ export function ManagerExtensionEntries({
 
                 <button
                   onClick={() => navigateToManagerExtension(entry.source.extension_id)}
-                  className="rounded-full border border-[color:var(--manager-accent)] bg-white px-3 py-2 text-xs text-[color:var(--manager-accent)] transition hover:bg-[color:var(--manager-accent)] hover:text-white"
+                  className="rounded-full border border-[color:var(--manager-accent)] bg-[color:var(--manager-panel)] px-3 py-2 text-xs text-[color:var(--manager-accent)] transition hover:bg-[color:var(--manager-accent)] hover:text-white"
                 >
                   查看扩展详情
                 </button>

@@ -18,17 +18,17 @@ export function BeautificationPage() {
 
   if (!isLoaded || !config) {
     return (
-      <div className="h-full flex items-center justify-center bg-gray-900/80">
-        <div className="w-5 h-5 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
+      <div className="flex h-full items-center justify-center bg-[color:var(--manager-panel)]">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[color:var(--manager-border)] border-t-[color:var(--manager-accent)]" />
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-gray-900/80">
+    <div className="flex h-full flex-col bg-[color:var(--manager-panel)] text-[color:var(--manager-ink)]">
       {/* Header */}
-      <header className="p-4 border-b border-white/10">
-        <h1 className="text-lg font-semibold text-gray-200">桌面美化</h1>
+      <header className="border-b border-[color:var(--manager-border)] p-4">
+        <h1 className="text-lg font-semibold text-[color:var(--manager-ink-strong)]">桌面美化</h1>
       </header>
 
       {/* Main content */}
@@ -40,10 +40,10 @@ export function BeautificationPage() {
       </main>
 
       {/* Action bar */}
-      <footer className="p-4 border-t border-white/10 bg-black/30 flex items-center justify-end gap-3">
+      <footer className="flex items-center justify-end gap-3 border-t border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
         <button
           onClick={reset}
-          className="px-4 py-2 bg-white/10 text-gray-300 text-sm rounded hover:bg-white/15 transition-colors"
+          className="rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition-colors hover:bg-[color:var(--manager-glass-highlight)] hover:text-[color:var(--manager-ink-strong)]"
         >
           恢复默认
         </button>

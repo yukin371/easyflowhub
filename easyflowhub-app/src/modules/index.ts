@@ -17,9 +17,11 @@ export {
   extensionsModule,
   relayModule,
   mcpModule,
-  tasksModule,
   componentsModule,
   trashModule,
   todosModule,
   settingsModule,
+  filesModule,
+  downloadsModule,
+  voiceModule,
 } from './builtin';

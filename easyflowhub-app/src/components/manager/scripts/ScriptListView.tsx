@@ -28,10 +28,10 @@ export function ScriptListView({ scripts, onSelect }: ScriptListViewProps) {
         <button
           key={script.id}
           onClick={() => onSelect(script.id)}
-          className="group flex w-full items-start gap-3 rounded-[16px] border border-transparent bg-white/55 px-4 py-3 text-left transition-all hover:border-[color:var(--manager-border)] hover:bg-white/75"
+          className="group flex w-full items-start gap-3 rounded-[16px] border border-transparent bg-[color:var(--manager-panel-strong)] px-4 py-3 text-left transition-all hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-accent-soft)]"
         >
           {/* Icon */}
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[color:var(--manager-border)] bg-white/70 text-base">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-base">
             <ScriptTypeIcon type={script.script_type} />
           </span>
 
@@ -61,7 +61,7 @@ export function ScriptListView({ scripts, onSelect }: ScriptListViewProps) {
                 {script.tags.slice(0, 4).map((tag) => (
                   <span
                     key={tag}
-                    className="rounded-full border border-[color:var(--manager-border)] bg-white/50 px-2 py-0.5 text-[11px] text-[color:var(--manager-ink-muted)]"
+                    className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-2 py-0.5 text-[11px] text-[color:var(--manager-ink-muted)]"
                   >
                     #{tag}
                   </span>

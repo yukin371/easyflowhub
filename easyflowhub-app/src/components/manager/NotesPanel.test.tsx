@@ -168,6 +168,7 @@ describe('NotesPanel', () => {
     );
 
     render(<NotesPanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
     await screen.findByText('Existing note');
 
     window.dispatchEvent(
@@ -195,6 +196,7 @@ describe('NotesPanel', () => {
     );
 
     render(<NotesPanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
     await screen.findByText('Existing note');
 
     window.dispatchEvent(
@@ -230,6 +232,7 @@ describe('NotesPanel', () => {
     );
 
     render(<NotesPanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
     await screen.findByText('Existing note');
 
     window.dispatchEvent(

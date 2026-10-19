@@ -2,7 +2,7 @@
 
 > status: active
 > owner: EasyFlowHub frontend maintainers
-> last_verified: 2026-04-11
+> last_verified: 2026-10-19
 
 ## 职责
 
@@ -17,7 +17,8 @@ extension card -> `importRelayContributions` -> 更新本地 JSON 编辑器 -> �
 
 - 此模块只负责管理界面，不拥有 relay 选路或 failover 逻辑，真正 owner 在 `scriptmgr-go/internal/relay`。
 - 当前配置编辑是 raw JSON 模式，保存成功与否以服务端校验为准。
-- `scriptmgr serve` 与 `scriptmgr relay serve` 是两个进程职责：前者提供管理接口，后者提供真实转发入口。
+- `scriptmgr serve` 与 `scriptmgr relay serve` 是两个进程职责：前者提供管理接口，后者提供真实转发入口。管理接口由桌面壳按需自动拉起（native `scriptmgr_server.rs` + 前端 `ensureScriptmgr`），`relay serve` 仍由用户自行启动，面板显示“Relay 运行时未启动”属预期状态。
+- 健康检查必须用 `GET /api/scripts`，不能用 HEAD：Go 路由按 method 匹配，HEAD 会返回 405 并被误判为离线。
 - 扩展 relay preset 导入只写入编辑器，不自动保存 live config；导入完成后仍需用户显式点击“保存配置”。
 - 面板中的 relay overlay 统计应优先读取 `/api/extensions/contributions` 与 `snapshot.effective_config`，不要再自行从 manifest 推导运行时视图。
 - 由扩展导入的 provider / route 必须保留 `source=extension:<id>` 来源标记，且新增 provider 默认禁用，避免占位上游被立刻加入选路。

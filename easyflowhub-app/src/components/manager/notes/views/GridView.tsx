@@ -17,14 +17,14 @@ export function GridView(props: GridViewProps) {
   const { notes, splitTags, relativeTimeLabel, onOpenNote, onRenameNote, onTogglePin, onDeleteNote } = props;
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       {notes.map((note) => (
         <article
           key={note.id}
           onClick={() => onOpenNote(note)}
-          className="group flex min-h-[228px] cursor-pointer flex-col rounded-[18px] border border-[color:var(--manager-border)] bg-[rgba(255,249,242,0.52)] p-2.5 transition hover:-translate-y-1 hover:border-[color:var(--manager-accent)] hover:shadow-[0_20px_48px_rgba(58,48,33,0.08)]"
+          className="group flex min-h-[200px] cursor-pointer flex-col rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-3 transition hover:-translate-y-0.5 hover:border-[color:var(--manager-accent)] hover:shadow-[var(--manager-shadow)]"
         >
-          <div className="flex h-full flex-col rounded-[14px] bg-[rgba(252,247,239,0.58)] px-3.5 py-3.5">
+          <div className="flex h-full flex-col px-1 py-1">
             <div className="flex items-start justify-between gap-3">
               <InlineTitleEditor
                 title={truncateTitle(deriveDisplayTitle(note.title, note.content), 32) || ''}
@@ -33,7 +33,7 @@ export function GridView(props: GridViewProps) {
                 onOpen={() => onOpenNote(note)}
                 className="min-w-0 flex-1 text-left"
                 titleClassName="block truncate pt-1 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-xl leading-[1.32] text-[color:var(--manager-ink-strong)]"
-                inputClassName="w-full rounded-[12px] border border-[color:var(--manager-accent)] bg-white px-3 py-2 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-lg text-[color:var(--manager-ink-strong)] outline-none"
+                inputClassName="w-full rounded-[8px] border border-[color:var(--manager-accent)] bg-[color:var(--manager-panel-strong)] px-3 py-2 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-lg text-[color:var(--manager-ink-strong)] outline-none"
               />
               <div className="flex items-center gap-3 pl-4">
                 {onDeleteNote && (
@@ -59,7 +59,7 @@ export function GridView(props: GridViewProps) {
                 </button>
               </div>
             </div>
-            <div className="mt-3 rounded-[12px] bg-[rgba(248,243,234,0.46)] px-3 py-3">
+            <div className="mt-3 border-t border-[color:var(--manager-border)] px-1 pt-3">
               <p className="line-clamp-4 text-[14px] leading-7 text-[color:var(--manager-ink-soft)]">
                 {summarizeContentWithoutImageMarkdown(note.content) || '留白也会被妥善保存。'}
               </p>

@@ -10,6 +10,7 @@ import {
   restoreNotesBatch,
 } from '../../lib/tauri/notes';
 import type { Note } from '../../types/note';
+import { scriptTrashApi } from '../../lib/api/scriptmgr';
 
 vi.mock('../../lib/tauri/notes', () => ({
   listTrash: vi.fn(),
@@ -19,6 +20,18 @@ vi.mock('../../lib/tauri/notes', () => ({
   emptyTrash: vi.fn(),
 }));
 
+vi.mock('../../lib/api/scriptmgr', () => ({
+  scriptTrashApi: {
+    list: vi.fn(),
+    restore: vi.fn(),
+    purge: vi.fn(),
+    empty: vi.fn(),
+  },
+}));
+
+const listScriptTrashMock = vi.mocked(scriptTrashApi.list);
+const restoreScriptMock = vi.mocked(scriptTrashApi.restore);
+const purgeScriptMock = vi.mocked(scriptTrashApi.purge);
 const listTrashMock = vi.mocked(listTrash);
 const restoreNoteMock = vi.mocked(restoreNote);
 const restoreNotesBatchMock = vi.mocked(restoreNotesBatch);
@@ -50,6 +63,7 @@ describe('TrashPanel', () => {
     restoreNotesBatchMock.mockResolvedValue('note-1,note-2' as never);
     permanentDeleteNoteMock.mockResolvedValue('note-1' as never);
     emptyTrashMock.mockResolvedValue(2 as never);
+    listScriptTrashMock.mockResolvedValue([]);
   });
 
   it('恢复单条笔记后将其从回收站列表移除', async () => {
@@ -97,5 +111,61 @@ describe('TrashPanel', () => {
     await waitFor(() => {
       expect(screen.getAllByText('回收站为空').length).toBeGreaterThan(0);
     });
+  });
+
+  it('脚本分区展示已删除脚本并可恢复到原路径', async () => {
+    listScriptTrashMock.mockResolvedValue([
+      {
+        id: 'trash-1',
+        name: 'Demo Script',
+        original_path: 'E:/scripts/demo.ps1',
+        script_type: 'powershell',
+        deleted_at: '2026-10-19T00:00:00Z',
+        size_bytes: 2048,
+      },
+    ]);
+    restoreScriptMock.mockResolvedValue({
+      id: 'trash-1',
+      name: 'Demo Script',
+      original_path: 'E:/scripts/demo.ps1',
+      script_type: 'powershell',
+      deleted_at: '2026-10-19T00:00:00Z',
+      size_bytes: 2048,
+    });
+
+    render(<TrashPanel />);
+    fireEvent.click(await screen.findByRole('tab', { name: /脚本/ }));
+
+    expect(await screen.findByText('Demo Script')).toBeInTheDocument();
+    expect(screen.getByText('E:/scripts/demo.ps1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复' }));
+
+    await waitFor(() => expect(restoreScriptMock).toHaveBeenCalledWith('trash-1'));
+    await waitFor(() => expect(screen.queryByText('Demo Script')).not.toBeInTheDocument());
+  });
+
+  it('彻底删除脚本前需要确认', async () => {
+    listScriptTrashMock.mockResolvedValue([
+      {
+        id: 'trash-2',
+        name: 'Broken Script',
+        original_path: 'E:/scripts/broken.py',
+        script_type: 'python',
+        deleted_at: '2026-10-19T00:00:00Z',
+        size_bytes: 100,
+      },
+    ]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<TrashPanel />);
+    fireEvent.click(await screen.findByRole('tab', { name: /脚本/ }));
+    expect(await screen.findByText('Broken Script')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '永久删除' }));
+
+    await waitFor(() => expect(purgeScriptMock).toHaveBeenCalledWith('trash-2'));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
   });
 });

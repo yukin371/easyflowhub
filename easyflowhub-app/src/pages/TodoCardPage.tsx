@@ -22,8 +22,6 @@ import type { Note } from '../types/note';
 import type { TodoItem } from '../types/todo';
 import { MANAGER_NAVIGATE_TO_NOTE_EVENT } from '../components/manager/ManagerPage';
 
-const BG_COLOR = '#FAF8F0';
-
 function appendTodoLine(content: string, text: string) {
   const normalizedText = text.trim();
   if (!normalizedText) {
@@ -313,7 +311,7 @@ export function TodoCardPage() {
         inset: 0,
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: BG_COLOR,
+        backgroundColor: 'var(--quick-bg)',
       }}
     >
       <div
@@ -325,8 +323,8 @@ export function TodoCardPage() {
           alignItems: 'center',
           justifyContent: 'space-between',
           paddingInline: 8,
-          backgroundColor: 'rgba(250, 248, 240, 0.92)',
-          borderBottom: '1px solid rgba(109, 90, 62, 0.08)',
+          backgroundColor: 'var(--quick-surface)',
+          borderBottom: '1px solid var(--quick-border)',
           flexShrink: 0,
         }}
       >
@@ -335,7 +333,7 @@ export function TodoCardPage() {
             paddingInline: 8,
             fontSize: 10,
             letterSpacing: '0.22em',
-            color: 'rgba(139, 125, 105, 0.56)',
+            color: 'var(--quick-muted)',
           }}
           data-tauri-drag-region
         >
@@ -361,7 +359,7 @@ export function TodoCardPage() {
             title={pinned ? '取消桌面固定' : '固定到桌面'}
             style={{
               ...toolbarButtonStyle,
-              color: pinned ? '#3b82f6' : '#9ca3af',
+              color: pinned ? 'var(--quick-accent)' : 'var(--quick-muted)',
             }}
           >
             <svg width="12" height="12" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
@@ -383,8 +381,8 @@ export function TodoCardPage() {
           <div
             style={{
               borderRadius: 14,
-              background: 'rgba(255,255,255,0.68)',
-              border: '1px solid rgba(109, 90, 62, 0.1)',
+              background: 'var(--quick-surface-raised)',
+              border: '1px solid var(--quick-border)',
               padding: 8,
             }}
           >
@@ -429,7 +427,7 @@ export function TodoCardPage() {
                         style={{
                           height: 1,
                           margin: '2px 6px 8px',
-                          background: 'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.16), transparent)',
+                          background: 'linear-gradient(90deg, transparent, var(--quick-border), transparent)',
                         }}
                       />
                     ) : null}
@@ -448,7 +446,7 @@ export function TodoCardPage() {
                           fontSize: 10,
                           letterSpacing: '0.14em',
                           textTransform: 'uppercase',
-                          color: 'rgba(139, 125, 105, 0.72)',
+                          color: 'var(--quick-muted)',
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -482,19 +480,19 @@ export function TodoCardPage() {
                               gap: 8,
                               borderRadius: 12,
                               padding: '4px 6px',
-                              background: isEditing ? 'rgba(255,255,255,0.75)' : 'transparent',
+                              background: isEditing ? 'var(--quick-surface-raised)' : 'transparent',
                             }}
                           >
                             <button
                               onClick={() => void handleToggle(todo)}
                               style={{
                                 ...checkboxStyle,
-                                background: todo.checked ? 'rgba(109, 90, 62, 0.2)' : 'rgba(255,255,255,0.84)',
-                                borderColor: todo.checked ? 'rgba(109, 90, 62, 0.22)' : 'rgba(109, 90, 62, 0.18)',
+                                background: todo.checked ? 'var(--quick-accent-soft)' : 'var(--quick-input)',
+                                borderColor: 'var(--quick-border)',
                               }}
                             >
                               {todo.checked ? (
-                                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="#6d5a3e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="var(--quick-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M2 6l3 3 5-5" />
                                 </svg>
                               ) : null}
@@ -533,7 +531,7 @@ export function TodoCardPage() {
                                   padding: 0,
                                   textAlign: 'left',
                                   cursor: 'text',
-                                  color: todo.checked ? 'rgba(109, 90, 62, 0.38)' : '#4b3d2b',
+                                  color: todo.checked ? 'var(--quick-muted)' : 'var(--quick-text)',
                                   fontSize: 13,
                                   lineHeight: 1.45,
                                   textDecoration: todo.checked ? 'line-through' : 'none',
@@ -558,7 +556,7 @@ export function TodoCardPage() {
                       height: 1,
                       margin: '6px 6px 2px',
                       background:
-                        'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.2), transparent)',
+                        'linear-gradient(90deg, transparent, var(--quick-border), transparent)',
                     }}
                   />
                   {completedGroups.map((group, groupIndex) => (
@@ -568,8 +566,7 @@ export function TodoCardPage() {
                           style={{
                             height: 1,
                             margin: '2px 6px 8px',
-                            background:
-                              'linear-gradient(90deg, transparent, rgba(109, 90, 62, 0.16), transparent)',
+                              background: 'linear-gradient(90deg, transparent, var(--quick-border), transparent)',
                           }}
                         />
                       ) : null}
@@ -588,7 +585,7 @@ export function TodoCardPage() {
                             fontSize: 10,
                             letterSpacing: '0.14em',
                             textTransform: 'uppercase',
-                            color: 'rgba(139, 125, 105, 0.52)',
+                            color: 'var(--quick-muted)',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -622,18 +619,18 @@ export function TodoCardPage() {
                                 gap: 8,
                                 borderRadius: 12,
                                 padding: '4px 6px',
-                                background: isEditing ? 'rgba(255,255,255,0.75)' : 'transparent',
+                                background: isEditing ? 'var(--quick-surface-raised)' : 'transparent',
                               }}
                             >
                               <button
                                 onClick={() => void handleToggle(todo)}
                                 style={{
                                   ...checkboxStyle,
-                                  background: 'rgba(109, 90, 62, 0.2)',
-                                  borderColor: 'rgba(109, 90, 62, 0.22)',
+                                background: 'var(--quick-accent-soft)',
+                                borderColor: 'var(--quick-border)',
                                 }}
                               >
-                                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="#6d5a3e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="var(--quick-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M2 6l3 3 5-5" />
                                 </svg>
                               </button>
@@ -671,7 +668,7 @@ export function TodoCardPage() {
                                     padding: 0,
                                     textAlign: 'left',
                                     cursor: 'text',
-                                    color: 'rgba(109, 90, 62, 0.38)',
+                                    color: 'var(--quick-muted)',
                                     fontSize: 13,
                                     lineHeight: 1.45,
                                     textDecoration: 'line-through',
@@ -706,7 +703,7 @@ const toolbarButtonStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: '#8b7d69',
+  color: 'var(--quick-muted)',
   cursor: 'pointer',
   fontSize: 13,
   lineHeight: 1,
@@ -718,7 +715,7 @@ const checkboxStyle: CSSProperties = {
   marginTop: 1,
   flexShrink: 0,
   borderRadius: 999,
-  border: '1px solid rgba(109, 90, 62, 0.18)',
+  border: '1px solid var(--quick-border)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -730,7 +727,7 @@ const inputStyle: CSSProperties = {
   border: 'none',
   outline: 'none',
   background: 'transparent',
-  color: '#4b3d2b',
+  color: 'var(--quick-text)',
   fontSize: 13,
   lineHeight: 1.45,
   padding: '2px 0',
@@ -741,7 +738,7 @@ const emptyStateStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: 'rgba(139, 125, 105, 0.56)',
+  color: 'var(--quick-muted)',
   fontSize: 14,
   letterSpacing: '0.2em',
 };

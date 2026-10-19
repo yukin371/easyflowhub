@@ -1,8 +1,14 @@
 /**
  * ScriptMgr HTTP API Client
  * Connects to scriptmgr-go HTTP server (default: localhost:8765)
+ *
+ * The native layer owns the sidecar lifecycle: `ensure_scriptmgr` starts
+ * `scriptmgr serve` on demand and returns the base URL once it answers.
+ * Every request first ensures the sidecar is up, so panels no longer fail
+ * with "Failed to fetch" when nobody started the server manually.
  */
 
+import { invoke } from '@tauri-apps/api/core';
 import type {
   TaskInfo,
   ListResponse,
@@ -14,14 +20,20 @@ import type {
   ExtensionContributionsResponse,
   MCPServerCatalogEntry,
   MCPServerCatalogResponse,
+  ScriptSource,
+  RootsDetail,
+  ScriptTrashEntry,
+  ScriptTrashResponse,
+  ImportScriptsResponse,
+  ScriptSummary,
 } from '../../types/scriptmgr';
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-const DEFAULT_BASE_URL = 'http://localhost:8765';
-const DEFAULT_RELAY_RUNTIME_URL = 'http://localhost:8787';
+const DEFAULT_BASE_URL = 'http://127.0.0.1:8765';
+const DEFAULT_RELAY_RUNTIME_URL = 'http://127.0.0.1:8787';
 
 let baseUrl = DEFAULT_BASE_URL;
 let relayRuntimeUrl = DEFAULT_RELAY_RUNTIME_URL;
@@ -43,6 +55,32 @@ export function getRelayRuntimeUrl(): string {
 }
 
 // ============================================================================
+// Sidecar lifecycle
+// ============================================================================
+
+let ensurePromise: Promise<string> | undefined;
+
+/**
+ * Ensure the scriptmgr HTTP sidecar is running and return its base URL.
+ * Concurrent callers share one attempt; a failed attempt clears the cached
+ * promise so the next call (e.g. a panel retry button) tries again.
+ */
+export function ensureScriptmgr(): Promise<string> {
+  if (!ensurePromise) {
+    ensurePromise = invoke<string>('ensure_scriptmgr')
+      .then((url) => {
+        setBaseUrl(url);
+        return url;
+      })
+      .catch((error) => {
+        ensurePromise = undefined;
+        throw error;
+      });
+  }
+  return ensurePromise;
+}
+
+// ============================================================================
 // Utilities
 // ============================================================================
 
@@ -57,8 +95,18 @@ function qs(params: Record<string, unknown>): string {
   return str ? `?${str}` : '';
 }
 
-async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+/**
+ * Go marshals a nil slice as `null`, so every list field can arrive as null
+ * even though the TypeScript contract says array. Normalising here keeps the
+ * panels from crashing on `.map` / `.filter` of a null list.
+ */
+function asArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const base = await ensureScriptmgr();
+  const response = await fetch(`${base}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -83,24 +131,149 @@ export const scriptsApi = {
    * List all scripts
    */
   list: async (search?: string): Promise<ListResponse> => {
-    return fetchJSON<ListResponse>(`${baseUrl}/api/scripts${qs({ search })}`);
+    const response = await fetchJSON<ListResponse>(`/api/scripts${qs({ search })}`);
+    return {
+      ...response,
+      roots: asArray(response.roots),
+      scripts: asArray(response.scripts),
+      count: response.count ?? 0,
+    };
   },
 
   /**
    * Get script detail by ID
    */
   get: async (scriptId: string): Promise<DescribeResponse> => {
-    return fetchJSON<DescribeResponse>(`${baseUrl}/api/scripts/${encodeURIComponent(scriptId)}`);
+    return fetchJSON<DescribeResponse>(`/api/scripts/${encodeURIComponent(scriptId)}`);
   },
 
   /**
    * Update script category
    */
   updateCategory: async (scriptId: string, category: string): Promise<DescribeResponse> => {
-    return fetchJSON<DescribeResponse>(`${baseUrl}/api/scripts/${encodeURIComponent(scriptId)}`, {
+    return fetchJSON<DescribeResponse>(`/api/scripts/${encodeURIComponent(scriptId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ category }),
     });
+  },
+
+  /**
+   * Read the editable source of a script
+   */
+  readSource: async (scriptId: string): Promise<ScriptSource> => {
+    const response = await fetchJSON<{ ok: boolean; source: ScriptSource }>(
+      `/api/scripts/${encodeURIComponent(scriptId)}/source`
+    );
+    return response.source;
+  },
+
+  /**
+   * Save the source of a script in place
+   */
+  saveSource: async (scriptId: string, content: string): Promise<ScriptSource> => {
+    const response = await fetchJSON<{ ok: boolean; source: ScriptSource }>(
+      `/api/scripts/${encodeURIComponent(scriptId)}/source`,
+      { method: 'PUT', body: JSON.stringify({ content }) }
+    );
+    return response.source;
+  },
+
+  /**
+   * Create a new script inside a configured root
+   */
+  create: async (input: {
+    root: string;
+    filename: string;
+    content: string;
+    name?: string;
+    category?: string;
+    description?: string;
+  }): Promise<ScriptSummary> => {
+    const response = await fetchJSON<{ ok: boolean; script: ScriptSummary }>(`/api/scripts`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return response.script;
+  },
+
+  /**
+   * Move a script to the trash
+   */
+  remove: async (scriptId: string): Promise<ScriptTrashEntry> => {
+    const response = await fetchJSON<{ ok: boolean; entry: ScriptTrashEntry }>(
+      `/api/scripts/${encodeURIComponent(scriptId)}`,
+      { method: 'DELETE' }
+    );
+    return response.entry;
+  },
+
+  /**
+   * Copy external script files into a configured root
+   */
+  importFiles: async (root: string, paths: string[]): Promise<ImportScriptsResponse> => {
+    return fetchJSON<ImportScriptsResponse>(`/api/scripts/import`, {
+      method: 'POST',
+      body: JSON.stringify({ root, paths }),
+    });
+  },
+};
+
+// ============================================================================
+// Roots API
+// ============================================================================
+
+export const rootsApi = {
+  list: async (): Promise<RootsDetail> => {
+    const response = await fetchJSON<RootsDetail>(`/api/roots`);
+    return { ...response, roots: asArray(response.roots), custom: asArray(response.custom) };
+  },
+
+  add: async (path: string): Promise<RootsDetail> => {
+    const response = await fetchJSON<RootsDetail & { root: string }>(`/api/roots`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    });
+    return { ...response, roots: asArray(response.roots), custom: asArray(response.custom) };
+  },
+
+  remove: async (path: string): Promise<RootsDetail> => {
+    const response = await fetchJSON<RootsDetail>(
+      `/api/roots?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' }
+    );
+    return { ...response, roots: asArray(response.roots), custom: asArray(response.custom) };
+  },
+};
+
+// ============================================================================
+// Script trash API
+// ============================================================================
+
+export const scriptTrashApi = {
+  list: async (): Promise<ScriptTrashEntry[]> => {
+    const response = await fetchJSON<ScriptTrashResponse>(`/api/trash/scripts`);
+    return asArray(response.entries);
+  },
+
+  restore: async (entryId: string): Promise<ScriptTrashEntry> => {
+    const response = await fetchJSON<{ ok: boolean; entry: ScriptTrashEntry }>(
+      `/api/trash/scripts/${encodeURIComponent(entryId)}/restore`,
+      { method: 'POST' }
+    );
+    return response.entry;
+  },
+
+  purge: async (entryId: string): Promise<void> => {
+    await fetchJSON<{ ok: boolean }>(`/api/trash/scripts/${encodeURIComponent(entryId)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  empty: async (): Promise<number> => {
+    const response = await fetchJSON<{ ok: boolean; removed: number }>(`/api/trash/scripts`, {
+      method: 'DELETE',
+    });
+    return response.removed;
   },
 };
 
@@ -156,14 +329,15 @@ export const tasksApi = {
    * List tasks with optional status filter
    */
   list: async (status?: string, limit?: number): Promise<TasksListResponse> => {
-    return fetchJSON<TasksListResponse>(`${baseUrl}/api/tasks${qs({ status, limit })}`);
+    const response = await fetchJSON<TasksListResponse>(`/api/tasks${qs({ status, limit })}`);
+    return { ...response, tasks: asArray(response.tasks), count: response.count ?? 0 };
   },
 
   /**
    * Get task by ID
    */
   get: async (taskId: string): Promise<TaskInfo> => {
-    return fetchJSON<TaskInfo>(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`);
+    return fetchJSON<TaskInfo>(`/api/tasks/${encodeURIComponent(taskId)}`);
   },
 
   /**
@@ -174,7 +348,7 @@ export const tasksApi = {
     options?: { offset?: number; limit?: number; tail?: boolean }
   ): Promise<TaskLogResponse> => {
     return fetchJSON<TaskLogResponse>(
-      `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/log${qs(options ?? {})}`
+      `/api/tasks/${encodeURIComponent(taskId)}/log${qs(options ?? {})}`
     );
   },
 
@@ -182,7 +356,7 @@ export const tasksApi = {
    * Cancel a task
    */
   cancel: async (taskId: string): Promise<{ ok: boolean }> => {
-    return fetchJSON<{ ok: boolean }>(`${baseUrl}/api/cancel/${encodeURIComponent(taskId)}`, {
+    return fetchJSON<{ ok: boolean }>(`/api/cancel/${encodeURIComponent(taskId)}`, {
       method: 'POST',
     });
   },
@@ -191,7 +365,7 @@ export const tasksApi = {
    * Run a script
    */
   run: async (req: RunScriptRequest): Promise<RunScriptResponse> => {
-    return fetchJSON<RunScriptResponse>(`${baseUrl}/api/run`, {
+    return fetchJSON<RunScriptResponse>(`/api/run`, {
       method: 'POST',
       body: JSON.stringify(req),
     });
@@ -249,15 +423,15 @@ export const mcpApi = {
    * List all MCP categories with their loaded status
    */
   listCategories: async (): Promise<MCPCategoryInfo[]> => {
-    return fetchJSON<{ ok: boolean; categories: MCPCategoryInfo[] }>(
-      `${baseUrl}/api/mcp/categories`
-    ).then((r) => r.categories);
+    const response = await fetchJSON<{ ok: boolean; categories: MCPCategoryInfo[] }>(
+      `/api/mcp/categories`
+    );
+    return asArray(response.categories);
   },
 
   listServers: async (): Promise<MCPServerCatalogEntry[]> => {
-    return fetchJSON<MCPServerCatalogResponse>(`${baseUrl}/api/mcp/servers`).then(
-      (response) => response.catalog.servers
-    );
+    const response = await fetchJSON<MCPServerCatalogResponse>(`/api/mcp/servers`);
+    return asArray(response.catalog?.servers);
   },
 
   /**
@@ -265,7 +439,7 @@ export const mcpApi = {
    */
   loadCategory: async (category: string): Promise<{ ok: boolean; category: string; loaded: boolean }> => {
     return fetchJSON<{ ok: boolean; category: string; loaded: boolean }>(
-      `${baseUrl}/api/mcp/load/${encodeURIComponent(category)}`,
+      `/api/mcp/load/${encodeURIComponent(category)}`,
       { method: 'POST' }
     );
   },
@@ -275,7 +449,7 @@ export const mcpApi = {
    */
   unloadCategory: async (category: string): Promise<{ ok: boolean; category: string; loaded: boolean }> => {
     return fetchJSON<{ ok: boolean; category: string; loaded: boolean }>(
-      `${baseUrl}/api/mcp/unload/${encodeURIComponent(category)}`,
+      `/api/mcp/unload/${encodeURIComponent(category)}`,
       { method: 'POST' }
     );
   },
@@ -287,26 +461,58 @@ export const mcpApi = {
 
 export const relayApi = {
   getSnapshot: async (): Promise<RelaySnapshot> => {
-    const response = await fetchJSON<RelaySnapshotResponse>(`${baseUrl}/api/relay/config`);
-    return response.snapshot;
+    const response = await fetchJSON<RelaySnapshotResponse>(`/api/relay/config`);
+    return normalizeSnapshot(response.snapshot);
   },
 
   saveConfig: async (config: RelayConfig): Promise<RelaySnapshot> => {
-    const response = await fetchJSON<RelaySnapshotResponse>(`${baseUrl}/api/relay/config`, {
+    const response = await fetchJSON<RelaySnapshotResponse>(`/api/relay/config`, {
       method: 'PUT',
       body: JSON.stringify(config),
     });
-    return response.snapshot;
+    return normalizeSnapshot(response.snapshot);
   },
 };
 
+/** Go can send nil slices as null; panels assume arrays. */
+function normalizeSnapshot(snapshot: RelaySnapshot | null | undefined): RelaySnapshot {
+  const config = snapshot?.config ?? ({ version: 1 } as RelayConfig);
+  return {
+    ...snapshot,
+    config,
+    providers: asArray(snapshot?.providers),
+    extension_roots: asArray(snapshot?.extension_roots),
+    extensions: asArray(snapshot?.extensions),
+  };
+}
+
 export const extensionsApi = {
   list: async (): Promise<ExtensionsResponse> => {
-    return fetchJSON<ExtensionsResponse>(`${baseUrl}/api/extensions`);
+    const response = await fetchJSON<ExtensionsResponse>(`/api/extensions`);
+    return {
+      ...response,
+      roots: asArray(response.roots),
+      // A registry with zero manifests marshals as `extensions: null`.
+      extensions: asArray(response.extensions),
+      count: response.count ?? 0,
+    };
   },
 
   contributions: async (): Promise<ExtensionContributionsResponse> => {
-    return fetchJSON<ExtensionContributionsResponse>(`${baseUrl}/api/extensions/contributions`);
+    const response = await fetchJSON<ExtensionContributionsResponse>(`/api/extensions/contributions`);
+    const contributions = response.contributions ?? {};
+    return {
+      ...response,
+      roots: asArray(response.roots),
+      contributions: {
+        ...contributions,
+        manager_modules: asArray(contributions.manager_modules),
+        script_roots: asArray(contributions.script_roots),
+        relay_providers: asArray(contributions.relay_providers),
+        relay_routes: asArray(contributions.relay_routes),
+        mcp_servers: asArray(contributions.mcp_servers),
+      },
+    };
   },
 };
 
@@ -316,16 +522,18 @@ export const extensionsApi = {
 
 export async function checkServerHealth(): Promise<{ ok: boolean; message: string }> {
   try {
-    const response = await fetch(`${baseUrl}/api/scripts?search=`, {
-      method: 'HEAD',
-    });
+    // Ensure the sidecar first, then verify with GET: the Go router matches
+    // method-specific patterns, so a HEAD probe would be answered 405 even
+    // while the server is healthy.
+    const base = await ensureScriptmgr();
+    const response = await fetch(`${base}/api/scripts?search=`);
     return { ok: response.ok, message: response.ok ? 'Server is running' : 'Server error' };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     if (message.includes('fetch') || message.includes('ECONNREFUSED')) {
       return {
         ok: false,
-        message: 'ScriptMgr 服务未启动，请先运行 scriptmgr serve',
+        message: 'scriptmgr 服务启动失败，请重试或检查端口占用',
       };
     }
     return { ok: false, message };
@@ -333,17 +541,27 @@ export async function checkServerHealth(): Promise<{ ok: boolean; message: strin
 }
 
 export async function checkRelayRuntimeHealth(): Promise<{ ok: boolean; message: string }> {
+  let healthUrl: string;
   try {
-    const response = await fetch(`${relayRuntimeUrl}/health`);
-    return { ok: response.ok, message: response.ok ? 'Relay is running' : 'Relay error' };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    if (message.includes('fetch') || message.includes('ECONNREFUSED')) {
-      return {
-        ok: false,
-        message: 'Relay 未启动，请运行 scriptmgr relay serve --port 8787',
-      };
+    const url = new URL(relayRuntimeUrl.trim());
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+      throw new Error('invalid Relay URL');
     }
-    return { ok: false, message };
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/health`;
+    healthUrl = url.toString();
+  } catch {
+    return { ok: false, message: 'Relay 地址无效，请检查 Relay 配置。' };
+  }
+
+  try {
+    const response = await fetch(healthUrl);
+    return { ok: response.ok, message: response.ok ? 'Relay is running' : 'Relay error' };
+  } catch {
+    // Keep transport diagnostics and any URL data out of the UI. The detailed
+    // failure remains available to the native/service logs when debugging.
+    return {
+      ok: false,
+      message: 'Relay 未启动，请运行 scriptmgr relay serve --port 8787',
+    };
   }
 }

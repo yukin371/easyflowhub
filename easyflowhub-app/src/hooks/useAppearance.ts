@@ -15,6 +15,14 @@ import type {
 } from '../types/appearance';
 import { DEFAULT_APPEARANCE } from '../types/appearance';
 
+/** Broadcast changes between multiple React roots/windows sharing a webview. */
+export const APPEARANCE_CHANGED_EVENT = 'easyflowhub:appearance-changed';
+
+function broadcastAppearanceConfig(config: AppearanceConfig): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<AppearanceConfig>(APPEARANCE_CHANGED_EVENT, { detail: config }));
+}
+
 export interface UseAppearanceReturn {
   /** 当前配置 */
   config: AppearanceConfig | null;
@@ -40,6 +48,12 @@ export interface UseAppearanceReturn {
 export function useAppearance(): UseAppearanceReturn {
   const [config, setConfig] = useState<AppearanceConfig | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  // Keep the system preference in state so the `system` mode reacts when
+  // Windows switches between light and dark while EasyFlowHub is open.
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return 'light';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
 
   // 初始化加载配置
   useEffect(() => {
@@ -55,27 +69,74 @@ export function useAppearance(): UseAppearanceReturn {
       });
   }, []);
 
-  // 监听系统主题变化（当 theme 为 system 时）
+  // Manager mounts more than one appearance-aware component, and Tauri may
+  // host several windows at once. Keep hook instances synchronized instead of
+  // allowing a stale instance to overwrite a freshly selected theme.
   useEffect(() => {
-    if (config?.theme !== 'system') return;
+    if (typeof window === 'undefined') return;
 
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => {
-      // 触发重新渲染即可，resolvedTheme 会自动计算
+    const handleAppearanceChanged = (event: Event) => {
+      const detail = (event as CustomEvent<AppearanceConfig>).detail;
+      if (detail?.theme && detail.window && detail.font) {
+        setConfig(detail);
+        setIsLoaded(true);
+      }
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== 'easyflowhub-appearance') return;
+      void loadAppearanceConfig().then((next) => {
+        setConfig(next);
+        setIsLoaded(true);
+      });
     };
 
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, [config?.theme]);
+    window.addEventListener(APPEARANCE_CHANGED_EVENT, handleAppearanceChanged);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(APPEARANCE_CHANGED_EVENT, handleAppearanceChanged);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // 监听系统主题变化（当 theme 为 system 时）
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (event: MediaQueryListEvent) => setSystemTheme(event.matches ? 'dark' : 'light');
+
+    // Match the current value even when the preference changed before this
+    // effect was attached (for example while the settings window was closed).
+    setSystemTheme(mediaQuery.matches ? 'dark' : 'light');
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handler);
+      return () => mediaQuery.removeEventListener('change', handler);
+    }
+
+    // Safari/WebView fallback for older MediaQueryList implementations.
+    mediaQuery.addListener(handler);
+    return () => mediaQuery.removeListener(handler);
+  }, []);
 
   // 计算实际主题
   const resolvedTheme = useMemo((): 'light' | 'dark' => {
     if (!config) return 'dark';
     if (config.theme === 'system') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      return systemTheme;
     }
     return config.theme;
-  }, [config]);
+  }, [config, systemTheme]);
+
+  // Every window uses the same persisted appearance. Applying the resolved
+  // theme here keeps launcher, notes, widgets and manager in sync even when
+  // they are mounted in separate Tauri windows.
+  useEffect(() => {
+    if (!isLoaded) return;
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
+    root.dataset.blur = config?.window.isBlurEnabled === false ? 'off' : 'on';
+    root.style.colorScheme = resolvedTheme;
+  }, [config?.window.isBlurEnabled, isLoaded, resolvedTheme]);
 
   // 设置主题
   const setTheme = useCallback((theme: ThemeMode) => {
@@ -83,6 +144,7 @@ export function useAppearance(): UseAppearanceReturn {
       if (!prev) return prev;
       const next = { ...prev, theme };
       saveAppearanceConfig(next);
+      broadcastAppearanceConfig(next);
       return next;
     });
   }, []);
@@ -96,6 +158,7 @@ export function useAppearance(): UseAppearanceReturn {
         window: { ...prev.window, ...updates },
       };
       saveAppearanceConfig(next);
+      broadcastAppearanceConfig(next);
 
       // 同步到后端
       if (updates.isAlwaysOnTop !== undefined) {
@@ -118,6 +181,7 @@ export function useAppearance(): UseAppearanceReturn {
         font: { ...prev.font, ...updates },
       };
       saveAppearanceConfig(next);
+      broadcastAppearanceConfig(next);
       return next;
     });
   }, []);
@@ -125,6 +189,7 @@ export function useAppearance(): UseAppearanceReturn {
   // 重置配置
   const reset = useCallback(() => {
     const defaultConfig = resetAppearanceConfig();
+    broadcastAppearanceConfig(defaultConfig);
     setConfig(defaultConfig);
   }, []);
 

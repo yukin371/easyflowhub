@@ -242,4 +242,26 @@ describe('ExtensionsPanel', () => {
     expect(screen.getByText('extensions')).toBeInTheDocument();
     expect(screen.getAllByText('来源扩展当前未解析')).toHaveLength(2);
   });
+
+  it('registry 为空时 Go 的 null 列表不会让面板崩溃', async () => {
+    // Real /api/extensions payload with zero manifests: extensions is null.
+    listExtensionsMock.mockResolvedValue({
+      ok: true,
+      roots: ['C:\\Users\\me\\AppData\\Roaming\\scriptmgr\\extensions'],
+      count: 0,
+      extensions: null as unknown as ExtensionsResponse['extensions'],
+    });
+    listContributionsMock.mockResolvedValue({
+      ok: true,
+      roots: [],
+      contributions: {} as ExtensionContributionsResponse['contributions'],
+    });
+    listServersMock.mockResolvedValue([]);
+
+    render(<ExtensionsPanel />);
+
+    await waitFor(() => expect(screen.getByText('Contributions Catalog')).toBeInTheDocument());
+    expect(screen.getByText('已加载 / 总扩展').previousElementSibling).toHaveTextContent('0 / 0');
+    expect(screen.getByText('当前没有 manager entry audit 条目。')).toBeInTheDocument();
+  });
 });

@@ -10,22 +10,22 @@ interface ThemeSectionProps {
 export function ThemeSection({ theme, onThemeChange }: ThemeSectionProps) {
   return (
     <section>
-      <h2 className="text-sm font-medium text-gray-300 mb-4">主题</h2>
+      <h2 className="mb-4 text-sm font-medium text-[color:var(--manager-ink-strong)]">主题</h2>
       <div className="grid grid-cols-3 gap-3">
         {THEME_OPTIONS.map((option) => (
           <button
             key={option.id}
             onClick={() => onThemeChange(option.id)}
             className={`
-              p-4 rounded-lg border-2 flex flex-col items-center gap-2 transition-all
+              flex flex-col items-center gap-2 rounded-[18px] border-2 p-4 transition-all
               ${theme === option.id
-                ? 'border-blue-500 bg-blue-900/20'
-                : 'border-white/10 hover:border-white/20 bg-white/5'
+                ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] shadow-[var(--manager-shadow)]'
+                : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] hover:border-[color:var(--manager-accent)] hover:bg-[color:var(--manager-glass-highlight)]'
               }
             `}
           >
             <span className="text-2xl">{option.icon}</span>
-            <span className="text-sm text-gray-300">{option.name}</span>
+            <span className="text-sm text-[color:var(--manager-ink-soft)]">{option.name}</span>
           </button>
         ))}
       </div>

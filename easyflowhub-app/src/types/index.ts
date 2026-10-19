@@ -19,3 +19,4 @@ export interface AppSettings {
 
 // 外观相关类型
 export * from './appearance';
+export * from './fileSearch';

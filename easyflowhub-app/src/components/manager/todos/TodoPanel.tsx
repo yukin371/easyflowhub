@@ -47,7 +47,13 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
       // 只保留未完成 + 保留期内的已完成项
       setTodos(allTodos.filter((t) => !t.checked || isWithinRetention(t.checkedAt, hours)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载待办失败');
+      const rawMessage = err instanceof Error ? err.message : '';
+      const unavailable = /invoke|tauri|undefined/i.test(rawMessage);
+      setError(
+        unavailable
+          ? '待办数据暂不可用，请在桌面应用中启动后端服务。'
+          : rawMessage || '加载待办失败',
+      );
     } finally {
       setLoading(false);
     }
@@ -188,7 +194,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
         <p>{error}</p>
         <button
           onClick={loadTodos}
-          className="rounded-lg border border-[color:var(--manager-border)] px-4 py-2 text-sm hover:bg-white/50"
+          className="rounded-lg border border-[color:var(--manager-border)] px-4 py-2 text-sm transition hover:bg-[color:var(--manager-panel-strong)]"
         >
           重试
         </button>
@@ -236,7 +242,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
               className={`rounded-full border px-4 py-1.5 text-sm transition ${
                 filter === key
                   ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]'
-                  : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
+                  : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
               }`}
             >
               {label}
@@ -256,7 +262,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
               {filter === 'pending' ? '没有待处理的事项' : filter === 'done' ? '没有已完成的事项' : '笔记中没有待办事项'}
             </p>
             <p className="mt-2 text-sm">
-              在笔记中使用 <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs">- [ ]</code> 或 <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs">1. [ ]</code> 语法添加待办
+              在笔记中使用 <code className="rounded bg-[color:var(--manager-panel-strong)] px-1.5 py-0.5 font-mono text-xs">- [ ]</code> 或 <code className="rounded bg-[color:var(--manager-panel-strong)] px-1.5 py-0.5 font-mono text-xs">1. [ ]</code> 语法添加待办
             </p>
           </div>
         ) : (
@@ -300,13 +306,13 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
 
                       return (
                         <li key={todo.id}>
-                          <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-white/55">
+                          <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-panel)]">
                             <button
                               onClick={() => void handleToggle(todo)}
                               className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
                                 todo.checked
                                   ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                                  : 'border-[color:var(--manager-border)] bg-white/80 hover:border-[color:var(--manager-accent)]'
+                                  : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] hover:border-[color:var(--manager-accent)]'
                               }`}
                             >
                               {todo.checked ? '✓' : ''}
@@ -330,7 +336,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
                                       handleCancelEdit();
                                     }
                                   }}
-                                  className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-white px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
+                                  className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-bg-deep)] px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
                                 />
                               ) : (
                                 <p className={`text-sm leading-relaxed ${todo.checked ? 'text-[color:var(--manager-ink-muted)] line-through' : 'text-[color:var(--manager-ink)]'}`}>
@@ -423,7 +429,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
 
                         return (
                           <li key={todo.id}>
-                            <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-white/55">
+                            <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-panel)]">
                               <button
                                 onClick={() => void handleToggle(todo)}
                                 className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-xs text-white transition"
@@ -449,7 +455,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
                                         handleCancelEdit();
                                       }
                                     }}
-                                    className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-white px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
+                                    className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-bg-deep)] px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
                                   />
                                 ) : (
                                   <p className="text-sm leading-relaxed text-[color:var(--manager-ink-muted)] line-through">

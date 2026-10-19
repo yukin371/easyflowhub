@@ -4,13 +4,15 @@ import { QuickNotePage } from './pages/QuickNotePage';
 import { TodoCardPage } from './pages/TodoCardPage';
 import { ManagerPage } from './components/manager';
 import { FolderWidget } from './components/widget';
+import { LauncherPage } from './pages/LauncherPage';
+import { useAppearance } from './hooks/useAppearance';
 import './styles.css';
 
 // 模块系统初始化
 import './modules/init';
 
 /** 窗口类型 */
-type WindowType = 'quick-note' | 'manager' | 'folder-widget' | 'todo-card' | null;
+type WindowType = 'quick-note' | 'manager' | 'folder-widget' | 'todo-card' | 'launcher' | null;
 
 /**
  * 检测当前窗口类型
@@ -34,6 +36,10 @@ function useWindowType(): WindowType {
         setWindowType('folder-widget');
         return;
       }
+      if (forcedWindow === 'launcher') {
+        setWindowType('launcher');
+        return;
+      }
 
       try {
         const win = await getCurrentWindow();
@@ -47,6 +53,8 @@ function useWindowType(): WindowType {
           setWindowType('folder-widget');
         } else if (label.startsWith('todo-card-')) {
           setWindowType('todo-card');
+        } else if (label === 'launcher') {
+          setWindowType('launcher');
         } else {
           // 检查 URL 参数（备用检测方式）
           const mode = params.get('mode');
@@ -73,6 +81,9 @@ function useWindowType(): WindowType {
 
 function App() {
   const windowType = useWindowType();
+  // Load the shared appearance in every Tauri window so the persisted theme
+  // is reflected by quick notes, launcher and widgets as well as Manager.
+  useAppearance();
 
   // 加载中
   if (windowType === null) {
@@ -94,6 +105,10 @@ function App() {
 
   if (windowType === 'todo-card') {
     return <TodoCardPage />;
+  }
+
+  if (windowType === 'launcher') {
+    return <LauncherPage />;
   }
 
   // 默认渲染快速笔记页面

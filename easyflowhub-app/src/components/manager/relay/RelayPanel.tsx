@@ -174,21 +174,21 @@ export function RelayPanel() {
       </header>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">ScriptMgr</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
             {scriptmgrStatus === 'online' ? '在线' : scriptmgrStatus === 'offline' ? '离线' : '检测中'}
           </p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">配置接口来自 `scriptmgr serve`</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Relay Runtime</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
             {relayStatus === 'online' ? '运行中' : relayStatus === 'offline' ? '未启动' : '检测中'}
           </p>
-          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">默认检查 `localhost:8787/health`</p>
+          <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">默认检查 `127.0.0.1:8787/health`</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Providers / Routes</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
             {runtimeProvidersCount} / {runtimeRoutesCount}
@@ -197,7 +197,7 @@ export function RelayPanel() {
             运行时视图，健康 provider {healthyProviders} 个
           </p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Extensions</p>
           <p className="mt-2 text-2xl text-[color:var(--manager-accent)]">
             {loadedExtensions} / {extensions.length}
@@ -207,31 +207,31 @@ export function RelayPanel() {
       </div>
 
       {error && (
-        <div className="rounded-[16px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+        <div className="manager-alert-error rounded-[16px] border px-4 py-3 text-sm">{error}</div>
       )}
 
       {saveMessage && (
-        <div className="rounded-[16px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+        <div className="manager-alert-success rounded-[16px] border px-4 py-3 text-sm">
           {saveMessage}
         </div>
       )}
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="flex min-h-0 flex-col gap-4">
-          <section className="rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+          <section className="rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
                   Relay Config
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-[color:var(--manager-ink-soft)]">
-                  直接编辑 `relay.json` 的结构。当前只支持 OpenAI 兼容路径、加权轮询和基础 failover；敏感密钥优先使用 `api_key_env`，避免继续写入明文 `api_key`。
+                  直接编辑 `relay.json` 的结构。当前只支持 OpenAI 兼容路径、加权轮询和基础 failover；敏感密钥优先使用 `api_key_env`。已保存的密钥或含凭据的 URL 显示为 `__EASYFLOWHUB_REDACTED__`；保持占位值会沿用原值，替换占位值可编辑 URL，清空或删除密钥字段则会移除密钥。
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
                 <button
                   onClick={() => void loadData()}
-                  className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                  className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
                 >
                   刷新
                 </button>
@@ -245,7 +245,7 @@ export function RelayPanel() {
               </div>
             </div>
 
-            <div className="mt-4 rounded-[16px] border border-[color:var(--manager-border)] bg-[rgba(246,241,233,0.72)] p-4">
+            <div className="mt-4 rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] p-4">
               <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Quick Start</p>
               <pre className="mt-3 overflow-auto whitespace-pre-wrap break-all text-xs leading-6 text-[color:var(--manager-ink-soft)]">
 {`scriptmgr serve
@@ -257,11 +257,11 @@ scriptmgr relay serve --port 8787`}
               value={configText}
               onChange={(event) => setConfigText(event.target.value)}
               spellCheck={false}
-              className="mt-4 min-h-[340px] w-full rounded-[18px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.86)] p-4 font-mono text-xs leading-6 text-[color:var(--manager-ink)] outline-none transition focus:border-[color:var(--manager-accent)]"
+              className="manager-editor mt-4 min-h-[340px] w-full rounded-[18px] border border-[color:var(--manager-border)] bg-[color:var(--manager-bg-deep)] p-4 font-mono text-xs leading-6 text-[color:var(--manager-ink)] outline-none transition focus:border-[color:var(--manager-accent)]"
             />
           </section>
 
-          <section className="min-h-0 flex-1 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+          <section className="min-h-0 flex-1 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
                 Provider Health
@@ -275,7 +275,7 @@ scriptmgr relay serve --port 8787`}
               {(snapshot?.providers ?? []).map((item) => (
                 <div
                   key={item.provider.id}
-                  className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+                  className="rounded-[16px] border border-[color:var(--manager-border)] bg-transparent px-4 py-3"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -286,7 +286,7 @@ scriptmgr relay serve --port 8787`}
                     </div>
                     <span
                       className={`rounded-full px-3 py-1 text-xs ${
-                        item.status.healthy ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                        item.status.healthy ? 'manager-status-success' : 'manager-status-warning'
                       }`}
                     >
                       {item.status.healthy ? 'healthy' : 'degraded'}
@@ -300,12 +300,12 @@ scriptmgr relay serve --port 8787`}
                     <div>picked: {formatDate(item.status.last_picked_at)}</div>
                   </div>
 
-                  {item.status.last_error && <p className="mt-2 text-xs text-amber-700">{item.status.last_error}</p>}
+                  {item.status.last_error && <p className="mt-2 text-xs text-[color:var(--manager-warning)]">{item.status.last_error}</p>}
                 </div>
               ))}
 
               {!loading && (snapshot?.providers?.length ?? 0) === 0 && (
-                <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
+                <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-transparent px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
                   尚未配置 provider。先在上方 JSON 中补齐 `providers` 与 `routes`。
                 </div>
               )}
@@ -313,7 +313,7 @@ scriptmgr relay serve --port 8787`}
           </section>
         </div>
 
-        <section className="min-h-0 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+        <section className="min-h-0 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
@@ -325,13 +325,13 @@ scriptmgr relay serve --port 8787`}
             </div>
             <button
               onClick={() => void loadData(true)}
-              className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+              className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
             >
               重新扫描
             </button>
           </div>
 
-          <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.7)] px-4 py-3">
+          <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">Extension Roots</p>
             <div className="mt-2 space-y-1">
               {extensionRoots.map((root) => (
@@ -342,7 +342,7 @@ scriptmgr relay serve --port 8787`}
             </div>
           </div>
 
-          <div className="mt-3 rounded-[16px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.7)] px-4 py-3">
+          <div className="mt-3 rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
               Effective Relay Overlay
             </p>
@@ -366,7 +366,7 @@ scriptmgr relay serve --port 8787`}
               return (
                 <div
                   key={extension.manifest_path}
-                  className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+                  className="rounded-[16px] border border-[color:var(--manager-border)] bg-transparent px-4 py-3"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -379,7 +379,7 @@ scriptmgr relay serve --port 8787`}
                     </div>
                     <span
                       className={`rounded-full px-3 py-1 text-xs ${
-                        extension.status === 'loaded' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                        extension.status === 'loaded' ? 'manager-status-success' : 'manager-status-danger'
                       }`}
                     >
                       {extension.status}
@@ -401,7 +401,7 @@ scriptmgr relay serve --port 8787`}
                   </div>
 
                   {canImportRelay && (
-                    <div className="mt-3 rounded-[14px] border border-[color:var(--manager-border)] bg-[rgba(248,244,237,0.75)] px-3 py-3">
+                    <div className="mt-3 rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-3 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="text-xs leading-6 text-[color:var(--manager-ink-soft)]">
                           <p className="uppercase tracking-[0.14em] text-[color:var(--manager-ink-subtle)]">
@@ -413,7 +413,7 @@ scriptmgr relay serve --port 8787`}
                         </div>
                         <button
                           onClick={() => handleImportRelayPreset(extension)}
-                          className="shrink-0 rounded-full border border-[color:var(--manager-accent)] bg-white px-4 py-2 text-sm text-[color:var(--manager-accent)] transition hover:bg-[color:var(--manager-accent)] hover:text-white"
+                          className="shrink-0 rounded-full border border-[color:var(--manager-accent)] bg-[color:var(--manager-panel)] px-4 py-2 text-sm text-[color:var(--manager-accent)] transition hover:bg-[color:var(--manager-accent)] hover:text-white"
                         >
                           导入到配置
                         </button>
@@ -424,19 +424,19 @@ scriptmgr relay serve --port 8787`}
                   {extension.manifest?.id && (
                     <button
                       onClick={() => navigateToManagerExtension(extension.manifest!.id)}
-                      className="mt-3 rounded-full border border-[color:var(--manager-border)] bg-white/70 px-4 py-2 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                      className="mt-3 rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
                     >
                       查看扩展详情
                     </button>
                   )}
 
-                  {extension.error && <p className="mt-2 text-xs text-red-700">{extension.error}</p>}
+                  {extension.error && <p className="mt-2 text-xs text-[color:var(--manager-danger)]">{extension.error}</p>}
                 </div>
               );
             })}
 
             {!loading && extensions.length === 0 && (
-              <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
+              <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-transparent px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
                 当前未发现扩展 manifest。
               </div>
             )}

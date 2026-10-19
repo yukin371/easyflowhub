@@ -10,15 +10,15 @@ interface FontSectionProps {
 export function FontSection({ font, onChange }: FontSectionProps) {
   return (
     <section>
-      <h2 className="text-sm font-medium text-gray-300 mb-4">字体设置</h2>
+      <h2 className="mb-4 text-sm font-medium text-[color:var(--manager-ink-strong)]">字体设置</h2>
       <div className="space-y-4">
         {/* 字体选择 */}
         <div>
-          <label className="block text-sm text-gray-400 mb-2">字体</label>
+          <label className="mb-2 block text-sm text-[color:var(--manager-ink-soft)]">字体</label>
           <select
             value={font.fontFamily}
             onChange={(e) => onChange({ fontFamily: e.target.value })}
-            className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+            className="w-full rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none focus:border-[color:var(--manager-accent)]"
           >
             {AVAILABLE_FONTS.map((fontName) => (
               <option key={fontName} value={fontName} style={{ fontFamily: fontName }}>
@@ -31,8 +31,8 @@ export function FontSection({ font, onChange }: FontSectionProps) {
         {/* 字体大小 */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm text-gray-400">字体大小</label>
-            <span className="text-sm text-gray-400">{font.fontSize}px</span>
+            <label className="text-sm text-[color:var(--manager-ink-soft)]">字体大小</label>
+            <span className="text-sm text-[color:var(--manager-ink-soft)]">{font.fontSize}px</span>
           </div>
           <input
             type="range"
@@ -41,15 +41,16 @@ export function FontSection({ font, onChange }: FontSectionProps) {
             step="1"
             value={font.fontSize}
             onChange={(e) => onChange({ fontSize: parseInt(e.target.value, 10) })}
-            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[color:var(--manager-accent-soft)]"
+            style={{ accentColor: 'var(--manager-accent)' }}
           />
         </div>
 
         {/* 行高 */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm text-gray-400">行高</label>
-            <span className="text-sm text-gray-400">{font.lineHeight.toFixed(1)}</span>
+            <label className="text-sm text-[color:var(--manager-ink-soft)]">行高</label>
+            <span className="text-sm text-[color:var(--manager-ink-soft)]">{font.lineHeight.toFixed(1)}</span>
           </div>
           <input
             type="range"
@@ -58,7 +59,8 @@ export function FontSection({ font, onChange }: FontSectionProps) {
             step="0.1"
             value={font.lineHeight}
             onChange={(e) => onChange({ lineHeight: parseFloat(e.target.value) })}
-            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[color:var(--manager-accent-soft)]"
+            style={{ accentColor: 'var(--manager-accent)' }}
           />
         </div>
       </div>

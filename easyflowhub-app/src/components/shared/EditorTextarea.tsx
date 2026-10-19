@@ -32,7 +32,7 @@ const BASE_STYLE: Record<EditorTextareaVariant, CSSProperties> = {
 
 const BASE_CLASS_NAME: Record<EditorTextareaVariant, string> = {
   manager:
-    'h-full w-full resize-none rounded-[18px] border border-[rgba(109,90,62,0.08)] bg-[rgba(255,250,244,0.52)] px-5 py-4 text-[15px] leading-8 text-[color:var(--manager-ink)] outline-none placeholder:text-[color:var(--manager-ink-subtle)] sm:px-6 sm:py-5',
+    'h-full w-full resize-none rounded-[18px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-5 py-4 text-[15px] leading-8 text-[color:var(--manager-ink)] outline-none placeholder:text-[color:var(--manager-ink-subtle)] sm:px-6 sm:py-5',
   'quick-note': '',
 };
 
@@ -70,15 +70,15 @@ export function EditorTextarea(props: EditorTextareaProps) {
           caretColor: editorSettings.cursor_color,
           boxShadow:
             editorSettings.cursor_style === 'focus'
-              ? `inset 0 0 0 1px rgba(79, 90, 67, 0.08), inset 0 0 28px rgba(79, 90, 67, ${editorSettings.cursor_trail ? 0.07 : 0.03})`
+              ? `inset 0 0 0 1px color-mix(in srgb, var(--manager-accent) 10%, transparent), inset 0 0 28px color-mix(in srgb, var(--manager-accent) ${editorSettings.cursor_trail ? 7 : 3}%, transparent)`
               : editorSettings.cursor_style === 'accent'
-                ? `inset 0 -20px 40px rgba(79, 90, 67, ${editorSettings.cursor_trail ? 0.06 : 0.02})`
+                ? `inset 0 -20px 40px color-mix(in srgb, var(--manager-accent) ${editorSettings.cursor_trail ? 6 : 2}%, transparent)`
                 : 'none',
           ...(dragActive
             ? {
                 backgroundColor:
-                  variant === 'manager' ? 'rgba(231, 239, 226, 0.82)' : 'rgba(240, 248, 236, 0.88)',
-                outline: '2px dashed rgba(79, 90, 67, 0.45)',
+                  variant === 'manager' ? 'var(--manager-accent-soft)' : 'var(--quick-accent-soft)',
+                outline: variant === 'manager' ? '2px dashed var(--manager-accent)' : '2px dashed var(--quick-accent)',
                 outlineOffset: variant === 'manager' ? -8 : -6,
               }
             : null),
@@ -95,10 +95,9 @@ export function EditorTextarea(props: EditorTextareaProps) {
             alignItems: 'center',
             justifyContent: 'center',
             borderRadius: variant === 'manager' ? 16 : 12,
-            border: '2px dashed rgba(79, 90, 67, 0.42)',
-            background:
-              variant === 'manager' ? 'rgba(247, 251, 244, 0.72)' : 'rgba(247, 251, 244, 0.64)',
-            color: '#4f5a43',
+            border: variant === 'manager' ? '2px dashed var(--manager-accent)' : '2px dashed var(--quick-accent)',
+            background: variant === 'manager' ? 'var(--manager-panel-strong)' : 'var(--quick-surface-raised)',
+            color: variant === 'manager' ? 'var(--manager-accent)' : 'var(--quick-accent)',
             fontSize: 14,
             fontWeight: 600,
             letterSpacing: '0.08em',

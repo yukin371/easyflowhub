@@ -209,7 +209,7 @@ export function ComponentPreviewPanel() {
               className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
                 selectedCategory === cat
                   ? 'bg-[color:var(--manager-accent)] text-white'
-                  : 'bg-white/50 text-[color:var(--manager-ink-soft)] hover:bg-white/70'
+                  : 'bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)] hover:bg-[color:var(--manager-panel)]'
               }`}
             >
               {cat === 'all' ? '全部' : CATEGORY_LABELS[cat]}
@@ -225,10 +225,10 @@ export function ComponentPreviewPanel() {
             <button
               key={component.id}
               onClick={() => setSelectedComponent(component)}
-              className="group cursor-pointer rounded-xl border border-[color:var(--manager-border)] bg-white/40 p-4 text-left transition-all hover:border-[color:var(--manager-accent)] hover:bg-white/60 hover:shadow-lg"
+              className="group cursor-pointer rounded-xl border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 text-left transition-all hover:border-[color:var(--manager-accent)] hover:bg-[color:var(--manager-panel-strong)] hover:shadow-lg"
             >
               {/* Preview Area */}
-              <div className="mb-3 flex h-32 items-center justify-center rounded-lg bg-gray-100/80 transition-transform group-hover:scale-105">
+              <div className="mb-3 flex h-32 items-center justify-center rounded-lg bg-[color:var(--manager-panel-strong)] transition-transform group-hover:scale-105">
                 {component.preview}
               </div>
 
@@ -244,7 +244,7 @@ export function ComponentPreviewPanel() {
                   <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--manager-ink-soft)]">
                     {component.description}
                   </p>
-                  <span className="mt-2 inline-block rounded bg-gray-200/70 px-2 py-0.5 text-[10px] uppercase tracking-wider text-[color:var(--manager-ink-muted)]">
+                  <span className="mt-2 inline-block rounded bg-[color:var(--manager-accent-soft)] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[color:var(--manager-ink-muted)]">
                     {CATEGORY_LABELS[component.category]}
                   </span>
                 </div>
@@ -295,7 +295,7 @@ export function ComponentPreviewPanel() {
             </div>
 
             {/* Preview */}
-            <div className="mb-4 flex h-40 items-center justify-center rounded-xl bg-gray-100/80">
+            <div className="mb-4 flex h-40 items-center justify-center rounded-xl bg-[color:var(--manager-panel-strong)]">
               {selectedComponent.preview}
             </div>
 
@@ -317,7 +317,7 @@ export function ComponentPreviewPanel() {
               disabled={actionLoading}
               className={`w-full rounded-xl py-3 text-sm font-medium transition-all ${
                 actionLoading
-                  ? 'bg-gray-200 text-gray-400 cursor-wait'
+                  ? 'bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-muted)] cursor-wait'
                   : 'bg-[color:var(--manager-accent)] text-white hover:opacity-90 active:scale-[0.98]'
               }`}
             >

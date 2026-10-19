@@ -8,7 +8,7 @@ export const settingsModule = defineBuiltinModule(
   {
     id: 'settings',
     name: '设置',
-    icon: '序',
+    icon: '⚙',
     caption: 'Settings',
     defaultEnabled: true,
     isCore: true,

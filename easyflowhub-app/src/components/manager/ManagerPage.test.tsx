@@ -107,4 +107,34 @@ describe('ManagerPage', () => {
 
     window.removeEventListener(MANAGER_OPEN_EXTENSION_EVENT, detailHandler);
   });
+
+  it('面板渲染异常时保留侧边栏并给出可恢复的错误提示', async () => {
+    const brokenModule: FeatureModule = {
+      id: 'broken',
+      name: 'Broken',
+      icon: 'B',
+      caption: 'BROKEN',
+      defaultEnabled: true,
+      component: () => {
+        throw new Error('panel exploded');
+      },
+    };
+    useEnabledModulesMock.mockReturnValue([...enabledModules, brokenModule]);
+
+    render(<ManagerPage />);
+    expect(await screen.findByText('Notes panel')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Broken/ }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('该面板加载失败，其他页面仍可正常使用。');
+    expect(alert).toHaveTextContent('panel exploded');
+
+    // The shell must survive: sidebar entries remain clickable.
+    expect(screen.getByRole('button', { name: /Notes/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Broken/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Notes/ }));
+    expect(await screen.findByText('Notes panel')).toBeInTheDocument();
+  });
 });

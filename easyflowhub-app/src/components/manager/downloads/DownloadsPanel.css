@@ -1,0 +1,17 @@
+.downloads-tool-button,
+.downloads-primary-button,
+.downloads-row-action,
+.downloads-input,
+.downloads-select { border: 1px solid var(--manager-border); color: var(--manager-ink-soft); background: color-mix(in srgb, var(--manager-panel) 86%, transparent); }
+.downloads-tool-button, .downloads-primary-button, .downloads-row-action { border-radius: 7px; padding: .35rem .65rem; font-size: .72rem; white-space: nowrap; transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease; }
+.downloads-primary-button { border-color: var(--manager-accent); background: var(--manager-accent); color: white; }
+.downloads-input { width: 100%; border-radius: 7px; padding: .45rem .65rem; font-size: .78rem; outline: none; }
+.downloads-input:focus, .downloads-select:focus { border-color: var(--manager-accent); outline: none; }
+.downloads-select { border-radius: 6px; padding: .25rem .45rem; font-size: .72rem; }
+.downloads-tool-button:hover, .downloads-row-action:hover { border-color: var(--manager-accent); background: var(--manager-accent-soft); color: var(--manager-ink-strong); }
+.downloads-primary-button:hover { filter: brightness(1.08); }
+.downloads-tool-button:disabled, .downloads-row-action:disabled { cursor: not-allowed; opacity: .5; }
+.downloads-row-danger { color: var(--manager-danger); }
+.downloads-item { display: flex; min-width: 0; gap: .75rem; border: 1px solid var(--manager-border); border-radius: 10px; padding: .75rem; background: color-mix(in srgb, var(--manager-panel) 76%, transparent); }
+.downloads-progress { height: 4px; overflow: hidden; margin-top: .45rem; border-radius: 999px; background: var(--manager-border); }
+.downloads-progress span { display: block; height: 100%; border-radius: inherit; background: var(--manager-accent); transition: width 180ms ease; }

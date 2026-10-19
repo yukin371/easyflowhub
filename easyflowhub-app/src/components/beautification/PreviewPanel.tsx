@@ -6,23 +6,18 @@ interface PreviewPanelProps {
   resolvedTheme: 'light' | 'dark';
 }
 
-export function PreviewPanel({ config, resolvedTheme }: PreviewPanelProps) {
+export function PreviewPanel({ config }: PreviewPanelProps) {
   const { window: windowConfig, font } = config;
 
   const previewStyle: React.CSSProperties = {
-    backgroundColor:
-      resolvedTheme === 'dark'
-        ? `rgba(17, 24, 39, ${windowConfig.opacity})`
-        : `rgba(255, 255, 255, ${windowConfig.opacity})`,
+    backgroundColor: `color-mix(in srgb, var(--manager-panel-strong) ${Math.round(windowConfig.opacity * 100)}%, transparent)`,
     backdropFilter: windowConfig.isBlurEnabled ? 'blur(10px)' : 'none',
     borderRadius: `${windowConfig.cornerRadius}px`,
-    color: resolvedTheme === 'dark' ? '#e5e7eb' : '#1f2937',
-  border: '1px solid rgba(255, 255, 255, 0.1)',
-  padding: '24px',
-  transition: 'all 0.3s ease',
-  boxShadow: resolvedTheme === 'dark'
-    ? '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
-    : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+    color: 'var(--manager-ink)',
+    border: '1px solid var(--manager-border)',
+    padding: '24px',
+    transition: 'all 0.3s ease',
+    boxShadow: 'var(--manager-shadow)',
   };
 
   const editorStyle: React.CSSProperties = {
@@ -33,9 +28,9 @@ export function PreviewPanel({ config, resolvedTheme }: PreviewPanelProps) {
 
   return (
     <section>
-      <h2 className="text-sm font-medium text-gray-300 mb-4">预览</h2>
+      <h2 className="mb-4 text-sm font-medium text-[color:var(--manager-ink-strong)]">预览</h2>
       <div
-        className="p-4 rounded-lg border border-white/10 bg-white/5"
+        className="rounded-[18px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4"
         style={{ borderRadius: `${windowConfig.cornerRadius}px` }}
       >
         <div style={previewStyle}>
@@ -43,7 +38,7 @@ export function PreviewPanel({ config, resolvedTheme }: PreviewPanelProps) {
           <div
             className="p-4 rounded"
             style={{
-              backgroundColor: resolvedTheme === 'dark' ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.05)',
+              backgroundColor: 'var(--manager-accent-soft)',
               ...editorStyle
             }}
           >

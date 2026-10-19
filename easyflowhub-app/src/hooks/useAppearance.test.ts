@@ -69,6 +69,50 @@ describe('useAppearance hook', () => {
     expect(mockSaveAppearanceConfig).toHaveBeenCalled();
   });
 
+  it('should apply the resolved theme to the document', async () => {
+    const { result } = renderHook(() => useAppearance());
+
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true);
+      expect(document.documentElement.dataset.theme).toBe('dark');
+    });
+    expect(document.documentElement.style.colorScheme).toBe('dark');
+
+    act(() => {
+      result.current.setTheme('light');
+    });
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe('light');
+    });
+    expect(document.documentElement.style.colorScheme).toBe('light');
+  });
+
+  it('should expose the persisted blur setting to window surface styles', async () => {
+    const { result } = renderHook(() => useAppearance());
+
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true);
+      expect(document.documentElement.dataset.blur).toBe('on');
+    });
+
+    act(() => {
+      result.current.updateBlur(false);
+    });
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.blur).toBe('off');
+    });
+
+    act(() => {
+      result.current.updateBlur(true);
+    });
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.blur).toBe('on');
+    });
+  });
+
   it('should set window appearance', async () => {
     const { result } = renderHook(() => useAppearance());
 

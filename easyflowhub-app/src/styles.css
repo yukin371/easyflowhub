@@ -1,27 +1,195 @@
 @import "tailwindcss";
 
+/*
+ * Shared glass palette.
+ * The appearance hook applies data-theme="light" or data-theme="dark" to the
+ * document root. Dark is the safe default while settings are loading.
+ */
 :root {
-  --manager-bg: #f3ecdf;
-  --manager-bg-deep: #e3d5c0;
-  --manager-panel: rgba(250, 244, 236, 0.58);
-  --manager-panel-strong: rgba(248, 241, 232, 0.64);
-  --manager-border: rgba(109, 90, 62, 0.14);
-  --manager-accent: #657255;
-  --manager-accent-strong: #4f5a43;
-  --manager-accent-soft: rgba(101, 114, 85, 0.12);
-  --manager-ink-strong: #2d2418;
-  --manager-ink: #433526;
-  --manager-ink-soft: #6f5d47;
-  --manager-ink-muted: #8d7a61;
-  --manager-ink-subtle: #ab9b84;
-  --manager-danger: #9a4e3f;
+  color-scheme: dark;
+
+  --manager-bg: #0d1522;
+  --manager-bg-deep: #172237;
+  --manager-panel-opaque: #192538;
+  --manager-panel-strong-opaque: #1f2e44;
+  --manager-panel: rgba(25, 37, 56, 0.64);
+  --manager-panel-strong: rgba(31, 46, 68, 0.82);
+  --manager-border: rgba(166, 193, 226, 0.2);
+  --manager-accent: #86abdc;
+  --manager-accent-strong: #b4d0f3;
+  --manager-accent-soft: rgba(134, 171, 220, 0.18);
+  --manager-ink-strong: #f2f6fc;
+  --manager-ink: #dce6f4;
+  --manager-ink-soft: #afbed2;
+  --manager-ink-muted: #8a9bb2;
+  --manager-ink-subtle: #6e7f97;
+  --manager-danger: #ff8f96;
+  --manager-success: #66d1a1;
+  --manager-warning: #e4bd74;
+
+  --manager-shadow: 0 26px 70px rgba(3, 9, 18, 0.36);
+  --manager-shadow-color: rgba(3, 9, 18, 0.36);
+  --manager-glass-highlight: rgba(255, 255, 255, 0.09);
+  --manager-glass-tint: rgba(18, 31, 50, 0.56);
+  --manager-scrollbar: rgba(166, 193, 226, 0.32);
+  --manager-scrollbar-hover: rgba(166, 193, 226, 0.52);
+  --editor-caret: var(--manager-accent);
+
+  --quick-bg: var(--manager-bg);
+  --quick-surface: var(--manager-panel-strong);
+  --quick-surface-raised: var(--manager-panel-strong);
+  --quick-input: var(--manager-panel);
+  --quick-border: var(--manager-border);
+  --quick-text: var(--manager-ink);
+  --quick-muted: var(--manager-ink-muted);
+  --quick-accent: var(--manager-accent);
+  --quick-accent-soft: var(--manager-accent-soft);
+  --quick-shadow: var(--manager-shadow);
+}
+
+/* Day mode keeps the same cool glass language with a brighter backdrop. */
+html[data-theme="light"],
+body[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
+
+  --manager-bg: #edf3fb;
+  --manager-bg-deep: #d4e0ef;
+  --manager-panel-opaque: #f8fbff;
+  --manager-panel-strong-opaque: #f8fbff;
+  --manager-panel: rgba(248, 251, 255, 0.64);
+  --manager-panel-strong: rgba(248, 251, 255, 0.86);
+  --manager-border: rgba(83, 108, 143, 0.2);
+  --manager-accent: #587baa;
+  --manager-accent-strong: #3f618f;
+  --manager-accent-soft: rgba(88, 123, 170, 0.14);
+  --manager-ink-strong: #172337;
+  --manager-ink: #2f4057;
+  --manager-ink-soft: #536982;
+  --manager-ink-muted: #70839b;
+  --manager-ink-subtle: #8b9bb0;
+  --manager-danger: #bd5862;
+  --manager-success: #2f8d68;
+  --manager-warning: #a87528;
+
+  --manager-shadow: 0 26px 70px rgba(30, 54, 84, 0.16);
+  --manager-shadow-color: rgba(30, 54, 84, 0.16);
+  --manager-glass-highlight: rgba(255, 255, 255, 0.68);
+  --manager-glass-tint: rgba(245, 249, 255, 0.58);
+  --manager-scrollbar: rgba(83, 108, 143, 0.3);
+  --manager-scrollbar-hover: rgba(83, 108, 143, 0.48);
+
+  --quick-bg: var(--manager-bg);
+  --quick-surface: var(--manager-panel-strong);
+  --quick-surface-raised: var(--manager-panel-strong);
+  --quick-input: var(--manager-panel);
+  --quick-border: var(--manager-border);
+  --quick-text: var(--manager-ink);
+  --quick-muted: var(--manager-ink-muted);
+  --quick-accent: var(--manager-accent);
+  --quick-accent-soft: var(--manager-accent-soft);
+  --quick-shadow: var(--manager-shadow);
+}
+
+html[data-blur='off'] {
+  --manager-panel: var(--manager-panel-opaque);
+  --manager-panel-strong: var(--manager-panel-strong-opaque);
+  --manager-glass-tint: var(--manager-panel-strong-opaque);
+  --manager-glass-highlight: transparent;
+  --manager-shadow: none;
+  --quick-surface: var(--manager-panel-strong-opaque);
+  --quick-surface-raised: var(--manager-panel-strong-opaque);
+  --quick-input: var(--manager-panel-opaque);
+  --quick-shadow: none;
+}
+
+html[data-blur='off'] .manager-backdrop,
+html[data-blur='off'] .launcher-panel {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-theme],
+  html:not([data-theme]) {
+    --manager-panel: var(--manager-panel-opaque);
+    --manager-panel-strong: var(--manager-panel-strong-opaque);
+    --manager-glass-tint: var(--manager-panel-strong-opaque);
+    --manager-glass-highlight: transparent;
+    --manager-shadow: none;
+    --quick-surface: var(--manager-panel-strong-opaque);
+    --quick-surface-raised: var(--manager-panel-strong-opaque);
+    --quick-input: var(--manager-panel-opaque);
+    --quick-shadow: none;
+  }
+
+  .manager-backdrop,
+  .launcher-panel {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (forced-colors: active) {
+  html[data-theme],
+  html:not([data-theme]) {
+    --manager-bg: Canvas;
+    --manager-bg-deep: Canvas;
+    --manager-panel-opaque: Canvas;
+    --manager-panel-strong-opaque: Canvas;
+    --manager-panel: Canvas;
+    --manager-panel-strong: Canvas;
+    --manager-border: CanvasText;
+    --manager-accent: Highlight;
+    --manager-accent-strong: Highlight;
+    --manager-accent-soft: Highlight;
+    --manager-ink-strong: CanvasText;
+    --manager-ink: CanvasText;
+    --manager-ink-soft: CanvasText;
+    --manager-ink-muted: CanvasText;
+    --manager-ink-subtle: CanvasText;
+    --manager-danger: CanvasText;
+    --manager-success: CanvasText;
+    --manager-warning: CanvasText;
+    --manager-shadow: none;
+    --manager-shadow-color: CanvasText;
+    --manager-glass-highlight: Canvas;
+    --manager-glass-tint: Canvas;
+    --quick-bg: Canvas;
+    --quick-surface: Canvas;
+    --quick-surface-raised: Canvas;
+    --quick-input: Canvas;
+    --quick-border: CanvasText;
+    --quick-text: CanvasText;
+    --quick-muted: CanvasText;
+    --quick-accent: Highlight;
+    --quick-accent-soft: Highlight;
+    --quick-shadow: none;
+  }
+
+  body,
+  .manager-root {
+    background: Canvas !important;
+    color: CanvasText;
+  }
+
+  .manager-backdrop,
+  .launcher-panel {
+    background: Canvas !important;
+    border-color: CanvasText !important;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 * {
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -32,16 +200,58 @@ html, body, #root {
   -webkit-user-select: none;
 }
 
+html {
+  background: var(--manager-bg);
+  transition: background-color 180ms ease;
+}
+
 body {
+  position: relative;
   background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.38), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(196, 174, 142, 0.18), transparent 28%),
+    radial-gradient(circle at 12% 8%, rgba(134, 171, 220, 0.22), transparent 32%),
+    radial-gradient(circle at 88% 92%, rgba(180, 208, 243, 0.18), transparent 36%),
+    linear-gradient(135deg, var(--manager-bg), var(--manager-bg-deep));
+  background:
+    radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--manager-accent) 22%, transparent), transparent 32%),
+    radial-gradient(circle at 88% 92%, color-mix(in srgb, var(--manager-accent-strong) 18%, transparent), transparent 36%),
     linear-gradient(135deg, var(--manager-bg), var(--manager-bg-deep));
   color: var(--manager-ink);
+  transition: background 220ms ease, color 180ms ease;
+}
+
+/* A subtle highlight layer adds depth without impacting pointer input. */
+body::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(115deg, var(--manager-glass-highlight), transparent 42%),
+    radial-gradient(circle at 58% 10%, rgba(255, 255, 255, 0.06), transparent 28%);
+  opacity: 0.8;
+}
+
+/* The Launcher webview is a transparent overlay; only its glass panel draws a surface. */
+html[data-window="launcher"] {
+  background: transparent;
+  transition: none;
+}
+
+html[data-window="launcher"] body,
+html[data-window="launcher"] #root {
+  background: transparent;
+  transition: none;
+}
+
+html[data-window="launcher"] body::before {
+  display: none;
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes manager-fade-up {
@@ -80,66 +290,123 @@ textarea {
   font: inherit;
 }
 
+button,
+input,
+textarea,
+select {
+  accent-color: var(--manager-accent);
+}
+
+::selection {
+  color: var(--manager-ink-strong);
+  background: color-mix(in srgb, var(--manager-accent) 32%, transparent);
+}
+
 .manager-root {
   background:
-    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.55), transparent 24%),
-    linear-gradient(135deg, rgba(255, 250, 244, 0.82), rgba(239, 228, 209, 0.72));
+    radial-gradient(circle at 16% 14%, rgba(134, 171, 220, 0.14), transparent 26%),
+    linear-gradient(135deg, rgba(25, 37, 56, 0.78), rgba(23, 34, 55, 0.72));
+  background:
+    radial-gradient(circle at 16% 14%, color-mix(in srgb, var(--manager-accent) 14%, transparent), transparent 26%),
+    linear-gradient(135deg, color-mix(in srgb, var(--manager-panel) 78%, transparent), color-mix(in srgb, var(--manager-bg-deep) 72%, transparent));
+  transition: background 220ms ease, color 180ms ease;
 }
 
 .manager-backdrop {
   background:
-    linear-gradient(160deg, rgba(255, 251, 244, 0.74), rgba(235, 223, 203, 0.52)),
-    rgba(255, 251, 244, 0.52);
-  backdrop-filter: blur(22px);
+    linear-gradient(160deg, color-mix(in srgb, var(--manager-glass-highlight) 76%, transparent), color-mix(in srgb, var(--manager-bg-deep) 38%, transparent)),
+    var(--manager-glass-tint);
+  border: 1px solid var(--manager-border);
+  box-shadow: var(--manager-shadow);
+  backdrop-filter: blur(28px) saturate(135%);
+  -webkit-backdrop-filter: blur(28px) saturate(135%);
 }
 
 .manager-kicker {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding-top: 0;
+  padding-bottom: 0;
+  color: var(--manager-ink-subtle);
   font-size: 11px;
   line-height: 1.9;
   letter-spacing: 0.34em;
   text-transform: uppercase;
-  color: var(--manager-ink-subtle);
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding-top: 0;
-  padding-bottom: 0;
 }
 
-.manager-editor {
+.manager-editor,
+.quick-note-editor {
   scrollbar-width: thin;
-  scrollbar-color: rgba(109, 90, 62, 0.28) transparent;
+  scrollbar-color: var(--manager-scrollbar) transparent;
 }
 
-.manager-editor::-webkit-scrollbar {
+/* The manager navigation can grow with optional modules and extensions. Keep
+ * each item at its designed width while allowing the list itself to scroll. */
+.manager-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--manager-scrollbar) transparent;
+}
+
+.manager-sidebar-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.manager-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: var(--manager-scrollbar);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.manager-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--manager-scrollbar-hover);
+  background-clip: padding-box;
+}
+
+.manager-editor::-webkit-scrollbar,
+.quick-note-editor::-webkit-scrollbar {
   width: 10px;
 }
 
-.manager-editor::-webkit-scrollbar-thumb {
-  background: rgba(109, 90, 62, 0.2);
+.manager-editor::-webkit-scrollbar-thumb,
+.quick-note-editor::-webkit-scrollbar-thumb {
+  background: var(--manager-scrollbar);
+  border: 2px solid transparent;
   border-radius: 999px;
+  background-clip: padding-box;
 }
 
-.quick-note-editor {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(109, 90, 62, 0.34) transparent;
+.manager-editor::-webkit-scrollbar-thumb:hover,
+.quick-note-editor::-webkit-scrollbar-thumb:hover {
+  background: var(--manager-scrollbar-hover);
+  background-clip: padding-box;
+}
+
+.quick-note-editor::-webkit-scrollbar {
+  width: 12px;
+}
+
+.quick-note-editor::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--manager-panel) 42%, transparent);
+  border-radius: 999px;
 }
 
 .quick-note-caret,
 .manager-caret {
-  caret-color: var(--editor-caret, #4f5a43);
+  caret-color: var(--editor-caret);
 }
 
 .manager-caret--accent:focus {
   background-image:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(101, 114, 85, 0.05), rgba(101, 114, 85, 0));
+    linear-gradient(180deg, var(--manager-glass-highlight), transparent),
+    linear-gradient(180deg, color-mix(in srgb, var(--manager-accent) 7%, transparent), transparent);
 }
 
 .manager-caret--focus:focus {
   background-image:
-    radial-gradient(circle at top left, rgba(101, 114, 85, 0.1), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0));
+    radial-gradient(circle at top left, color-mix(in srgb, var(--manager-accent) 12%, transparent), transparent 32%),
+    linear-gradient(180deg, var(--manager-glass-highlight), transparent);
 }
 
 .quick-note-caret--trail,
@@ -152,25 +419,24 @@ textarea {
 }
 
 .manager-markdown-preview::after {
-  content: "";
   display: block;
   clear: both;
+  content: "";
 }
 
 .manager-markdown-preview :where(.wmde-markdown, .wmde-markdown-color) {
-  background-color: transparent;
   color: inherit;
+  background-color: transparent;
 }
 
 .manager-markdown-preview :where(.wmde-markdown, .wmde-markdown-color) img {
-  float: none;
   display: inline-block;
   width: auto;
   max-width: min(320px, 100%);
   margin: 0.2rem 0.55rem 0.35rem 0.1rem;
+  vertical-align: middle;
   border-radius: 14px;
   object-fit: contain;
-  vertical-align: middle;
 }
 
 .manager-markdown-preview :where(.wmde-markdown, .wmde-markdown-color) p {
@@ -178,34 +444,96 @@ textarea {
   margin-bottom: 0.9rem;
 }
 
-.quick-note-editor::-webkit-scrollbar {
-  width: 12px;
-}
-
-.quick-note-editor::-webkit-scrollbar-track {
-  background:
-    linear-gradient(180deg, rgba(240, 234, 222, 0.12), rgba(240, 234, 222, 0.02));
-  border-radius: 999px;
-}
-
-.quick-note-editor::-webkit-scrollbar-thumb {
-  background:
-    linear-gradient(180deg, rgba(156, 132, 95, 0.54), rgba(109, 90, 62, 0.34));
-  border: 3px solid rgba(255, 252, 247, 0.45);
-  border-radius: 999px;
-}
-
-.quick-note-editor::-webkit-scrollbar-thumb:hover {
-  background:
-    linear-gradient(180deg, rgba(156, 132, 95, 0.7), rgba(109, 90, 62, 0.48));
-}
-
 @keyframes editor-focus-breathe {
-  0%, 100% {
-    box-shadow: inset 0 0 0 1px rgba(79, 90, 67, 0.04);
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--manager-accent) 8%, transparent);
   }
 
   50% {
-    box-shadow: inset 0 0 0 1px rgba(79, 90, 67, 0.12);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--manager-accent) 22%, transparent);
+  }
+}
+
+/* Tailwind's white utility is softened in dark mode for common glass surfaces. */
+html[data-theme="dark"] .bg-white,
+html[data-theme="dark"] [class~="bg-white\/5"],
+html[data-theme="dark"] [class~="bg-white\/10"],
+html[data-theme="dark"] [class~="bg-white\/25"],
+html[data-theme="dark"] [class~="bg-white\/35"],
+html[data-theme="dark"] [class~="bg-white\/40"],
+html[data-theme="dark"] [class~="bg-white\/45"],
+html[data-theme="dark"] [class~="bg-white\/50"],
+html[data-theme="dark"] [class~="bg-white\/55"],
+html[data-theme="dark"] [class~="bg-white\/58"],
+html[data-theme="dark"] [class~="bg-white\/60"],
+html[data-theme="dark"] [class~="bg-white\/62"],
+html[data-theme="dark"] [class~="bg-white\/68"],
+html[data-theme="dark"] [class~="bg-white\/70"],
+html[data-theme="dark"] [class~="bg-white\/72"],
+html[data-theme="dark"] [class~="bg-white\/75"],
+html[data-theme="dark"] [class~="bg-white\/80"] {
+  background-color: color-mix(in srgb, var(--manager-panel-strong) 84%, transparent) !important;
+}
+
+html[data-theme="dark"] [class~="hover:bg-white\/5"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white\/10"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white\/50"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white\/55"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white\/60"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white\/70"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white\/75"]:hover,
+html[data-theme="dark"] [class~="hover:bg-white"]:hover {
+  background-color: color-mix(in srgb, var(--manager-accent) 18%, transparent) !important;
+}
+
+html[data-theme="dark"] .text-gray-900,
+html[data-theme="dark"] .text-gray-800,
+html[data-theme="dark"] .text-gray-700 {
+  color: var(--manager-ink) !important;
+}
+
+.manager-alert-error {
+  border-color: color-mix(in srgb, var(--manager-danger) 56%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-danger) 14%, var(--manager-panel));
+  color: var(--manager-danger);
+}
+
+.manager-alert-success {
+  border-color: color-mix(in srgb, #55c89a 48%, var(--manager-border));
+  background: color-mix(in srgb, #55c89a 12%, var(--manager-panel));
+  color: color-mix(in srgb, #55c89a 82%, var(--manager-ink-strong));
+}
+
+/* Semantic status pills use the active theme instead of fixed utility colors. */
+.manager-status-success,
+.manager-status-warning,
+.manager-status-danger {
+  border: 1px solid color-mix(in srgb, currentColor 42%, var(--manager-border));
+}
+
+.manager-status-success {
+  background: color-mix(in srgb, var(--manager-success) 16%, var(--manager-panel-strong));
+  color: var(--manager-success);
+}
+
+.manager-status-warning {
+  background: color-mix(in srgb, var(--manager-warning) 16%, var(--manager-panel-strong));
+  color: var(--manager-warning);
+}
+
+.manager-status-danger {
+  background: color-mix(in srgb, var(--manager-danger) 16%, var(--manager-panel-strong));
+  color: var(--manager-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

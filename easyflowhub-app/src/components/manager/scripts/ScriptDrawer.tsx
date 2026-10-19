@@ -6,9 +6,11 @@ import { useState } from 'react';
 import { useScriptStore } from './scriptStore';
 import { formatDuration, getStatusColor } from '../../../lib/tauri/scriptmgr';
 import { scriptsApi } from '../../../lib/api/scriptmgr';
+import type { ScriptDetail } from '../../../types/scriptmgr';
 
 interface ScriptDrawerProps {
   onClose: () => void;
+  onOpenWorkbench: (script: ScriptDetail) => void;
 }
 
 function ParameterRow({
@@ -27,14 +29,14 @@ function ParameterRow({
   description?: string;
 }) {
   return (
-    <div className="rounded-[12px] border border-[color:var(--manager-border)] bg-white/40 px-3 py-2.5">
+    <div className="rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2.5">
       <div className="flex items-center gap-2">
         <span className="font-medium text-[color:var(--manager-ink-strong)]">{name}</span>
         <span className="rounded-full bg-[color:var(--manager-accent-soft)] px-1.5 py-0.5 text-[10px] text-[color:var(--manager-accent)]">
           {type}
         </span>
         {required && (
-          <span className="text-[10px] text-red-500">*必填</span>
+          <span className="text-[10px] text-[color:var(--manager-danger)]">*必填</span>
         )}
       </div>
       {label && (
@@ -62,12 +64,12 @@ function TaskHistoryItem({
   const statusColor = getStatusColor(task.status);
   const colorClass =
     statusColor === 'green'
-      ? 'text-green-600'
+      ? 'text-[color:var(--manager-success)]'
       : statusColor === 'red'
-        ? 'text-red-600'
+      ? 'text-[color:var(--manager-danger)]'
         : statusColor === 'blue'
-          ? 'text-blue-600'
-          : 'text-gray-500';
+          ? 'text-[color:var(--manager-accent)]'
+          : 'text-[color:var(--manager-ink-muted)]';
 
   const statusIcon =
     task.status === 'success' || task.status === 'succeeded' ? '✓' :
@@ -75,7 +77,7 @@ function TaskHistoryItem({
     task.status === 'running' ? '●' : '○';
 
   return (
-    <div className="flex items-center justify-between rounded-[10px] bg-white/40 px-3 py-2 text-sm">
+    <div className="flex items-center justify-between rounded-[10px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2 text-sm">
       <div className="flex items-center gap-2">
         <span className={colorClass}>{statusIcon}</span>
         <span className="text-[color:var(--manager-ink-soft)]">
@@ -94,7 +96,7 @@ function TaskHistoryItem({
   );
 }
 
-export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
+export function ScriptDrawer({ onClose, onOpenWorkbench }: ScriptDrawerProps) {
   const { selectedScriptDetail, recentTasks, detailLoading, categories, fetchScripts, fetchScriptDetail } = useScriptStore();
   const [categoryUpdating, setCategoryUpdating] = useState(false);
 
@@ -115,7 +117,7 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
 
   if (!selectedScriptDetail) {
     return (
-      <aside className="w-80 shrink-0 rounded-[20px] border border-[color:var(--manager-border)] bg-[rgba(255,251,245,0.88)] p-4">
+      <aside className="w-[min(20rem,36vw)] max-w-[320px] min-w-[240px] shrink-0 rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4">
         <div className="flex h-full items-center justify-center">
           {detailLoading ? (
             <div className="h-6 w-6 rounded-full border-2 border-[color:var(--manager-border)] border-t-[color:var(--manager-accent)] animate-spin" />
@@ -130,7 +132,7 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
   const script = selectedScriptDetail;
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col rounded-[20px] border border-[color:var(--manager-border)] bg-[rgba(255,251,245,0.88)]">
+    <aside className="flex w-[min(20rem,36vw)] max-w-[320px] min-w-[240px] shrink-0 flex-col rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)]">
       {/* Header */}
       <header className="flex items-center justify-between border-b border-[color:var(--manager-border)] px-4 py-3">
         <div className="flex items-center gap-2">
@@ -141,7 +143,7 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
         </div>
         <button
           onClick={onClose}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-[color:var(--manager-ink-muted)] transition hover:bg-black/5 hover:text-[color:var(--manager-ink-strong)]"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-[color:var(--manager-ink-muted)] transition hover:bg-[color:var(--manager-accent-soft)] hover:text-[color:var(--manager-ink-strong)]"
         >
           ✕
         </button>
@@ -149,6 +151,14 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
+        <button
+          type="button"
+          onClick={() => onOpenWorkbench(script)}
+          className="mb-4 w-full rounded-[10px] bg-[color:var(--manager-accent)] px-4 py-2 text-sm text-white transition hover:brightness-105"
+        >
+          查看源码 / 手动运行
+        </button>
+
         {/* Category Selector */}
         <section className="mb-4">
           <h4 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
@@ -158,7 +168,7 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
             value={script.category || ''}
             onChange={(e) => handleCategoryChange(e.target.value)}
             disabled={categoryUpdating}
-            className="w-full rounded-[12px] border border-[color:var(--manager-border)] bg-white/60 px-3 py-2.5 text-sm text-[color:var(--manager-ink-strong)] outline-none transition focus:border-[color:var(--manager-accent)] disabled:opacity-50"
+            className="w-full rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-3 py-2.5 text-sm text-[color:var(--manager-ink-strong)] outline-none transition focus:border-[color:var(--manager-accent)] disabled:opacity-50"
           >
             <option value="">未分类</option>
             {categories.map((cat) => (
@@ -205,7 +215,7 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
           <h4 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
             MCP 配置
           </h4>
-          <div className="rounded-[12px] border border-[color:var(--manager-border)] bg-white/40 px-3 py-2.5">
+          <div className="rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2.5">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -233,11 +243,6 @@ export function ScriptDrawer({ onClose }: ScriptDrawerProps) {
                 <TaskHistoryItem key={task.task_id} task={task} />
               ))}
             </div>
-          )}
-          {recentTasks.length > 0 && (
-            <button className="mt-2 w-full rounded-[10px] border border-[color:var(--manager-border)] bg-white/40 py-2 text-sm text-[color:var(--manager-ink-muted)] transition hover:bg-white/60 hover:text-[color:var(--manager-ink-strong)]">
-              查看全部 →
-            </button>
           )}
         </section>
       </div>

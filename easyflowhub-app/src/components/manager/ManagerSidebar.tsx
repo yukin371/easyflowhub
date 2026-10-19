@@ -14,15 +14,60 @@ interface ManagerSidebarProps {
   onPanelChange: (panelId: string) => void;
 }
 
+/** Settings is pinned to the sidebar footer so it is always one click away. */
+const SETTINGS_MODULE_ID = 'settings';
+
+interface NavButtonProps {
+  module: FeatureModule;
+  isActive: boolean;
+  onSelect: (panelId: string) => void;
+}
+
+function NavButton({ module, isActive, onSelect }: NavButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(module.id)}
+      className={`group flex w-full shrink-0 items-center gap-3 rounded-[18px] border px-3 py-2.5 text-left transition-all duration-200 ${
+        isActive
+          ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)] shadow-[0_18px_40px_rgba(46,58,49,0.12)]'
+          : 'border-transparent bg-transparent text-[color:var(--manager-ink-muted)] hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-accent-soft)] hover:text-[color:var(--manager-ink)]'
+      }`}
+      title={module.name}
+    >
+      <span
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border text-sm ${
+          isActive
+            ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
+            : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)]'
+        }`}
+      >
+        {module.icon}
+      </span>
+      <span className="min-w-0 flex-1 overflow-hidden">
+        <span className="block truncate whitespace-nowrap text-sm font-medium tracking-[0.08em] text-current">
+          {module.name}
+        </span>
+        <span className="mt-0.5 block truncate whitespace-nowrap text-[11px] uppercase tracking-[0.18em] text-[color:var(--manager-ink-subtle)]">
+          {module.caption}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function ManagerSidebar({
   modules,
   extensionEntries,
   activePanel,
   onPanelChange,
 }: ManagerSidebarProps) {
+  const settingsModule = modules.find((module) => module.id === SETTINGS_MODULE_ID);
+  const workspaceModules = modules.filter((module) => module.id !== SETTINGS_MODULE_ID);
+
   return (
-    <aside className="hidden min-w-[196px] max-w-[196px] flex-col gap-3 rounded-[20px] bg-[rgba(255,251,245,0.44)] px-3 py-3 lg:flex">
-      <div className="space-y-2 px-1 py-1">
+    <aside className="hidden w-[224px] min-w-[224px] max-w-[224px] shrink-0 flex-col gap-3 overflow-hidden rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-3 md:flex">
+      <div className="shrink-0 space-y-2 px-1 py-1">
         <div>
           <p className="manager-kicker">EasyFlowHub</p>
           <h1 className="mt-1 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-[26px] leading-[1.08] text-[color:var(--manager-ink-strong)]">
@@ -34,54 +79,38 @@ export function ManagerSidebar({
         </p>
       </div>
 
-      <nav className="space-y-2 px-1 py-1">
-        <p className="manager-kicker">Workspace</p>
-        <div className="space-y-2 pt-1">
-          {modules.map((module) => {
-            const isActive = activePanel === module.id;
-            return (
-              <button
+      <div className="manager-sidebar-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+        <nav className="space-y-2 px-1 py-1">
+          <p className="manager-kicker">Workspace</p>
+          <div className="space-y-2 pt-1">
+            {workspaceModules.map((module) => (
+              <NavButton
                 key={module.id}
-                onClick={() => onPanelChange(module.id)}
-                className={`group flex w-full items-center gap-3 rounded-[18px] border px-3 py-2.5 text-left transition-all duration-200 ${
-                  isActive
-                    ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)] shadow-[0_18px_40px_rgba(46,58,49,0.12)]'
-                    : 'border-transparent bg-transparent text-[color:var(--manager-ink-muted)] hover:border-[color:var(--manager-border)] hover:bg-white/55 hover:text-[color:var(--manager-ink)]'
-                }`}
-                title={module.name}
-              >
-                <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border text-sm ${
-                    isActive
-                      ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                      : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)]'
-                  }`}
-                >
-                  {module.icon}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium tracking-[0.08em] text-current">
-                    {module.name}
-                  </span>
-                  <span className="mt-0.5 block text-[11px] uppercase tracking-[0.18em] text-[color:var(--manager-ink-subtle)]">
-                    {module.caption}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+                module={module}
+                isActive={activePanel === module.id}
+                onSelect={onPanelChange}
+              />
+            ))}
+          </div>
+        </nav>
 
-      <ManagerExtensionEntries
-        entries={extensionEntries}
-        enabledModules={modules}
-        activePanel={activePanel}
-        onPanelChange={onPanelChange}
-      />
+        <ManagerExtensionEntries
+          entries={extensionEntries}
+          enabledModules={modules}
+          activePanel={activePanel}
+          onPanelChange={onPanelChange}
+        />
+      </div>
 
-      <div className="mt-auto px-1 pb-1">
-        <p className="text-[11px] leading-5 tracking-[0.12em] text-[color:var(--manager-ink-subtle)]">
+      <div className="shrink-0 border-t border-[color:var(--manager-border)] px-1 pt-2">
+        {settingsModule ? (
+          <NavButton
+            module={settingsModule}
+            isActive={activePanel === settingsModule.id}
+            onSelect={onPanelChange}
+          />
+        ) : null}
+        <p className="mt-1 px-1 text-[11px] leading-5 tracking-[0.12em] text-[color:var(--manager-ink-subtle)]">
           Zen layout
         </p>
       </div>

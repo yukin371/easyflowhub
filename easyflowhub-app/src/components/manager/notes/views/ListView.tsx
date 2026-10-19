@@ -17,12 +17,12 @@ export function ListView(props: ListViewProps) {
   const { notes, splitTags, relativeTimeLabel, onOpenNote, onRenameNote, onTogglePin, onDeleteNote } = props;
 
   return (
-    <div className="space-y-4 pt-1">
+    <div className="space-y-3 pt-1">
       {notes.map((note) => (
         <article
           key={note.id}
           onClick={() => onOpenNote(note)}
-          className="group rounded-[22px] border border-[color:var(--manager-border)] bg-white/68 p-5 transition hover:-translate-y-0.5 hover:border-[color:var(--manager-accent)] hover:shadow-[0_24px_50px_rgba(58,48,33,0.08)]"
+          className="group rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 transition hover:-translate-y-0.5 hover:border-[color:var(--manager-accent)] hover:shadow-[var(--manager-shadow)]"
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 flex-1">
@@ -44,7 +44,7 @@ export function ListView(props: ListViewProps) {
                   onOpen={() => onOpenNote(note)}
                   className="min-w-0 flex-1 text-left"
                   titleClassName="block truncate pt-1 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-2xl leading-[1.28] text-[color:var(--manager-ink-strong)]"
-                  inputClassName="w-full rounded-[12px] border border-[color:var(--manager-accent)] bg-white px-3 py-2 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-xl text-[color:var(--manager-ink-strong)] outline-none"
+                  inputClassName="w-full rounded-[8px] border border-[color:var(--manager-accent)] bg-[color:var(--manager-panel-strong)] px-3 py-2 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-xl text-[color:var(--manager-ink-strong)] outline-none"
                 />
               </div>
               <p className="mt-4 line-clamp-2 text-sm leading-7 text-[color:var(--manager-ink-soft)]">

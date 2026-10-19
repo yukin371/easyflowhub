@@ -33,14 +33,14 @@ export function ScriptCategoryTree({
         className={`group flex w-full items-center gap-2 rounded-[12px] border px-2.5 py-2 text-left transition-all ${
           selectedCategory === null
             ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]'
-            : 'border-transparent bg-transparent text-[color:var(--manager-ink-muted)] hover:border-[color:var(--manager-border)] hover:bg-white/55'
+            : 'border-transparent bg-transparent text-[color:var(--manager-ink-muted)] hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-accent-soft)]'
         }`}
       >
         <span
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] border text-xs ${
             selectedCategory === null
               ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-              : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)]'
+              : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)]'
           }`}
         >
           全
@@ -63,14 +63,14 @@ export function ScriptCategoryTree({
             className={`group flex w-full items-center gap-2 rounded-[12px] border px-2.5 py-2 text-left transition-all ${
               isActive
                 ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]'
-                : 'border-transparent bg-transparent text-[color:var(--manager-ink-muted)] hover:border-[color:var(--manager-border)] hover:bg-white/55'
+                : 'border-transparent bg-transparent text-[color:var(--manager-ink-muted)] hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-accent-soft)]'
             }`}
           >
             <span
               className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] border text-xs ${
                 isActive
                   ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                  : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)]'
+                  : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)]'
               }`}
             >
               {icon}

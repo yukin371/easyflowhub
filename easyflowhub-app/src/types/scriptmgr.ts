@@ -349,3 +349,52 @@ export interface MCPServerCatalogResponse {
   ok: boolean;
   catalog: MCPServerCatalog;
 }
+
+// ============================================================================
+// Script file management (roots, source editing, import, trash)
+// ============================================================================
+
+export interface ScriptSource {
+  id: string;
+  path: string;
+  content: string;
+  language: string;
+  size_bytes: number;
+  modified_at: string;
+  metadata_path?: string;
+}
+
+export interface RootsDetail {
+  ok: boolean;
+  roots: string[];
+  custom: string[];
+  generated_at: string;
+}
+
+export interface ScriptTrashEntry {
+  id: string;
+  name: string;
+  original_path: string;
+  script_type: string;
+  deleted_at: string;
+  size_bytes: number;
+}
+
+export interface ScriptTrashResponse {
+  ok: boolean;
+  count: number;
+  entries: ScriptTrashEntry[];
+  generated_at: string;
+}
+
+export interface ImportScriptsFailure {
+  path: string;
+  error: string;
+}
+
+export interface ImportScriptsResponse {
+  ok: boolean;
+  imported: ScriptSummary[];
+  failed: ImportScriptsFailure[];
+  generated_at: string;
+}

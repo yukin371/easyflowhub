@@ -93,6 +93,13 @@ describe('appearance IPC layer', () => {
       const result = await loadAppearanceConfig();
       expect(result).toEqual(DEFAULT_APPEARANCE);
     });
+
+    it('should fall back when a saved theme value is invalid', async () => {
+      store['easyflowhub-appearance'] = JSON.stringify({ theme: 'sepia' });
+
+      const result = await loadAppearanceConfig();
+      expect(result.theme).toBe(DEFAULT_APPEARANCE.theme);
+    });
   });
 
   describe('saveAppearanceConfig', () => {

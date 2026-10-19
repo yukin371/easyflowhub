@@ -117,7 +117,7 @@ export function McpPanel() {
       </header>
 
       {/* Service Status */}
-      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
         <h3 className="mb-3 text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
           服务状态
         </h3>
@@ -126,10 +126,10 @@ export function McpPanel() {
             <span
               className={`flex h-10 w-10 items-center justify-center rounded-full text-lg ${
                 serverStatus === 'online'
-                  ? 'bg-green-100 text-green-600'
+                  ? 'bg-[color:var(--manager-success)]/18 text-[color:var(--manager-success)]'
                   : serverStatus === 'offline'
-                    ? 'bg-red-100 text-red-600'
-                    : 'bg-gray-100 text-gray-400'
+                    ? 'bg-[color:var(--manager-danger)]/18 text-[color:var(--manager-danger)]'
+                    : 'bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-muted)]'
               }`}
             >
               {serverStatus === 'checking' ? '◯' : serverStatus === 'online' ? '●' : '✗'}
@@ -143,14 +143,14 @@ export function McpPanel() {
                     : '未运行'}
               </p>
               <p className="text-sm text-[color:var(--manager-ink-soft)]">
-                {serverStatus === 'online' ? 'localhost:8765' : 'scriptmgr serve'}
+                {serverStatus === 'online' ? '127.0.0.1:8765' : 'scriptmgr serve'}
               </p>
             </div>
           </div>
           <button
             onClick={checkStatus}
             disabled={serverStatus === 'checking'}
-            className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] disabled:opacity-50"
+            className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] disabled:opacity-50"
           >
             刷新
           </button>
@@ -159,19 +159,19 @@ export function McpPanel() {
 
       {/* Stats Row */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 text-center">
           <p className="text-3xl font-light text-[color:var(--manager-accent)]">{STATIC_TOOLS.length}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">静态工具</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 text-center">
           <p className="text-3xl font-light text-[color:var(--manager-accent)]">{loadedCount}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">已加载类别</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 text-center">
           <p className="text-3xl font-light text-[color:var(--manager-accent)]">{totalScripts}</p>
           <p className="mt-1 text-xs text-[color:var(--manager-ink-muted)]">可用脚本</p>
         </div>
-        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-white/40 p-4 text-center">
+        <div className="rounded-[16px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 text-center">
           <p className="text-3xl font-light text-[color:var(--manager-accent)]">
             {extensionServers} / {conflictedServers}
           </p>
@@ -180,7 +180,7 @@ export function McpPanel() {
       </div>
 
       {/* Static Tools */}
-      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
         <h3 className="mb-3 text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
           静态工具
         </h3>
@@ -188,7 +188,7 @@ export function McpPanel() {
           {STATIC_TOOLS.map((tool) => (
             <div
               key={tool.name}
-              className="rounded-[12px] border border-[color:var(--manager-border)] bg-white/40 px-3 py-2"
+              className="rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-3 py-2"
             >
               <p className="truncate font-mono text-sm text-[color:var(--manager-ink-strong)]">
                 {tool.name}
@@ -201,7 +201,7 @@ export function McpPanel() {
         </div>
       </div>
 
-      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+      <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
@@ -213,7 +213,7 @@ export function McpPanel() {
           </div>
           <button
             onClick={fetchServers}
-            className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+            className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
           >
             刷新目录
           </button>
@@ -222,7 +222,7 @@ export function McpPanel() {
           {servers.map((server) => (
             <div
               key={server.key}
-              className="rounded-[14px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3"
+              className="rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-4 py-3"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -235,10 +235,10 @@ export function McpPanel() {
                 <span
                   className={`rounded-full px-3 py-1 text-xs ${
                     server.status === 'persisted'
-                      ? 'bg-emerald-100 text-emerald-700'
+                      ? 'bg-[color:var(--manager-success)]/18 text-[color:var(--manager-success)]'
                       : server.status === 'extension'
-                        ? 'bg-sky-100 text-sky-700'
-                        : 'bg-amber-100 text-amber-700'
+                        ? 'bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-accent-strong)]'
+                        : 'bg-[color:var(--manager-warning)]/18 text-[color:var(--manager-warning)]'
                   }`}
                 >
                   {server.status}
@@ -252,18 +252,18 @@ export function McpPanel() {
               {extensionIdFromSource(server.source) && (
                 <button
                   onClick={() => navigateToManagerExtension(extensionIdFromSource(server.source)!)}
-                  className="mt-3 rounded-full border border-[color:var(--manager-border)] bg-white/70 px-4 py-2 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
+                  className="mt-3 rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]"
                 >
                   查看扩展详情
                 </button>
               )}
               {server.conflict_with && (
-                <p className="mt-2 text-xs text-amber-700">conflict with {server.conflict_with}</p>
+                <p className="mt-2 text-xs text-[color:var(--manager-warning)]">conflict with {server.conflict_with}</p>
               )}
             </div>
           ))}
           {servers.length === 0 && (
-            <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-white/25 px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
+            <div className="rounded-[16px] border border-dashed border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-4 py-6 text-center text-sm text-[color:var(--manager-ink-subtle)]">
               当前未发现外部 MCP server 配置或扩展 overlay。
             </div>
           )}
@@ -271,7 +271,7 @@ export function McpPanel() {
       </div>
 
       {/* Category Management */}
-      <div className="flex-1 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+      <div className="flex-1 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-[color:var(--manager-ink-muted)]">
             动态类别
@@ -284,14 +284,14 @@ export function McpPanel() {
           {categories.map((category) => (
             <div
               key={category.name}
-              className="flex items-center justify-between rounded-[14px] border border-[color:var(--manager-border)] bg-white/40 px-4 py-3 transition hover:border-[color:var(--manager-accent)]"
+              className="flex items-center justify-between rounded-[14px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-4 py-3 transition hover:border-[color:var(--manager-accent)]"
             >
               <div className="flex items-center gap-3">
                 <span
                   className={`flex h-8 w-8 items-center justify-center rounded-[10px] border text-sm ${
                     category.loaded
                       ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                      : 'border-[color:var(--manager-border)] bg-white/70 text-[color:var(--manager-ink-soft)]'
+                      : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)]'
                   }`}
                 >
                   {category.name.slice(0, 2)}
@@ -309,7 +309,7 @@ export function McpPanel() {
                 className={`rounded-full px-4 py-1.5 text-sm transition ${
                   category.loaded
                     ? 'border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-accent)] hover:bg-[color:var(--manager-accent)] hover:text-white'
-                    : 'border border-[color:var(--manager-border)] bg-white/60 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]'
+                    : 'border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)]'
                 } disabled:opacity-50`}
               >
                 {loading === category.name ? '...' : category.loaded ? '已加载' : '加载'}

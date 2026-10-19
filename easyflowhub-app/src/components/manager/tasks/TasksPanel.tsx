@@ -9,11 +9,11 @@ import type { TaskInfo } from '../../../types/scriptmgr';
 
 // Status colors and labels
 const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
-  pending: { color: 'text-amber-600', bg: 'bg-amber-100', label: '等待中' },
-  running: { color: 'text-blue-600', bg: 'bg-blue-100', label: '运行中' },
-  completed: { color: 'text-green-600', bg: 'bg-green-100', label: '已完成' },
-  failed: { color: 'text-red-600', bg: 'bg-red-100', label: '失败' },
-  cancelled: { color: 'text-gray-500', bg: 'bg-gray-100', label: '已取消' },
+  pending: { color: 'text-[color:var(--manager-warning)]', bg: 'bg-[color:var(--manager-warning)]/18', label: '等待中' },
+  running: { color: 'text-[color:var(--manager-accent)]', bg: 'bg-[color:var(--manager-accent-soft)]', label: '运行中' },
+  completed: { color: 'text-[color:var(--manager-success)]', bg: 'bg-[color:var(--manager-success)]/18', label: '已完成' },
+  failed: { color: 'text-[color:var(--manager-danger)]', bg: 'bg-[color:var(--manager-danger)]/18', label: '失败' },
+  cancelled: { color: 'text-[color:var(--manager-ink-muted)]', bg: 'bg-[color:var(--manager-panel-strong)]', label: '已取消' },
 };
 
 function formatDuration(ms?: number): string {
@@ -58,8 +58,8 @@ export function TasksPanel() {
   const [logTail, setLogTail] = useState(true);
 
   // Fetch tasks
-  const fetchTasks = useCallback(async () => {
-    setLoading(true);
+  const fetchTasks = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       // For 'all' tab, fetch without status filter
       const status = activeTab === 'all' ? undefined : activeTab;
@@ -71,20 +71,40 @@ export function TasksPanel() {
       setTasks(sorted);
     } catch (err) {
       console.error('Failed to fetch tasks:', err);
-      setTasks([]);
+      if (!silent) setTasks([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeTab]);
 
+  // Track window visibility: a hidden manager window must not keep polling.
+  const [visible, setVisible] = useState(() => (typeof document === 'undefined' ? true : !document.hidden));
   useEffect(() => {
-    fetchTasks();
-    // Auto-refresh every 5 seconds for running/all tabs
-    const interval = activeTab !== 'completed' ? setInterval(fetchTasks, 5000) : null;
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [fetchTasks, activeTab]);
+    const handleVisibilityChange = () => setVisible(!document.hidden);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    void fetchTasks();
+  }, [fetchTasks]);
+
+  const hasActiveTasks = tasks.some((task) => task.status === 'running' || task.status === 'pending');
+
+  // Poll only when the panel is visible: fast while something is running,
+  // slow (15s) when idle, and never while the window is hidden.
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const interval = window.setInterval(
+      () => {
+        void fetchTasks(true);
+      },
+      hasActiveTasks ? 3000 : 15000
+    );
+    return () => window.clearInterval(interval);
+  }, [visible, hasActiveTasks, fetchTasks]);
 
   // Fetch task log
   const fetchLog = async (task: TaskInfo) => {
@@ -148,7 +168,7 @@ export function TasksPanel() {
             className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
               activeTab === 'all'
                 ? 'border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-accent)]'
-                : 'border border-[color:var(--manager-border)] bg-white/40 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
+                : 'border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
             }`}
           >
             全部 ({tasks.length})
@@ -158,10 +178,10 @@ export function TasksPanel() {
             className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
               activeTab === 'running'
                 ? 'border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-accent)]'
-                : 'border border-[color:var(--manager-border)] bg-white/40 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
+                : 'border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
             }`}
           >
-            <span className={`h-2 w-2 rounded-full ${activeTab === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`} />
+            <span className={`h-2 w-2 rounded-full ${activeTab === 'running' ? 'bg-[color:var(--manager-accent)] animate-pulse' : 'bg-[color:var(--manager-ink-muted)]'}`} />
             运行中 ({runningCount})
           </button>
           <button
@@ -169,7 +189,7 @@ export function TasksPanel() {
             className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
               activeTab === 'completed'
                 ? 'border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-accent)]'
-                : 'border border-[color:var(--manager-border)] bg-white/40 text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
+                : 'border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-[color:var(--manager-ink-soft)] hover:border-[color:var(--manager-accent)]'
             }`}
           >
             已完成 ({completedCount})
@@ -177,7 +197,7 @@ export function TasksPanel() {
         </div>
 
         {/* Task List */}
-        <div className="flex-1 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-3">
+        <div className="flex-1 overflow-auto rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-3">
           {loading ? (
             <div className="flex h-full items-center justify-center text-[color:var(--manager-ink-muted)]">
               加载中...
@@ -193,13 +213,21 @@ export function TasksPanel() {
                 const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
                 const isSelected = selectedTask?.task_id === task.task_id;
                 return (
-                  <button
+                  <div
                     key={task.task_id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => handleSelectTask(task)}
-                    className={`w-full rounded-[14px] border p-3 text-left transition ${
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleSelectTask(task);
+                      }
+                    }}
+                    className={`w-full cursor-pointer rounded-[14px] border p-3 text-left transition ${
                       isSelected
                         ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent-soft)]'
-                        : 'border-[color:var(--manager-border)] bg-white/40 hover:border-[color:var(--manager-accent)]'
+                        : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] hover:border-[color:var(--manager-accent)]'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -222,7 +250,7 @@ export function TasksPanel() {
                             e.stopPropagation();
                             handleCancelTask(task.task_id);
                           }}
-                          className="shrink-0 rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 transition hover:bg-red-100"
+                          className="shrink-0 rounded-full border border-[color:var(--manager-danger)]/40 bg-[color:var(--manager-danger)]/12 px-2 py-1 text-xs text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/18"
                         >
                           取消
                         </button>
@@ -233,12 +261,12 @@ export function TasksPanel() {
                       <span className="text-[color:var(--manager-ink-subtle)]">({formatRelativeTime(task.created_at)})</span>
                       {task.duration_ms && <span>{formatDuration(task.duration_ms)}</span>}
                       {task.exit_code !== undefined && (
-                        <span className={task.exit_code === 0 ? 'text-green-600' : 'text-red-600'}>
+                        <span className={task.exit_code === 0 ? 'text-[color:var(--manager-success)]' : 'text-[color:var(--manager-danger)]'}>
                           exit:{task.exit_code}
                         </span>
                       )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -247,9 +275,9 @@ export function TasksPanel() {
 
         {/* Refresh Button */}
         <button
-          onClick={fetchTasks}
+          onClick={() => void fetchTasks()}
           disabled={loading}
-          className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] disabled:opacity-50"
+          className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-4 py-2 text-sm text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] disabled:opacity-50"
         >
           刷新列表
         </button>
@@ -260,7 +288,7 @@ export function TasksPanel() {
         {selectedTask ? (
           <>
             {/* Task Info */}
-            <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-white/55 p-5">
+            <div className="rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-5">
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-wider text-[color:var(--manager-ink-muted)]">
@@ -302,7 +330,7 @@ export function TasksPanel() {
                     <p className="text-[color:var(--manager-ink-muted)]">退出码</p>
                     <p
                       className={`font-mono ${
-                        selectedTask.exit_code === 0 ? 'text-green-600' : 'text-red-600'
+                        selectedTask.exit_code === 0 ? 'text-[color:var(--manager-success)]' : 'text-[color:var(--manager-danger)]'
                       }`}
                     >
                       {selectedTask.exit_code}
@@ -312,15 +340,15 @@ export function TasksPanel() {
               </div>
 
               {selectedTask.error && (
-                <div className="mt-4 rounded-[12px] border border-red-200 bg-red-50 p-3">
-                  <p className="text-xs font-medium uppercase text-red-600">错误信息</p>
-                  <p className="mt-1 font-mono text-sm text-red-700">{selectedTask.error}</p>
+                <div className="mt-4 rounded-[12px] border border-[color:var(--manager-danger)]/40 bg-[color:var(--manager-danger)]/12 p-3">
+                  <p className="text-xs font-medium uppercase text-[color:var(--manager-danger)]">错误信息</p>
+                  <p className="mt-1 font-mono text-sm text-[color:var(--manager-danger)]">{selectedTask.error}</p>
                 </div>
               )}
             </div>
 
             {/* Log Viewer */}
-            <div className="flex-1 overflow-hidden rounded-[20px] border border-[color:var(--manager-border)] bg-white/55">
+            <div className="flex-1 overflow-hidden rounded-[20px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)]">
               <div className="flex items-center justify-between border-b border-[color:var(--manager-border)] px-4 py-3">
                 <h4 className="text-sm font-medium uppercase tracking-wider text-[color:var(--manager-ink-muted)]">
                   输出日志
@@ -331,7 +359,7 @@ export function TasksPanel() {
                     className={`rounded-full px-3 py-1 text-xs transition ${
                       logTail
                         ? 'bg-[color:var(--manager-accent)] text-white'
-                        : 'bg-white/60 text-[color:var(--manager-ink-soft)] hover:bg-white'
+                        : 'bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)] hover:bg-[color:var(--manager-panel)]'
                     }`}
                   >
                     Tail
@@ -341,7 +369,7 @@ export function TasksPanel() {
                     className={`rounded-full px-3 py-1 text-xs transition ${
                       !logTail
                         ? 'bg-[color:var(--manager-accent)] text-white'
-                        : 'bg-white/60 text-[color:var(--manager-ink-soft)] hover:bg-white'
+                        : 'bg-[color:var(--manager-panel-strong)] text-[color:var(--manager-ink-soft)] hover:bg-[color:var(--manager-panel)]'
                     }`}
                   >
                     全部
@@ -349,7 +377,7 @@ export function TasksPanel() {
                   <button
                     onClick={() => selectedTask && fetchLog(selectedTask)}
                     disabled={logLoading}
-                    className="rounded-full border border-[color:var(--manager-border)] bg-white/60 px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] disabled:opacity-50"
+                    className="rounded-full border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] disabled:opacity-50"
                   >
                     刷新
                   </button>
@@ -357,15 +385,15 @@ export function TasksPanel() {
               </div>
               <div className="h-[calc(100%-52px)] overflow-auto bg-[#1e1e1e] p-4">
                 {logLoading ? (
-                  <div className="flex h-full items-center justify-center text-gray-400">
+                  <div className="flex h-full items-center justify-center text-[color:var(--manager-ink-muted)]">
                     加载日志...
                   </div>
                 ) : logContent ? (
-                  <pre className="font-mono text-sm text-gray-300 whitespace-pre-wrap break-all">
+                  <pre className="font-mono text-sm text-[color:var(--manager-ink)] whitespace-pre-wrap break-all">
                     {logContent.content || '(无输出)'}
                   </pre>
                 ) : (
-                  <div className="flex h-full items-center justify-center text-gray-400">
+                  <div className="flex h-full items-center justify-center text-[color:var(--manager-ink-muted)]">
                     点击任务查看日志
                   </div>
                 )}

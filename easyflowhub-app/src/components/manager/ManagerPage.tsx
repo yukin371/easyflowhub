@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ManagerSidebar } from './ManagerSidebar';
+import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { extensionsApi } from '../../lib/api/scriptmgr';
 import type { EffectiveExtensionContributions } from '../../types/scriptmgr';
 import { useEnabledModules } from '../../modules';
@@ -158,6 +159,20 @@ export function ManagerPage() {
   }, []);
 
   useEffect(() => {
+    // VoicePanel can be mounted while NotesPanel is not. Keep the navigation
+    // listener at the manager root, then replay the event after NotesPanel mounts.
+    const handleVoiceInboxNavigation = () => {
+      setActivePanel('notes');
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('easyflowhub:voice-open-inbox'));
+      }, 16);
+    };
+
+    window.addEventListener('easyflowhub:voice-navigate-inbox', handleVoiceInboxNavigation);
+    return () => window.removeEventListener('easyflowhub:voice-navigate-inbox', handleVoiceInboxNavigation);
+  }, []);
+
+  useEffect(() => {
     if (activePanel !== 'notes' || !pendingNoteNavigation) {
       return;
     }
@@ -214,7 +229,13 @@ export function ManagerPage() {
     }
 
     const Component = module.component;
-    return <Component />;
+    // `key` resets the boundary when the user switches panels, so a crashed
+    // panel does not stay crashed after navigating away and back.
+    return (
+      <PanelErrorBoundary key={activePanel} panelId={activePanel}>
+        <Component />
+      </PanelErrorBoundary>
+    );
   };
 
   return (
@@ -230,7 +251,7 @@ export function ManagerPage() {
           activePanel={activePanel || ''}
           onPanelChange={handlePanelChange}
         />
-        <main className="flex-1 overflow-hidden rounded-[20px] bg-[rgba(255,251,245,0.26)]">
+        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           {renderPanel()}
         </main>
       </div>
