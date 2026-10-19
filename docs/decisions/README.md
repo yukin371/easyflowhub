@@ -32,3 +32,12 @@
 - 当前优先级进入 `docs/roadmap.md`
 - 模块级约束进入 `MODULE.md`
 - 长期决策进入本目录
+
+## 当前已接受的决策
+
+- [ADR-0003 产品方向与 Action-first](./ADR-0003-product-direction-and-action-first.md)
+- [ADR-0004 毛玻璃主题与效率工作空间](./ADR-0004-glass-theme-and-efficiency-workspace.md)
+- [ADR-0005 下载队列归属与文件安全边界](./ADR-0005-download-owner-and-safety.md)
+- [ADR-0006 Windows 录音归属与 Inbox 回流](./ADR-0006-voice-recording-and-inbox.md)
+- [ADR-0007 Relay 本地 API 暴露与密钥回显边界](./ADR-0007-relay-local-api-security.md)
+- [ADR-0008 录音后转写的 Owner、Provider 适配与隐私确认](./ADR-0008-voice-transcription-and-relay.md)

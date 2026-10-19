@@ -49,6 +49,8 @@
 
 ## Active Plans
 
+- [2026-10-18-v0.2.0-checkpoint-summary.md](./2026-10-18-v0.2.0-checkpoint-summary.md)
+- [2026-10-16-v0.2.0-product-delivery-plan.md](./2026-10-16-v0.2.0-product-delivery-plan.md)
 - [2026-04-25-ai-host-routing-implementation-plan.md](./2026-04-25-ai-host-routing-implementation-plan.md)
 - [2026-04-24-v1-task-board.md](./2026-04-24-v1-task-board.md)
 - [2026-04-24-v1-delivery-plan.md](./2026-04-24-v1-delivery-plan.md)
@@ -60,18 +62,19 @@
 
 ## Release Planning
 
-按这个顺序读：
+当前个人效率版本按这个顺序读：
 
-1. [../PRD-v1.0.0.md](../PRD-v1.0.0.md)
-2. [../roadmap.md](../roadmap.md)
-3. [2026-04-24-v1-delivery-plan.md](./2026-04-24-v1-delivery-plan.md)
-4. [2026-04-24-v1-task-board.md](./2026-04-24-v1-task-board.md)
-5. [../PROJECT_PROFILE.md](../PROJECT_PROFILE.md)
+1. [../PRD-v0.2.0.md](../PRD-v0.2.0.md)
+2. [2026-10-16-v0.2.0-product-delivery-plan.md](./2026-10-16-v0.2.0-product-delivery-plan.md)
+3. [../roadmap.md](../roadmap.md)
+4. [../PROJECT_PROFILE.md](../PROJECT_PROFILE.md)
+5. [../PRD-v1.0.0.md](../PRD-v1.0.0.md)（既有发布治理基线）
 6. 最近一次相关的专题 plan
 
 ## Reference / Legacy Notes
 
 - `2026-03-*` 下的大部分方案属于历史实施背景，只有在维护对应老模块时才回看。
 - `2026-03-23-modular-architecture-design.md` 已 superseded，只在需要追溯早期 `Deskflow` 模块化设计时查看。
+- [../archive/plans/2026-04-22-ai-cli-facade-design.md](../archive/plans/2026-04-22-ai-cli-facade-design.md) 与 [../archive/plans/2026-04-22-ai-cli-facade-impl-plan.md](../archive/plans/2026-04-22-ai-cli-facade-impl-plan.md) 属于已 deferred 的 v0.3 AI CLI facade 草案，不是当前 v1.0/v1.1 交付依据。
 - `scriptmgr-roadmap.md`、`scriptmgr-v1.0-roadmap.md` 属于旧路线文档，不应再作为当前优先级来源。
 - `UI_REQUIREMENTS.md` 属于大体量参考材料，不适合作为快速开发入口。

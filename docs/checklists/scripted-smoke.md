@@ -2,7 +2,7 @@
 
 > status: active
 > owner: EasyFlowHub maintainers
-> last_verified: 2026-04-07
+> last_verified: 2026-10-18
 
 ## Purpose
 
@@ -10,7 +10,10 @@
 
 - 前端测试
 - TypeScript 类型检查
+- 生产构建
+- Manager 主题 token 审计
 - Tauri / Rust 编译检查
+- Rust library tests
 - Go 后端测试
 
 它不是 Windows 打包态行为验证的替代品；打包相关仍然使用 `windows-package-smoke.md`。
@@ -31,7 +34,10 @@ pwsh -File .\scripts\run-smoke.ps1 -CheckReleaseArtifacts
 
 - `cd easyflowhub-app && bun run test`
 - `cd easyflowhub-app && bunx tsc --noEmit`
+- `cd easyflowhub-app && bun run build`
+- `scripts/check-theme-tokens.ps1`
 - `cd easyflowhub-app && cargo check --manifest-path src-tauri/Cargo.toml`
+- `cd easyflowhub-app && cargo test --manifest-path src-tauri/Cargo.toml --lib`
 - `cd scriptmgr-go && go test ./...`
 - 可选：`scripts/check-release-artifacts.ps1`
 

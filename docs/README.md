@@ -6,13 +6,14 @@
 
 1. [AGENTS.md](../AGENTS.md)
 2. [PROJECT_PROFILE.md](./PROJECT_PROFILE.md)
-3. [PRD-v1.0.0.md](./PRD-v1.0.0.md)
+3. [PRD-v0.2.0.md](./PRD-v0.2.0.md)（当前个人效率 Hub 需求）
 4. [roadmap.md](./roadmap.md)
-5. [ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
-6. `docs/checklists/review-checklist.md`（涉及共享 owner、跨层 import、review 时必读）
-7. 最近一次相关的 `MODULE.md`
-8. 相关 `docs/decisions/ADR-*.md`
-9. 相关 `docs/plans/YYYY-MM-DD-*.md`
+5. [PRD-v1.0.0.md](./PRD-v1.0.0.md)（既有发布治理基线）
+6. [ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
+7. `docs/checklists/review-checklist.md`（涉及共享 owner、跨层 import、review 时必读）
+8. 最近一次相关的 `MODULE.md`
+9. 相关 `docs/decisions/ADR-*.md`
+10. 相关 `docs/plans/YYYY-MM-DD-*.md`
 
 ## Fast Paths
 
@@ -38,14 +39,17 @@
 1. [roadmap.md](./roadmap.md)
 2. [checklists/windows-package-smoke.md](./checklists/windows-package-smoke.md)
 3. [checklists/scripted-smoke.md](./checklists/scripted-smoke.md)
+4. [checklists/windows-theme-smoke-2026-10-18.md](./checklists/windows-theme-smoke-2026-10-18.md)
 
 ### 版本规划 / 发版收口
 
-1. [PRD-v1.0.0.md](./PRD-v1.0.0.md)
-2. [roadmap.md](./roadmap.md)
-3. [PROJECT_PROFILE.md](./PROJECT_PROFILE.md)
-4. [ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
-5. 最近一次相关的 `docs/plans/*.md`
+1. [PRD-v0.2.0.md](./PRD-v0.2.0.md)
+2. [plans/2026-10-16-v0.2.0-product-delivery-plan.md](./plans/2026-10-16-v0.2.0-product-delivery-plan.md)
+3. [PRD-v1.0.0.md](./PRD-v1.0.0.md)
+4. [roadmap.md](./roadmap.md)
+5. [PROJECT_PROFILE.md](./PROJECT_PROFILE.md)
+6. [ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
+7. 最近一次相关的 `docs/plans/*.md`
 
 更细的 plans 索引见 [plans/README.md](./plans/README.md)。
 
@@ -55,18 +59,22 @@
 |---|---|---|
 | `docs/PROJECT_PROFILE.md` | 项目画像、验证命令、入口与 owner 概览 | 只在技术栈、验证命令或拓扑变化时更新 |
 | `docs/PRD-v1.0.0.md` | `v1.0.0` 正式需求基线、范围和开发阶段设计 | 需求边界或版本策略变化时更新 |
+| `docs/PRD-v0.2.0.md` | 当前个人效率 Hub 版本的需求基线、范围和验收口径 | v0.2.0 需求边界或阶段策略变化时更新 |
 | `docs/roadmap.md` | 当前版本执行状态、active tracks、验证债务与 next queue | 只保留 active 内容，不保留长历史 |
 | `docs/ARCHITECTURE_GUARDRAILS.md` | 架构边界、依赖方向、canonical owners | 边界变化时必须更新 |
 | `docs/checklists/*.md` | 实施前 / review 时的执行清单 | 规则或协作方式变化时更新 |
 | `*/MODULE.md` | 模块职责、owner、不变量、常见坑 | 只写模块级高价值信息 |
 | `docs/plans/*.md` | 临时设计 / 实施方案 | 完成后要归档、收敛或 supersede |
+| `docs/archive/plans/*.md` | 已 deferred / superseded 的历史方案 | 仅用于追溯，不作为当前 source of truth |
+| `docs/releases/*.md` | 版本发布说明与发布资产记录 | 每次正式发布后补齐对应版本说明 |
 | `docs/decisions/ADR-*.md` | 长期有效的边界决策 | 不记录普通实现步骤 |
 | `docs/templates/*` | 通用模板与可复制手册 | 作为其他仓库或新模块的启动骨架 |
 
 ## Current Source Of Truth
 
 - 仓库画像: [PROJECT_PROFILE.md](./PROJECT_PROFILE.md)
-- 版本需求基线: [PRD-v1.0.0.md](./PRD-v1.0.0.md)
+- 当前执行需求基线: [PRD-v0.2.0.md](./PRD-v0.2.0.md)
+- 既有发布治理基线: [PRD-v1.0.0.md](./PRD-v1.0.0.md)
 - 当前目标与执行状态: [roadmap.md](./roadmap.md)
 - 架构边界: [ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
 - 实施 / review 清单: [checklists/review-checklist.md](./checklists/review-checklist.md)
@@ -74,6 +82,7 @@
 - Windows 打包 smoke: [checklists/windows-package-smoke.md](./checklists/windows-package-smoke.md)
 - plans 快速索引: [plans/README.md](./plans/README.md)
 - 通用模板入口: [templates/AI_REPO_BOOTSTRAP_PLAYBOOK.md](./templates/AI_REPO_BOOTSTRAP_PLAYBOOK.md)
+- 发布说明入口: [releases/README.md](./releases/README.md)
 
 ## Known Historical Plans
 
@@ -81,6 +90,12 @@
   - 这是早期 `Deskflow` 命名阶段的模块化设计，现已降级为历史指针文档，不再作为 active source of truth
   - manager 模块入口以 `easyflowhub-app/src/modules/MODULE.md` 为准
   - 扩展平台演进以 `2026-04-11-vscode-style-extension-platform-roadmap.md` 与 `2026-04-08-extension-enhancement-plan.md` 为准
+- [archive/plans/2026-04-22-ai-cli-facade-design.md](./archive/plans/2026-04-22-ai-cli-facade-design.md)
+  - 早期 v0.3 AI CLI facade 设计，已 deferred；当前版本方向以 `roadmap.md`、PRD 与 v1.1 host routing 文档为准
+- [archive/plans/2026-04-22-ai-cli-facade-impl-plan.md](./archive/plans/2026-04-22-ai-cli-facade-impl-plan.md)
+  - 对应的历史实施草案，仅用于追溯
+- [releases/v0.1.1.md](./releases/v0.1.1.md)
+  - v0.1.1 发布说明与 Windows 资产命名记录
 
 ## Doc Hygiene Rules
 
