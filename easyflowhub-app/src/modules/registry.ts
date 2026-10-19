@@ -105,6 +105,12 @@ class ModuleRegistry {
       return false;
     }
 
+    // 记录确切的旧值用于回滚：模块可能此前已被持久化为某个状态（例如
+    // true），失败时仅 delete 会让它退回 defaultEnabled，与用户上一次
+    // 保存的值不符（F07）。
+    const previous = this.config.modules[id];
+    const hadPrevious = id in this.config.modules;
+
     // 更新本地配置
     this.config.modules[id] = { enabled };
 
@@ -115,14 +121,18 @@ class ModuleRegistry {
         { moduleId: id, enabled }
       );
       if (!response.ok) {
-        console.error('Failed to save module config:', response.error);
-        // 回滚本地配置
-        delete this.config.modules[id];
-        return false;
+        throw new Error(response.error || 'save rejected');
       }
     } catch (error) {
       console.error('Failed to save module config:', error);
-      delete this.config.modules[id];
+      // 回滚到确切的旧值，而不是删除记录。
+      if (hadPrevious) {
+        this.config.modules[id] = previous;
+      } else {
+        delete this.config.modules[id];
+      }
+      // 通知监听者，让 UI 立即回到真实状态，而不是停留在乐观值上。
+      this.notifyListeners();
       return false;
     }
 
