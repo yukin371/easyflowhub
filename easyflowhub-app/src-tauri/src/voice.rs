@@ -82,6 +82,35 @@ fn current_session() -> Result<VoiceSession, String> {
     runtime().lock().map(|runtime| runtime.session.clone()).map_err(|_| "录音状态不可用。".to_string())
 }
 
+/// True for statuses that are final: once reached, no other writer may change
+/// the session. `saved` and `failed` are both terminal, and neither may
+/// overwrite the other (F14).
+fn is_terminal_status(status: &str) -> bool {
+    matches!(status, "saved" | "failed")
+}
+
+/// Apply a terminal transition (`saved` or `failed`) only if the session has
+/// not already settled. Returns whether the transition was applied.
+///
+/// This is the single write path for terminal statuses. A late pause/resume
+/// acknowledgement, a duplicate worker failure, or a stop reply racing a
+/// completion must never flip an already-final session, so the first terminal
+/// writer wins and every later one is dropped.
+fn transition_terminal<F>(id: &str, next: &str, change: F) -> bool
+where
+    F: FnOnce(&mut VoiceSession),
+{
+    debug_assert!(is_terminal_status(next), "transition_terminal must be terminal");
+    if let Ok(mut runtime) = runtime().lock() {
+        if runtime.session.id == id && !is_terminal_status(&runtime.session.status) {
+            runtime.session.status = next.to_string();
+            change(&mut runtime.session);
+            return true;
+        }
+    }
+    false
+}
+
 fn update_session<F>(id: &str, change: F)
 where
     F: FnOnce(&mut VoiceSession),
@@ -104,8 +133,9 @@ fn clear_command_sender(id: &str) {
 
 #[cfg(target_os = "windows")]
 fn mark_failed(id: &str, error: String, audio_path: Option<String>, duration_ms: u64) {
-    update_session(id, |session| {
-        session.status = "failed".to_string();
+    // Terminal transitions are single-writer (F14): a session that already
+    // settled as `saved` is never flipped to `failed` by a late worker error.
+    transition_terminal(id, "failed", |session| {
         session.stopped_at = Some(Utc::now().to_rfc3339());
         session.duration_ms = duration_ms;
         session.audio_path = audio_path;
@@ -393,14 +423,18 @@ fn run_recording(
         audio_file_path: Some(final_path.to_string_lossy().into_owned()),
     });
     match inbox {
-        Ok(response) => update_session(&id, |session| {
-            session.status = "saved".to_string();
-            session.stopped_at = Some(Utc::now().to_rfc3339());
-            session.duration_ms = duration_ms;
-            session.audio_path = Some(final_path.to_string_lossy().into_owned());
-            session.inbox_item_id = Some(response.item.id);
-            session.error = None;
-        }),
+        // Terminal transitions are single-writer (F14): `saved` and `failed` are
+        // both final and the first one to land wins, so a late failure reply can
+        // never overwrite a recording that already reported `saved`.
+        Ok(response) => {
+            transition_terminal(&id, "saved", |session| {
+                session.stopped_at = Some(Utc::now().to_rfc3339());
+                session.duration_ms = duration_ms;
+                session.audio_path = Some(final_path.to_string_lossy().into_owned());
+                session.inbox_item_id = Some(response.item.id);
+                session.error = None;
+            });
+        }
         Err(error) => mark_failed(&id, format!("录音已保存但加入收集箱失败: {error}"), Some(final_path.to_string_lossy().into_owned()), duration_ms),
     }
     clear_command_sender(&id);
@@ -475,7 +509,14 @@ fn send_control(command: VoiceCommand, expected: &str, next: &str) -> Result<Voi
         VoiceCommand::Stop(_) => sender.send(VoiceCommand::Stop(reply_sender)).map_err(|_| "录音线程已退出。".to_string())?,
     }
     reply_receiver.recv_timeout(Duration::from_secs(10)).map_err(|_| "录音操作超时。".to_string())??;
-    update_session(&id, |session| session.status = next.to_string());
+    // Only advance a session that is still live. If the recording thread
+    // settled as `saved`/`failed` while this pause/resume was in flight, the
+    // late acknowledgement must not overwrite the terminal state (F14).
+    update_session(&id, |session| {
+        if !is_terminal_status(&session.status) {
+            session.status = next.to_string();
+        }
+    });
     current_session()
 }
 
@@ -583,5 +624,65 @@ mod tests {
         assert_eq!(backend.status, Status::Idle);
         backend.stop(true);
         assert_eq!(backend.status, Status::Idle);
+    }
+
+    // F14: the FakeBackend above only sketches a lifecycle; this exercises the
+    // real production transition. The first terminal writer wins and every
+    // later one is dropped, in both directions, so a late pause/resume ack or a
+    // duplicate worker failure can never flip a settled session.
+    #[test]
+    fn terminal_transition_is_single_writer_and_irreversible() {
+        use super::{is_terminal_status, runtime, transition_terminal, VoiceSession};
+
+        // Classification: only saved/failed are terminal.
+        assert!(is_terminal_status("saved"));
+        assert!(is_terminal_status("failed"));
+        assert!(!is_terminal_status("recording"));
+        assert!(!is_terminal_status("paused"));
+        assert!(!is_terminal_status("stopping"));
+
+        let id = "f14-terminal-saved".to_string();
+        {
+            let mut rt = runtime().lock().expect("runtime lock");
+            rt.session = VoiceSession {
+                id: id.clone(),
+                status: "recording".to_string(),
+                ..VoiceSession::default()
+            };
+        }
+
+        // First terminal writer (saved) applies.
+        let applied = transition_terminal(&id, "saved", |session| {
+            session.inbox_item_id = Some("item-1".to_string());
+        });
+        assert!(applied, "first terminal transition must apply");
+
+        // A late failure must not overwrite saved.
+        let applied = transition_terminal(&id, "failed", |session| {
+            session.error = Some("late failure".to_string());
+        });
+        assert!(!applied, "late failure must not overwrite a saved session");
+
+        let session = runtime().lock().expect("runtime lock").session.clone();
+        assert_eq!(session.status, "saved");
+        assert_eq!(session.inbox_item_id.as_deref(), Some("item-1"));
+        assert_eq!(session.error, None, "late failure must not leak its error");
+
+        // Reverse order: a failed session is not flipped to saved either.
+        let id2 = "f14-terminal-failed".to_string();
+        {
+            let mut rt = runtime().lock().expect("runtime lock");
+            rt.session = VoiceSession {
+                id: id2.clone(),
+                status: "recording".to_string(),
+                ..VoiceSession::default()
+            };
+        }
+        assert!(transition_terminal(&id2, "failed", |session| {
+            session.error = Some("boom".to_string());
+        }));
+        assert!(!transition_terminal(&id2, "saved", |_| {}));
+        let session2 = runtime().lock().expect("runtime lock").session.clone();
+        assert_eq!(session2.status, "failed");
     }
 }
