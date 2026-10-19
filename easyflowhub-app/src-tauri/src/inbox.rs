@@ -24,6 +24,13 @@ pub struct InboxAttachment {
     pub filename: String,
     pub size_bytes: u64,
     pub created_at: String,
+    /// Absolute path of the original file this attachment was copied from, when
+    /// the capture came from outside the shared assets directory (F10). A voice
+    /// recording lives in `audio/{session-id}.wav` while its archived copy is
+    /// stored under a fresh UUID in `assets/`; without this link the original
+    /// cannot be found for cleanup. Attachments created inside assets/ (clipboard
+    /// images, transcripts) leave this NULL.
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,14 +134,38 @@ pub(crate) fn init_db(conn: &mut Connection) -> SqliteResult<()> {
             mime_type TEXT NOT NULL,
             filename TEXT NOT NULL UNIQUE,
             size_bytes INTEGER NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            source_path TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_inbox_attachments_item_id
             ON inbox_attachments(item_id, created_at);
         "#,
     )?;
-    migrate_capture_kinds_schema(conn)
+    migrate_capture_kinds_schema(conn)?;
+    migrate_attachment_source_path(conn)
+}
+
+/// Add the `source_path` column additively for databases created before the
+/// canonical-source link existed (F10). This is a pure additive change
+/// (nullable column, no backfill needed), so it does not require the table
+/// rebuild used for CHECK-constraint changes.
+fn migrate_attachment_source_path(conn: &Connection) -> SqliteResult<()> {
+    let has_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('inbox_attachments') WHERE name = 'source_path'",
+            [],
+            |row| row.get::<_, i32>(0).map(|count| count > 0),
+        )
+        .unwrap_or(false);
+    if has_column {
+        return Ok(());
+    }
+    conn.execute(
+        "ALTER TABLE inbox_attachments ADD COLUMN source_path TEXT",
+        [],
+    )?;
+    Ok(())
 }
 
 /// Rebuild the additive Inbox tables once for databases created before the
@@ -182,9 +213,9 @@ fn migrate_capture_kinds_schema(conn: &mut Connection) -> SqliteResult<()> {
                 id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
                 kind TEXT NOT NULL CHECK (kind IN ('image', 'file', 'audio', 'transcript')),
                 name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
-                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL, source_path TEXT
             );
-            INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filename, size_bytes, created_at FROM inbox_attachments_legacy;
+            INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filename, size_bytes, created_at, NULL FROM inbox_attachments_legacy;
             DROP TABLE inbox_attachments_legacy;
             DROP TABLE inbox_items_legacy;
             CREATE INDEX IF NOT EXISTS idx_inbox_items_captured_at ON inbox_items(captured_at DESC);
@@ -418,6 +449,7 @@ fn map_attachment(row: &rusqlite::Row<'_>) -> SqliteResult<InboxAttachment> {
         filename: row.get(5)?,
         size_bytes: row.get::<_, i64>(6)?.max(0) as u64,
         created_at: row.get(7)?,
+        source_path: row.get(8)?,
     })
 }
 
@@ -425,7 +457,7 @@ fn list_attachments(conn: &Connection, item_id: &str) -> Result<Vec<InboxAttachm
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, item_id, kind, name, mime_type, filename, size_bytes, created_at
+            SELECT id, item_id, kind, name, mime_type, filename, size_bytes, created_at, source_path
             FROM inbox_attachments
             WHERE item_id = ?
             ORDER BY created_at, id
@@ -602,6 +634,9 @@ fn prepare_attachment(
                 filename: storage_key,
                 size_bytes,
                 created_at: created_at.to_string(),
+                // Callers that archive an external source (voice capture) set
+                // this after the fact; assets-native writes leave it NULL.
+                source_path: None,
             },
             temporary_path,
             final_path,
@@ -829,7 +864,15 @@ pub fn capture_inbox_item(
             },
             &captured_at,
         ) {
-            Ok(attachment) => pending.push(attachment),
+            Ok(mut attachment) => {
+                // Record where the archived copy came from (F10). The voice
+                // recorder owns `audio/{session-id}.wav`; the assets copy is a
+                // fresh UUID, so without this link the original is unreachable
+                // for cleanup. Only the assets copy is stored in `filename`.
+                attachment.attachment.source_path =
+                    Some(path.to_string_lossy().into_owned());
+                pending.push(attachment);
+            }
             Err(error) => {
                 cleanup_pending(&pending);
                 return Err(error);
@@ -906,8 +949,8 @@ pub fn capture_inbox_item(
                 .execute(
                     r#"
                     INSERT INTO inbox_attachments
-                        (id, item_id, kind, name, mime_type, filename, size_bytes, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (id, item_id, kind, name, mime_type, filename, size_bytes, created_at, source_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                     params![
                         attachment.id,
@@ -917,7 +960,8 @@ pub fn capture_inbox_item(
                         attachment.mime_type,
                         attachment.filename,
                         attachment.size_bytes as i64,
-                        attachment.created_at
+                        attachment.created_at,
+                        attachment.source_path
                     ],
                 )
                 .map_err(|error| format!("Failed to save inbox attachment: {error}"))?;
@@ -1100,6 +1144,38 @@ fn item_attachment_filenames(conn: &Connection, item_id: &str) -> Result<Vec<Str
         .map_err(|error| format!("Failed to collect attachments: {error}"))
 }
 
+/// Original source paths recorded for an item's attachments (F10).
+///
+/// A voice recording is captured from `audio/{session-id}.wav` but archived in
+/// `assets/` under a fresh UUID, so the assets filename alone can never locate
+/// the recorder's original. This returns the recorded absolute source paths so
+/// cleanup can remove the originals too.
+fn item_attachment_source_paths(conn: &Connection, item_id: &str) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_path FROM inbox_attachments \
+             WHERE item_id = ? AND source_path IS NOT NULL \
+             ORDER BY created_at, id",
+        )
+        .map_err(|error| format!("Failed to prepare source path query: {error}"))?;
+    let rows = stmt
+        .query_map([item_id], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Failed to query source paths: {error}"))?;
+    rows.collect::<SqliteResult<Vec<_>>>()
+        .map_err(|error| format!("Failed to collect source paths: {error}"))
+}
+
+/// Remove an absolute source file recorded for an attachment. Best-effort and
+/// restricted to regular files so a bad stored path can never remove a
+/// directory.
+fn remove_source_file(path: &str) -> bool {
+    let source = Path::new(path);
+    let is_regular = fs::symlink_metadata(source)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false);
+    is_regular && fs::remove_file(source).is_ok()
+}
+
 /// Remove stored attachment files. Best-effort: a file that is already gone or
 /// locked must not block the database delete. Path traversal names are ignored.
 fn remove_attachment_files(directory: &Path, filenames: &[String]) -> usize {
@@ -1133,6 +1209,7 @@ pub fn delete_inbox_item(app: tauri::AppHandle, id: String) -> Result<InboxState
         .map_err(|error| format!("获取录音目录失败: {error}"))?
         .join("audio");
     let filenames = item_attachment_filenames(&conn, &id)?;
+    let source_paths = item_attachment_source_paths(&conn, &id)?;
     let converted_note_id: Option<String> = conn
         .query_row(
             "SELECT converted_note_id FROM inbox_items WHERE id = ?",
@@ -1162,6 +1239,12 @@ pub fn delete_inbox_item(app: tauri::AppHandle, id: String) -> Result<InboxState
     if converted_note_id.is_none() {
         remove_attachment_files(&assets, &filenames);
         remove_attachment_files(&recording_dir, &filenames);
+        // Remove the recorder's originals too (F10). The assets copy above is a
+        // fresh UUID and cannot reach `audio/{session-id}.wav`; the recorded
+        // source_path is the only link back to the original recording.
+        for source_path in &source_paths {
+            remove_source_file(source_path);
+        }
     }
 
     Ok(InboxStateResponse {
@@ -1598,5 +1681,89 @@ mod tests {
         let mut filenames = item_attachment_filenames(&conn, "item-a").expect("list filenames");
         filenames.sort();
         assert_eq!(filenames, vec!["item-a-transcript.txt", "item-a.wav"]);
+    }
+
+    // F10: the archived asset copy gets a fresh UUID, so the recorder's
+    // original `audio/{id}.wav` is only reachable through the recorded
+    // source_path. Capturing must record it, and cleanup must remove it.
+    #[test]
+    fn audio_source_path_links_original_and_cleanup_removes_it() {
+        let conn = memory_db();
+        let dir = std::env::temp_dir().join(format!("efh-f10-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let original = dir.join("recording.wav");
+        fs::write(&original, b"RIFF....WAVE").expect("write original recording");
+
+        conn.execute(
+            "INSERT INTO inbox_items (id, kind, title, content, source, context, captured_at) VALUES ('item-1', 'audio', '', '', 'voice', '', '2026-10-19T09:00:00Z')",
+            [],
+        )
+        .expect("insert item");
+        // The archived copy lives in assets/ under a fresh UUID; the original
+        // path is recorded separately.
+        conn.execute(
+            "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at, source_path) VALUES ('att-1', 'item-1', 'audio', 'recording.wav', 'audio/wav', 'uuid-copy.wav', 12, '2026-10-19T09:00:00Z', ?1)",
+            params![original.to_string_lossy().to_string()],
+        )
+        .expect("insert attachment with source path");
+
+        // The link is queryable for cleanup.
+        let sources = item_attachment_source_paths(&conn, "item-1").expect("query source paths");
+        assert_eq!(sources, vec![original.to_string_lossy().to_string()]);
+
+        // Cleanup removes the recorder's original by its recorded path.
+        assert!(original.exists());
+        assert!(remove_source_file(&original.to_string_lossy()));
+        assert!(!original.exists(), "original recording must be removed");
+
+        // A missing or non-file source is a safe no-op, never a panic.
+        assert!(!remove_source_file(&dir.to_string_lossy()));
+        assert!(!remove_source_file("/nonexistent/recording.wav"));
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    // F10: an additive migration must give pre-existing databases the
+    // source_path column without disturbing rows already stored.
+    #[test]
+    fn legacy_attachments_gain_source_path_column() {
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE inbox_items (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file')),
+                title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
+                captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL, converted_note_id TEXT DEFAULT NULL
+            );
+            CREATE TABLE inbox_attachments (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+                name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
+                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+            );
+            INSERT INTO inbox_items (id, kind, captured_at) VALUES ('legacy', 'file', '2026-01-01T00:00:00Z');
+            INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at)
+                VALUES ('att', 'legacy', 'file', 'a.txt', 'text/plain', 'a.txt', 4, '2026-01-01T00:00:00Z');
+            "#,
+        )
+        .expect("seed legacy schema");
+
+        init_db(&mut conn).expect("additive migration should run");
+
+        // The column exists and legacy rows read as NULL source.
+        let sources = item_attachment_source_paths(&conn, "legacy").expect("query after migration");
+        assert!(sources.is_empty(), "legacy attachments have no source path");
+
+        // New-style rows can still be inserted with an explicit source.
+        conn.execute(
+            "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at, source_path) VALUES ('att2', 'legacy', 'file', 'b.txt', 'text/plain', 'b.txt', 4, '2026-01-01T00:00:00Z', '/tmp/b.txt')",
+            [],
+        )
+        .expect("insert with source after migration");
+        let sources = item_attachment_source_paths(&conn, "legacy").expect("query after insert");
+        assert_eq!(sources, vec!["/tmp/b.txt".to_string()]);
     }
 }
