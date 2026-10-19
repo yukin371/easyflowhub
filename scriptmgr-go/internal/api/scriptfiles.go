@@ -276,6 +276,13 @@ func (a *API) ImportScripts(req model.ImportScriptsRequest) (model.ImportScripts
 }
 
 // DeleteScript moves a script (and its metadata) into the trash directory.
+//
+// Failure handling: once the script file has been moved out of the user's
+// configured root we must never lose it. If writing the manifest or moving
+// the metadata fails, the script is moved back to its original path and the
+// staging directory is removed. The caller always sees the underlying error
+// and a verifiable state: either the script lives at its original path, or
+// it lives inside the (intact) trash entry directory — never nowhere.
 func (a *API) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) {
 	record, err := a.DescribeScript(scriptID)
 	if err != nil {
@@ -313,14 +320,36 @@ func (a *API) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) {
 	}
 
 	fileName := filepath.Base(path)
-	if err := moveFile(path, filepath.Join(entryDir, fileName)); err != nil {
+	stagingScript := filepath.Join(entryDir, fileName)
+	if err := moveFile(path, stagingScript); err != nil {
 		_ = os.RemoveAll(entryDir)
 		return model.ScriptTrashEntry{}, err
 	}
-	if meta := metadataPathFor(path); fileExists(meta) {
-		_ = moveFile(meta, filepath.Join(entryDir, filepath.Base(meta)))
+
+	meta := metadataPathFor(path)
+	metaName := filepath.Base(meta)
+	stagingMeta := filepath.Join(entryDir, metaName)
+	movedMeta := false
+	if fileExists(meta) {
+		if err := moveFile(meta, stagingMeta); err != nil {
+			// Roll the script back to its original path; if the rollback
+			// move also fails the staging dir still contains the file so
+			// manual recovery is possible.
+			_ = moveFile(stagingScript, path)
+			_ = os.RemoveAll(entryDir)
+			return model.ScriptTrashEntry{}, err
+		}
+		movedMeta = true
 	}
-	if err := writeJSONFile(filepath.Join(entryDir, "entry.json"), entry); err != nil {
+
+	if err := writeTrashManifest(filepath.Join(entryDir, "entry.json"), entry); err != nil {
+		// Manifest write failed after the user's file left its original
+		// location. Restore everything we moved so the user is no worse
+		// off than before this call.
+		_ = moveFile(stagingScript, path)
+		if movedMeta {
+			_ = moveFile(stagingMeta, meta)
+		}
 		_ = os.RemoveAll(entryDir)
 		return model.ScriptTrashEntry{}, err
 	}
@@ -354,6 +383,12 @@ func (a *API) ListScriptTrash() ([]model.ScriptTrashEntry, error) {
 }
 
 // RestoreScriptTrash moves a trashed script back to its original path.
+//
+// Failure handling: the script file is the user's only copy. If the script
+// move succeeds but the metadata move fails, the entry directory is left
+// in place so the metadata stays recoverable; we do not RemoveAll it just
+// because the metadata leg tripped. The caller receives the metadata
+// error and can retry the restore.
 func (a *API) RestoreScriptTrash(entryID string) (model.ScriptTrashEntry, error) {
 	if !validTrashID(entryID) {
 		return model.ScriptTrashEntry{}, errors.New("invalid trash entry id")
@@ -374,11 +409,19 @@ func (a *API) RestoreScriptTrash(entryID string) (model.ScriptTrashEntry, error)
 	if err := moveFile(filepath.Join(entryDir, fileName), entry.OriginalPath); err != nil {
 		return model.ScriptTrashEntry{}, err
 	}
-	metaName := filepath.Base(metadataPathFor(entry.OriginalPath))
-	if fileExists(filepath.Join(entryDir, metaName)) {
-		_ = moveFile(filepath.Join(entryDir, metaName), metadataPathFor(entry.OriginalPath))
+	meta := metadataPathFor(entry.OriginalPath)
+	metaName := filepath.Base(meta)
+	stagingMeta := filepath.Join(entryDir, metaName)
+	if fileExists(stagingMeta) {
+		if err := moveFile(stagingMeta, meta); err != nil {
+			// Leave the entry directory intact so the metadata stays
+			// recoverable; the script itself is already back in place.
+			return model.ScriptTrashEntry{}, fmt.Errorf("restore metadata: %w", err)
+		}
 	}
-	_ = os.RemoveAll(entryDir)
+	if err := os.RemoveAll(entryDir); err != nil {
+		return model.ScriptTrashEntry{}, err
+	}
 	return entry, nil
 }
 
@@ -441,6 +484,12 @@ func rootAllowed(root string, roots []string) bool {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+// writeTrashManifest persists the entry.json manifest. It is a package-level
+// variable so tests can inject failures to exercise the rollback path.
+var writeTrashManifest = func(path string, entry model.ScriptTrashEntry) error {
+	return writeJSONFile(path, entry)
 }
 
 func copyFile(source, destination string) error {

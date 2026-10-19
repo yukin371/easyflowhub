@@ -1,9 +1,11 @@
 package api
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"scriptmgr/internal/config"
 	"scriptmgr/internal/discovery"
@@ -155,6 +157,122 @@ func TestDeleteRestoreAndPurgeScript(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("trash should be empty, got %+v", entries)
 	}
+}
+
+func TestDeleteScriptManifestFailureRestoresOriginal(t *testing.T) {
+	// F02: if writing entry.json fails after the script has already been
+	// moved out of the user's root, the script must be moved back to its
+	// original path. The original code used `os.RemoveAll(entryDir)` which
+	// permanently lost the only copy.
+	instance, root := newScriptFSTestAPI(t)
+	record, err := instance.CreateScript(model.CreateScriptRequest{Root: root, Filename: "keepme.py", Content: "print(1)\n"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	originalContent, err := os.ReadFile(record.Path)
+	if err != nil {
+		t.Fatalf("read original: %v", err)
+	}
+
+	// Inject a manifest write failure for the duration of this test.
+	original := writeTrashManifest
+	writeTrashManifest = func(string, model.ScriptTrashEntry) error {
+		return errors.New("injected manifest write failure")
+	}
+	t.Cleanup(func() { writeTrashManifest = original })
+
+	if _, err := instance.DeleteScript(record.ID); err == nil {
+		t.Fatal("expected injected failure to surface")
+	}
+
+	// The original file must still exist with the original content.
+	got, err := os.ReadFile(record.Path)
+	if err != nil {
+		t.Fatalf("script was not restored to its original path: %v", err)
+	}
+	if string(got) != string(originalContent) {
+		t.Fatalf("restored content mismatch: got %q want %q", got, originalContent)
+	}
+	// Trash must not contain an orphan entry without its manifest.
+	entries, err := instance.ListScriptTrash()
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("trash should be empty after rollback, got %+v", entries)
+	}
+	// Restore the writer so the retry below uses the real implementation.
+	writeTrashManifest = original
+	entry, err := instance.DeleteScript(record.ID)
+	if err != nil {
+		t.Fatalf("retry delete: %v", err)
+	}
+	if !fileExists(filepath.Join(instance.scriptTrashRoot(), entry.ID, filepath.Base(record.Path))) {
+		t.Fatal("script should be in trash after retry")
+	}
+}
+
+func TestRestoreScriptTrashMetadataFailureLeavesEntryIntact(t *testing.T) {
+	// F02: when restoring a script whose metadata cannot be moved back to
+	// its original path, the entry directory must remain on disk so the
+	// metadata is recoverable. The script itself is already back in place.
+	instance, root := newScriptFSTestAPI(t)
+	record, err := instance.CreateScript(model.CreateScriptRequest{
+		Root:     root,
+		Filename: "restore.py",
+		Content:  "print(2)\n",
+		Name:     "restorable",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	metaPath := metadataPathFor(record.Path)
+	if !fileExists(metaPath) {
+		t.Fatalf("expected metadata at %s after CreateScript", metaPath)
+	}
+
+	entry, err := instance.DeleteScript(record.ID)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Replace the original metadata path with a directory so the restore's
+	// moveFile falls back to copy+remove and both paths fail: the rename
+	// target is a directory and the copy+remove path uses O_EXCL.
+	// DeleteScript already moved the file away, so Remove may not find it.
+	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove meta file: %v", err)
+	}
+	if err := os.MkdirAll(metaPath, 0o755); err != nil {
+		t.Fatalf("seed meta path as a directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(metaPath) })
+
+	_, err = instance.RestoreScriptTrash(entry.ID)
+	if err == nil {
+		t.Fatal("expected metadata move failure to surface")
+	}
+	// Script must have been moved back to its original path even though
+	// the metadata move failed.
+	if !fileExists(record.Path) {
+		t.Fatal("script should have been restored to its original path")
+	}
+	// Entry directory must still exist so the metadata is recoverable.
+	entryDir := filepath.Join(instance.scriptTrashRoot(), entry.ID)
+	if info, err := os.Stat(entryDir); err != nil || !info.IsDir() {
+		t.Fatalf("entry directory should be preserved when metadata restore fails (stat=%v)", err)
+	}
+	// This test deliberately leaves files behind; remove them with a retry so
+	// a transient Windows handle does not fail the TempDir cleanup instead.
+	t.Cleanup(func() {
+		for attempt := 0; attempt < 5; attempt++ {
+			if err := os.RemoveAll(entryDir); err == nil {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		_ = os.RemoveAll(entryDir)
+	})
 }
 
 func TestEmptyScriptTrashReportsRemovedCount(t *testing.T) {
