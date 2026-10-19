@@ -82,7 +82,7 @@ fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Initialize the database schema
-fn init_db(conn: &Connection) -> SqliteResult<()> {
+pub(crate) fn init_db(conn: &Connection) -> SqliteResult<()> {
     // 首先创建表（如果不存在）
     conn.execute_batch(
         r#"
@@ -152,7 +152,7 @@ fn init_db(conn: &Connection) -> SqliteResult<()> {
 }
 
 /// Get or create a database connection
-fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
+pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     let conn = Connection::open(&path).map_err(|e| format!("Failed to open database: {}", e))?;
     init_db(&conn).map_err(|e| format!("Failed to initialize database: {}", e))?;
@@ -429,7 +429,7 @@ pub fn search_notes(
 }
 
 /// Get the assets directory path for images
-fn assets_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn assets_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_data = app
         .path()
         .app_data_dir()

@@ -24,6 +24,20 @@
         "visible": false,
         "skipTaskbar": false,
         "center": true
+      },
+      {
+        "label": "launcher",
+        "title": "EasyFlowHub Launcher",
+        "width": 564,
+        "height": 320,
+        "minWidth": 520,
+        "minHeight": 280,
+        "transparent": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "center": true
       }
     ],
     "security": {
@@ -42,6 +56,9 @@
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "../../scriptmgr-go/scriptmgr.exe": "scriptmgr.exe"
+    },
     "targets": ["nsis", "msi"],
     "icon": [
       "icons/32x32.png",

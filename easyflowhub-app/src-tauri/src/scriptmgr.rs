@@ -119,7 +119,7 @@ pub struct DescribeResponse {
 /// Order of resolution:
 /// 1. Development: ../../../scriptmgr-go/scriptmgr.exe (relative to src-tauri)
 /// 2. Production: bundled in resources directory next to the app
-fn resolve_scriptmgr_path(app: &tauri::AppHandle) -> Result<String, String> {
+pub(crate) fn resolve_scriptmgr_path(app: &tauri::AppHandle) -> Result<String, String> {
     // Get the directory containing the app executable
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {

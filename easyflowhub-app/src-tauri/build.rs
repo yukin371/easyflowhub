@@ -1,66 +1,71 @@
+use std::ffi::OsStr;
+use std::path::Path;
+use std::process::Command;
+
 fn main() {
-    // Build scriptmgr.exe before Tauri compilation
     build_scriptmgr();
     tauri_build::build()
 }
 
 fn build_scriptmgr() {
-    use std::process::Command;
-    use std::path::Path;
-
-    // Only build during release builds
-    if !std::env::var("PROFILE").map(|p| p == "release").unwrap_or(false) {
+    if std::env::var("PROFILE").as_deref() != Ok("release") {
         return;
     }
 
-    // Check if we should skip (already built or no Go toolchain)
-    if let Ok(skip) = std::env::var("SKIP_SCRIPTMGR_BUILD") {
-        if skip == "1" {
-            println!("cargo:warning=Skipping scriptmgr build (SKIP_SCRIPTMGR_BUILD=1)");
-            return;
-        }
-    }
-
-    // Find scriptmgr-go directory (parent of src-tauri)
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .expect("CARGO_MANIFEST_DIR must be set by Cargo");
     let scriptmgr_src = Path::new(&manifest_dir)
-        .parent() // src-tauri
-        .and_then(|p| p.parent()) // easyflowhub-app
-        .map(|p| p.join("scriptmgr-go"))
-        .unwrap_or_else(|| Path::new("..").join("scriptmgr-go"));
+        .parent()
+        .and_then(Path::parent)
+        .expect("scriptmgr-go must be a sibling of easyflowhub-app")
+        .join("scriptmgr-go");
 
-    let scriptmgr_exe = scriptmgr_src.join("scriptmgr.exe");
+    watch_go_inputs(&scriptmgr_src, false)
+        .unwrap_or_else(|error| panic!("failed to watch Go sidecar inputs: {error}"));
 
-    // Skip if already built and up-to-date
-    if scriptmgr_exe.exists() {
-        if let Ok(src_mtime) = std::fs::metadata(&scriptmgr_src.join("cmd").join("scriptmgr").join("main.go"))
-            .and_then(|m| m.modified())
-        {
-            if let Ok(dst_mtime) = std::fs::metadata(&scriptmgr_exe).and_then(|m| m.modified()) {
-                if dst_mtime > src_mtime {
-                    println!("cargo:warning=scriptmgr.exe already up-to-date");
-                    return;
-                }
-            }
-        }
-    }
-
-    println!("cargo:warning=Building scriptmgr.exe...");
+    println!("cargo:warning=Building scriptmgr.exe for release...");
     let output = Command::new("go")
         .args(["build", "-o", "scriptmgr.exe", "./cmd/scriptmgr"])
         .current_dir(&scriptmgr_src)
-        .output();
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run Go sidecar build: {error}"));
 
-    match output {
-        Ok(out) if out.status.success() => {
-            println!("cargo:warning=scriptmgr.exe built successfully");
+    if !output.status.success() {
+        panic!(
+            "Go sidecar build failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    println!("cargo:warning=scriptmgr.exe built successfully");
+}
+
+fn watch_go_inputs(directory: &Path, watch_directory: bool) -> std::io::Result<()> {
+    if watch_directory {
+        println!("cargo:rerun-if-changed={}", directory.display());
+    }
+
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if entry.file_name() != OsStr::new(".git") {
+                watch_go_inputs(&path, true)?;
+            }
+            continue;
         }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            eprintln!("cargo:warning=Failed to build scriptmgr: {}", stderr);
-        }
-        Err(e) => {
-            eprintln!("cargo:warning=Failed to run go build: {}", e);
+
+        let is_go_source = path.extension() == Some(OsStr::new("go"));
+        let is_module_file = matches!(
+            path.file_name().and_then(OsStr::to_str),
+            Some("go.mod" | "go.sum" | "go.work" | "go.work.sum")
+        );
+        if is_go_source || is_module_file {
+            println!("cargo:rerun-if-changed={}", path.display());
         }
     }
+
+    Ok(())
 }
