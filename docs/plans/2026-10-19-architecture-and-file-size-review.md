@@ -2,7 +2,7 @@
 
 > 审查日期：2026-10-19
 > 基线：`d1a95f0` 加本地工作区；包含原有 SettingsPanel、QuickNotePage、useAutoSave 和 smoke 脚本未提交改动
-> 状态：审查完成；阶段A（F01–F05）已于 2026-10-19 实施并通过故障注入/并发回归，F06–F14 与第 5 节拆分尚未实施
+> 状态：审查完成；阶段A（F01–F05）与阶段B（F06–F14，F11 除外）已于 2026-10-19 实施并通过故障注入/并发回归；F11 与第 5 节大文件拆分留待阶段C
 > 范围：`easyflowhub-app/src`、`easyflowhub-app/src-tauri/src`、`scriptmgr-go`、验证链及架构文档
 
 ## 1. 结论
