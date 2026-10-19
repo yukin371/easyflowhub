@@ -438,7 +438,26 @@ pub fn save_launcher_trigger_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, TranscriptionSettings, TranslationSettings};
+    use super::{
+        update_settings_with_conn, AppSettings, TranscriptionSettings, TranslationSettings,
+    };
+    use rusqlite::{Connection, Result as SqliteResult};
+
+    fn settings_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        super::init_settings_table(&conn).expect("settings schema");
+        conn
+    }
+
+    fn stored_keys(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT key FROM settings ORDER BY key")
+            .expect("prepare");
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query");
+        rows.collect::<SqliteResult<Vec<_>>>().expect("collect")
+    }
 
     #[test]
     fn legacy_settings_default_translation_preferences() {
@@ -501,6 +520,53 @@ mod tests {
         assert_eq!(restored.translation.model, "my-relay-model");
         assert!(!saved.contains("api_key"));
     }
+
+    // F08: every domain is written in one transaction, so a failure on the
+    // last domain must roll back the earlier ones instead of leaving the
+    // settings table half-updated.
+    #[test]
+    fn settings_transaction_rolls_back_all_domains_on_midway_failure() {
+        let mut conn = settings_conn();
+
+        // Persist an initial state that the failed save must not clobber.
+        let baseline = AppSettings::default();
+        update_settings_with_conn(&mut conn, &baseline).expect("baseline save");
+        let before = stored_keys(&conn);
+        assert!(!before.is_empty(), "baseline should persist every domain");
+
+        // Block only the final domain ('developer') so the first seven
+        // upserts succeed inside the transaction before the failure.
+        conn.execute_batch(
+            concat!(
+                "CREATE TRIGGER fail_developer BEFORE INSERT ON settings ",
+                "WHEN NEW.key = 'developer' BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+            ),
+        )
+        .expect("install failure trigger");
+
+        let mut next = AppSettings::default();
+        next.quick_note.width = 1234;
+        let err = update_settings_with_conn(&mut conn, &next)
+            .expect_err("midway failure should surface");
+        assert!(err.contains("developer"), "error should name the failed domain: {err}");
+
+        // Nothing was committed: the table still holds only the baseline keys.
+        let after = stored_keys(&conn);
+        assert_eq!(before, after, "rollback must not leave partial domains");
+
+        // And the baseline value for an early domain is untouched, proving the
+        // in-transaction upsert of quick_note was rolled back.
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'quick_note'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("quick_note row");
+        let parsed: super::QuickNoteSettings =
+            serde_json::from_str(&value).expect("quick_note should parse");
+        assert_ne!(parsed.width, 1234, "rolled-back write must not be visible");
+    }
 }
 
 /// Update application settings
@@ -509,106 +575,89 @@ pub fn update_settings(
     app: tauri::AppHandle,
     settings: AppSettings,
 ) -> Result<UpdateSettingsResponse, String> {
-    let conn = get_connection(&app)?;
-    let now = Utc::now().to_rfc3339();
-
-    // Upsert quick_note settings
-    let quick_note_json = serde_json::to_string(&settings.quick_note)
-        .map_err(|e| format!("Failed to serialize quick_note settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('quick_note', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![quick_note_json, now],
-    )
-    .map_err(|e| format!("Failed to save quick_note settings: {}", e))?;
-
-    // Upsert trash settings
-    let trash_json = serde_json::to_string(&settings.trash)
-        .map_err(|e| format!("Failed to serialize trash settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('trash', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![trash_json, now],
-    )
-    .map_err(|e| format!("Failed to save trash settings: {}", e))?;
-
-    // Upsert editor settings
-    let editor_json = serde_json::to_string(&settings.editor)
-        .map_err(|e| format!("Failed to serialize editor settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('editor', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![editor_json, now],
-    )
-    .map_err(|e| format!("Failed to save editor settings: {}", e))?;
-
-    // Upsert todo settings
-    let todo_json = serde_json::to_string(&settings.todo)
-        .map_err(|e| format!("Failed to serialize todo settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('todo', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![todo_json, now],
-    )
-    .map_err(|e| format!("Failed to save todo settings: {}", e))?;
-
-    // Upsert launcher trigger settings
-    let launcher_trigger_json = serde_json::to_string(&settings.launcher_trigger)
-        .map_err(|e| format!("Failed to serialize launcher trigger settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('launcher_trigger', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![launcher_trigger_json, now],
-    )
-    .map_err(|e| format!("Failed to save launcher trigger settings: {}", e))?;
-
-    // Upsert translation preferences. Provider credentials remain owned by Relay.
-    let translation_json = serde_json::to_string(&settings.translation)
-        .map_err(|e| format!("Failed to serialize translation settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('translation', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![translation_json, now],
-    )
-    .map_err(|e| format!("Failed to save translation settings: {}", e))?;
-
-    // Upsert transcription preferences. Provider credentials remain owned by Relay.
-    let transcription_json = serde_json::to_string(&settings.transcription)
-        .map_err(|e| format!("Failed to serialize transcription settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('transcription', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![transcription_json, now],
-    )
-    .map_err(|e| format!("Failed to save transcription settings: {}", e))?;
-
-    let developer_json = serde_json::to_string(&settings.developer)
-        .map_err(|e| format!("Failed to serialize developer settings: {}", e))?;
-    conn.execute(
-        r#"
-        INSERT INTO settings (key, value, updated_at) VALUES ('developer', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        "#,
-        rusqlite::params![developer_json, now],
-    )
-    .map_err(|e| format!("Failed to save developer settings: {}", e))?;
-
+    let mut conn = get_connection(&app)?;
+    update_settings_with_conn(&mut conn, &settings)?;
     Ok(UpdateSettingsResponse {
         ok: true,
         settings,
     })
+}
+
+/// Persist every settings domain inside a single transaction.
+///
+/// Split out from the command so the all-or-nothing guarantee is testable
+/// against a plain connection (F08).
+fn update_settings_with_conn(
+    conn: &mut Connection,
+    settings: &AppSettings,
+) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+
+    // Every domain is persisted inside one transaction so a failure part-way
+    // through cannot leave the settings table half-updated (F08). Serialize
+    // everything up front so a serialization error aborts before any write.
+    let domains: [(&str, String); 8] = [
+        (
+            "quick_note",
+            serde_json::to_string(&settings.quick_note)
+                .map_err(|e| format!("Failed to serialize quick_note settings: {}", e))?,
+        ),
+        (
+            "trash",
+            serde_json::to_string(&settings.trash)
+                .map_err(|e| format!("Failed to serialize trash settings: {}", e))?,
+        ),
+        (
+            "editor",
+            serde_json::to_string(&settings.editor)
+                .map_err(|e| format!("Failed to serialize editor settings: {}", e))?,
+        ),
+        (
+            "todo",
+            serde_json::to_string(&settings.todo)
+                .map_err(|e| format!("Failed to serialize todo settings: {}", e))?,
+        ),
+        (
+            "launcher_trigger",
+            serde_json::to_string(&settings.launcher_trigger)
+                .map_err(|e| format!("Failed to serialize launcher trigger settings: {}", e))?,
+        ),
+        // Provider credentials remain owned by Relay.
+        (
+            "translation",
+            serde_json::to_string(&settings.translation)
+                .map_err(|e| format!("Failed to serialize translation settings: {}", e))?,
+        ),
+        // Provider credentials remain owned by Relay.
+        (
+            "transcription",
+            serde_json::to_string(&settings.transcription)
+                .map_err(|e| format!("Failed to serialize transcription settings: {}", e))?,
+        ),
+        (
+            "developer",
+            serde_json::to_string(&settings.developer)
+                .map_err(|e| format!("Failed to serialize developer settings: {}", e))?,
+        ),
+    ];
+
+    let transaction = conn
+        .transaction()
+        .map_err(|e| format!("Failed to begin settings transaction: {}", e))?;
+    for (key, value) in &domains {
+        transaction
+            .execute(
+                r#"
+                INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![key, value, now],
+            )
+            .map_err(|e| format!("Failed to save {} settings: {}", key, e))?;
+    }
+    transaction
+        .commit()
+        .map_err(|e| format!("Failed to commit settings transaction: {}", e))?;
+
+    Ok(())
 }
