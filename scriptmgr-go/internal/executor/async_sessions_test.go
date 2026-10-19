@@ -1,13 +1,93 @@
 package executor
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"scriptmgr/internal/config"
 	"scriptmgr/internal/model"
 	"scriptmgr/internal/store"
 )
+
+func TestListSessionsDoesNotReapFreshPIDZeroStartup(t *testing.T) {
+	st := store.New(config.Config{StateDir: t.TempDir()})
+	m := NewAsyncManager(st, nil)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := st.AppendSession(model.SessionRecord{
+		SessionID: "sess-starting", ScriptID: "s1", Status: "running",
+		PID: 0, StartedAt: now, LastChecked: now,
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	sessions, err := m.ListSessions()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Status != "running" {
+		t.Fatalf("fresh PID=0 startup should remain running, got %+v", sessions)
+	}
+}
+
+func TestListSessionsReapsStalePIDZeroStartup(t *testing.T) {
+	st := store.New(config.Config{StateDir: t.TempDir()})
+	m := NewAsyncManager(st, nil)
+	old := time.Now().Add(-sessionStartupGrace - time.Second).UTC().Format(time.RFC3339)
+	if err := st.AppendSession(model.SessionRecord{
+		SessionID: "sess-stale", ScriptID: "s1", Status: "running",
+		PID: 0, StartedAt: old, LastChecked: old,
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	sessions, err := m.ListSessions()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Status != "failed" {
+		t.Fatalf("stale PID=0 startup should fail, got %+v", sessions)
+	}
+}
+
+func TestFailStartCompensatesPersistedSession(t *testing.T) {
+	st := store.New(config.Config{StateDir: t.TempDir()})
+	m := NewAsyncManager(st, nil)
+	session := model.SessionRecord{
+		SessionID: "sess-fail", ScriptID: "s1", Status: "running",
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := st.AppendSession(session); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := st.CreateTask(session.SessionID, session.ScriptID, "{}"); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	cause := errors.New("process setup failed")
+	if err := m.failStart(session, cause); !errors.Is(err, cause) {
+		t.Fatalf("failStart should preserve cause, got %v", err)
+	}
+	updated, err := st.GetSession(session.SessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if updated.Status != "failed" || updated.ExitCode == nil || *updated.ExitCode != 1 {
+		t.Fatalf("session was not compensated: %+v", updated)
+	}
+	task, err := st.GetTask(session.SessionID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.Status != "failed" {
+		t.Fatalf("task was not compensated: %+v", task)
+	}
+	if task.Error != cause.Error() {
+		t.Fatalf("task should retain startup cause, got %q", task.Error)
+	}
+}
 
 // F01: a "running" record whose worker died without writing a terminal state
 // must be reconciled to failed on read, persisted per-record, and mirrored
@@ -98,6 +178,20 @@ func TestCancelFinishedSessionDoesNotKill(t *testing.T) {
 	}
 	if session.Status != "success" {
 		t.Fatalf("terminal state must not be overwritten by cancel, got %q", session.Status)
+	}
+}
+
+func TestCancelFreshStartupDoesNotTargetPIDZero(t *testing.T) {
+	st := store.New(config.Config{StateDir: t.TempDir()})
+	m := NewAsyncManager(st, nil)
+	if err := st.AppendSession(model.SessionRecord{
+		SessionID: "sess-starting", ScriptID: "s1", Status: "running", PID: 0,
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := m.Cancel("sess-starting"); err == nil || !strings.Contains(err.Error(), "still starting") {
+		t.Fatalf("expected explicit startup error, got %v", err)
 	}
 }
 

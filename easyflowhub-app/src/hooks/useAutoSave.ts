@@ -193,8 +193,20 @@ export function useAutoSave(options: UseAutoSaveOptions) {
     setSaveError('');
   }, []);
 
+  const invalidateSaveSession = useCallback(() => {
+    // A note switch must create a hard boundary for callbacks from the
+    // previous editor session. The network request cannot be cancelled, but
+    // its response will fail the token check in `persistNow`.
+    tokenRef.current += 1;
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
+      tokenRef.current += 1;
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
@@ -208,5 +220,6 @@ export function useAutoSave(options: UseAutoSaveOptions) {
     scheduleSave,
     flushSave,
     resetSaveFeedback,
+    invalidateSaveSession,
   };
 }

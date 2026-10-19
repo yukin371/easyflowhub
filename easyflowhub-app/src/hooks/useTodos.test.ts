@@ -135,6 +135,26 @@ describe('useTodos (F05)', () => {
     expect(notesApi.listNotes).toHaveBeenCalledTimes(2);
   });
 
+  it('recognizes a raw string CAS conflict from Tauri', async () => {
+    vi.mocked(notesApi.listNotes).mockResolvedValue([createNoteFixture()]);
+    vi.mocked(notesApi.getNote).mockResolvedValue(createNoteFixture());
+    vi.mocked(notesApi.saveNote).mockRejectedValue(
+      'note_conflict: note-1 was modified by another window since it was read',
+    );
+
+    const { result } = renderHook(() => useTodos());
+    await waitFor(() => expect(result.current.todos).toHaveLength(2));
+
+    let outcome: { ok: boolean; failure?: string } | undefined;
+    await act(async () => {
+      outcome = await result.current.toggleTodo(result.current.todos[0]);
+    });
+
+    expect(outcome?.ok).toBe(false);
+    expect(outcome?.failure).toBe('stale');
+    expect(notesApi.listNotes).toHaveBeenCalledTimes(2);
+  });
+
   it('reports missing when the todo was deleted in another window', async () => {
     vi.mocked(notesApi.listNotes).mockResolvedValue([createNoteFixture()]);
     vi.mocked(notesApi.getNote).mockResolvedValue(
@@ -174,5 +194,37 @@ describe('useTodos (F05)', () => {
         expected_updated_at: '2026-10-19T00:00:00.000Z',
       }),
     );
+  });
+
+  it('serializes same-context inbox initialization', async () => {
+    let inbox: Note | null = null;
+    const created = createNoteFixture({ id: 'inbox-1', title: '', content: '' });
+    vi.mocked(notesApi.listNotes).mockImplementation(async () => (inbox ? [inbox] : []));
+    vi.mocked(notesApi.createNote).mockResolvedValue(created);
+    vi.mocked(notesApi.getNote).mockImplementation(async () => inbox);
+    vi.mocked(notesApi.saveNote).mockImplementation(async (input) => {
+      inbox = {
+        ...(inbox ?? created),
+        title: input.title ?? inbox?.title ?? '',
+        content: input.content ?? inbox?.content ?? '',
+        tags: input.tags ?? inbox?.tags ?? '',
+      };
+      return inbox;
+    });
+
+    const { result } = renderHook(() => useTodos());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await Promise.all([
+        result.current.createTodo('first'),
+        result.current.createTodo('second'),
+      ]);
+    });
+
+    expect(notesApi.createNote).toHaveBeenCalledTimes(1);
+    const finalInbox = inbox as Note | null;
+    expect(finalInbox?.content).toContain('first');
+    expect(finalInbox?.content).toContain('second');
   });
 });

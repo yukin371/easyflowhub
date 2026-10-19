@@ -239,7 +239,15 @@ function NotesArchivePanel() {
     () => notes.find((note) => note.id === editingNoteId) ?? null,
     [editingNoteId, notes]
   );
-  const { saveState, saveError, scheduleSave, flushSave, resetSaveFeedback } = useAutoSave({
+  const openNoteRequestRef = useRef(0);
+  const {
+    saveState,
+    saveError,
+    scheduleSave,
+    flushSave,
+    resetSaveFeedback,
+    invalidateSaveSession,
+  } = useAutoSave({
     delayMs: AUTOSAVE_DELAY,
     onSaved: (updated) => {
       setNotes((prev) => prev.map((note) => (note.id === updated.id ? updated : note)));
@@ -299,7 +307,22 @@ function NotesArchivePanel() {
     },
   });
 
-  const openNote = useCallback((note: Note) => {
+  const openNote = useCallback(async (note: Note) => {
+    const requestId = ++openNoteRequestRef.current;
+
+    // Navigation can arrive from another window while the current note still
+    // has a debounced or in-flight save. Persist that draft before changing
+    // the editor identity, then invalidate late responses from the old
+    // session so they cannot repopulate the new note's draft.
+    if (editingNoteId && editingNoteId !== note.id) {
+      await flushSave(currentPersistParams);
+      invalidateSaveSession();
+    }
+
+    if (requestId !== openNoteRequestRef.current) {
+      return;
+    }
+
     setEditingNoteId(note.id);
     setDraftTitle(note.title);
     setDraftContent(note.content, true);
@@ -307,12 +330,12 @@ function NotesArchivePanel() {
     clearDraftHistory();
     resetSaveFeedback();
     inspectBackup(note);
-  }, [clearDraftHistory, inspectBackup, resetSaveFeedback, setDraftContent]);
+  }, [clearDraftHistory, currentPersistParams, editingNoteId, flushSave, inspectBackup, invalidateSaveSession, resetSaveFeedback, setDraftContent]);
 
   const openNoteById = useCallback(async (noteId: string) => {
     const existing = notes.find((note) => note.id === noteId);
     if (existing) {
-      openNote(existing);
+      await openNote(existing);
       return;
     }
 
@@ -323,7 +346,7 @@ function NotesArchivePanel() {
       }
 
       setNotes((prev) => (prev.some((item) => item.id === note.id) ? prev : [note, ...prev]));
-      openNote(note);
+      await openNote(note);
     } catch (error) {
       console.error('Failed to open note by id:', error);
     }
@@ -332,11 +355,12 @@ function NotesArchivePanel() {
   const closeEditor = useCallback(async () => {
     flushDraftHistory();
     await flushSave(currentPersistParams);
+    invalidateSaveSession();
     setEditingNoteId(null);
     clearDraftHistory();
     resetSaveFeedback();
     clearBackupDraft();
-  }, [clearBackupDraft, clearDraftHistory, currentPersistParams, flushDraftHistory, flushSave, resetSaveFeedback]);
+  }, [clearBackupDraft, clearDraftHistory, currentPersistParams, flushDraftHistory, flushSave, invalidateSaveSession, resetSaveFeedback]);
 
   useEffect(() => {
     const handleOpenNote = (event: Event) => {
@@ -439,7 +463,7 @@ function NotesArchivePanel() {
     try {
       const note = await createNote();
       setNotes((prev) => [note, ...prev]);
-      openNote(note);
+      await openNote(note);
     } catch (err) {
       console.error('Failed to create note:', err);
     }

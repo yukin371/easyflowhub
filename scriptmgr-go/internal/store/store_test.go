@@ -221,3 +221,46 @@ func TestSessionsLockHeldTimeoutsCleanly(t *testing.T) {
 		t.Fatalf("gave up too early after %v, want ~%v", elapsed, sessionsLockWait)
 	}
 }
+
+func TestConcurrentHistoryAppendsPreserveAllEntries(t *testing.T) {
+	s := newTestStore(t)
+	const writers = 24
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := s.AppendHistory(model.HistoryEntry{
+				HistoryID: fmt.Sprintf("history-%02d", i),
+				ScriptID:  fmt.Sprintf("script-%02d", i),
+				Status:    "success",
+			}); err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+
+	entries, err := s.LoadHistory()
+	if err != nil {
+		t.Fatalf("load history: %v", err)
+	}
+	if len(entries) != writers {
+		t.Fatalf("expected %d history entries, got %d", writers, len(entries))
+	}
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		seen[entry.HistoryID] = true
+	}
+	for i := 0; i < writers; i++ {
+		if !seen[fmt.Sprintf("history-%02d", i)] {
+			t.Errorf("missing history-%02d", i)
+		}
+	}
+}

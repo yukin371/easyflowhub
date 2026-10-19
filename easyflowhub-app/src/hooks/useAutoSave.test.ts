@@ -201,6 +201,39 @@ describe('useAutoSave', () => {
     }
   });
 
+  it('invalidating a session drops a late response from the previous note', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveSlow: ((value: Note) => void) | null = null;
+      vi.mocked(notesApi.saveNote).mockReset();
+      vi.mocked(notesApi.saveNote).mockImplementationOnce(
+        () =>
+          new Promise<Note>((resolve) => {
+            resolveSlow = resolve;
+          })
+      );
+
+      const { result, onSaved } = await renderAutoSave();
+      await act(async () => {
+        result.current.scheduleSave({ noteId: 'n1', title: 'A', content: 'A', tags: '' });
+        await vi.runAllTimersAsync();
+      });
+      expect(notesApi.saveNote).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        result.current.invalidateSaveSession();
+        resolveSlow?.(savedNote);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(onSaved).not.toHaveBeenCalled();
+      expect(localStorage.getItem('easyflowhub_note_autosave_n1')).toContain('A');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('scheduleSave cancels a previously scheduled but unfired timer', async () => {
     // F04: rapid edits should not enqueue multiple persists; only the latest
     // scheduleSave's content should reach saveNote.

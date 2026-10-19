@@ -62,15 +62,17 @@ func (s *Store) SaveHistory(entries []model.HistoryEntry) error {
 }
 
 func (s *Store) AppendHistory(entry model.HistoryEntry) error {
-	entries, err := s.LoadHistory()
-	if err != nil {
-		return err
-	}
-	entries = append(entries, entry)
-	if len(entries) > 200 {
-		entries = entries[len(entries)-200:]
-	}
-	return s.SaveHistory(entries)
+	return s.withHistoryLock(func() error {
+		entries, err := s.LoadHistory()
+		if err != nil {
+			return err
+		}
+		entries = append(entries, entry)
+		if len(entries) > 200 {
+			entries = entries[len(entries)-200:]
+		}
+		return s.SaveHistory(entries)
+	})
 }
 
 func (s *Store) LoadFavorites() (model.FavoritesStore, error) {
@@ -117,13 +119,31 @@ const (
 // var so tests can shorten the wait instead of paying the production timeout.
 var sessionsLockWait = 5 * time.Second
 
+const historyLockStale = 10 * time.Second
+
+var historyLockWait = 5 * time.Second
+
 // withSessionsLock serialises a sessions.json read-modify-write cycle across
 // processes. The lock is a sibling lock file created with O_EXCL, which is
 // atomic on Windows and POSIX alike; stale locks from dead processes are
 // broken after sessionsLockStale.
 func (s *Store) withSessionsLock(fn func() error) error {
-	lockPath := filepath.Join(s.stateDir, "sessions.lock")
-	deadline := time.Now().Add(sessionsLockWait)
+	return s.withStateLock("sessions.lock", sessionsLockWait, sessionsLockStale, fn)
+}
+
+// withHistoryLock serialises history.json read-modify-write cycles across
+// the serve process and worker processes. History entries are appended by
+// several completion paths, so an unlocked load/append/save can lose entries.
+func (s *Store) withHistoryLock(fn func() error) error {
+	return s.withStateLock("history.lock", historyLockWait, historyLockStale, fn)
+}
+
+// withStateLock serialises a state-file mutation across processes. The lock
+// is a sibling file created with O_EXCL, which is atomic on Windows and POSIX
+// alike; stale locks from crashed processes are broken after staleAfter.
+func (s *Store) withStateLock(name string, wait, staleAfter time.Duration, fn func() error) error {
+	lockPath := filepath.Join(s.stateDir, name)
+	deadline := time.Now().Add(wait)
 	var lastErr error
 	for {
 		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
@@ -136,15 +156,15 @@ func (s *Store) withSessionsLock(fn func() error) error {
 		// is deleting the lock file mid-handoff; that means "busy", not
 		// "broken", so it joins ErrExist on the retry path.
 		if !errors.Is(err, os.ErrExist) && !os.IsPermission(err) {
-			return fmt.Errorf("acquire sessions lock: %w", err)
+			return fmt.Errorf("acquire %s: %w", name, err)
 		}
 		lastErr = err
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionsLockStale {
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > staleAfter {
 			_ = os.Remove(lockPath)
 			continue
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for the sessions lock (%w)", lastErr)
+			return fmt.Errorf("timed out waiting for %s (%w)", name, lastErr)
 		}
 		time.Sleep(sessionsLockRetry)
 	}

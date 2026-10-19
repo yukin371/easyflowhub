@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,6 +210,175 @@ func TestDeleteScriptManifestFailureRestoresOriginal(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(instance.scriptTrashRoot(), entry.ID, filepath.Base(record.Path))) {
 		t.Fatal("script should be in trash after retry")
+	}
+}
+
+func TestDeleteScriptManifestFailurePreservesStagingWhenRollbackFails(t *testing.T) {
+	instance, root := newScriptFSTestAPI(t)
+	record, err := instance.CreateScript(model.CreateScriptRequest{
+		Root:     root,
+		Filename: "keep-staged.py",
+		Content:  "print(3)\n",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	originalManifestWriter := writeTrashManifest
+	writeTrashManifest = func(string, model.ScriptTrashEntry) error {
+		return errors.New("injected manifest write failure")
+	}
+	originalMoveFile := moveFile
+	moveCalls := 0
+	moveFile = func(source, destination string) error {
+		moveCalls++
+		// The first call moves the script into staging. The second call is
+		// the rollback; force it to fail so the staging copy must survive.
+		if moveCalls == 2 {
+			return errors.New("injected rollback failure")
+		}
+		return originalMoveFile(source, destination)
+	}
+	t.Cleanup(func() {
+		writeTrashManifest = originalManifestWriter
+		moveFile = originalMoveFile
+	})
+
+	if _, err := instance.DeleteScript(record.ID); err == nil {
+		t.Fatal("expected manifest and rollback failures to surface")
+	}
+	if fileExists(record.Path) {
+		t.Fatal("original path should remain absent when rollback fails")
+	}
+
+	dirs, err := os.ReadDir(instance.scriptTrashRoot())
+	if err != nil {
+		t.Fatalf("read trash root: %v", err)
+	}
+	if len(dirs) != 1 || !dirs[0].IsDir() {
+		t.Fatalf("staging entry should be preserved, got %+v", dirs)
+	}
+	stagingScript := filepath.Join(instance.scriptTrashRoot(), dirs[0].Name(), filepath.Base(record.Path))
+	content, err := os.ReadFile(stagingScript)
+	if err != nil {
+		t.Fatalf("staged script should remain recoverable: %v", err)
+	}
+	if string(content) != "print(3)\n" {
+		t.Fatalf("staged content = %q", content)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(instance.scriptTrashRoot(), dirs[0].Name())) })
+}
+
+func TestDeleteScriptMetadataFailurePreservesStagingWhenRollbackFails(t *testing.T) {
+	instance, root := newScriptFSTestAPI(t)
+	record, err := instance.CreateScript(model.CreateScriptRequest{
+		Root:     root,
+		Filename: "keep-metadata-staged.py",
+		Content:  "print(5)\n",
+		Name:     "metadata",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	originalMoveFile := moveFile
+	moveCalls := 0
+	moveFile = func(source, destination string) error {
+		moveCalls++
+		// Script move succeeds, metadata move fails, and the script rollback
+		// fails. Both the script and metadata must remain recoverable.
+		if moveCalls == 2 || moveCalls == 3 {
+			return errors.New("injected move failure")
+		}
+		return originalMoveFile(source, destination)
+	}
+	t.Cleanup(func() { moveFile = originalMoveFile })
+
+	if _, err := instance.DeleteScript(record.ID); err == nil {
+		t.Fatal("expected metadata and rollback failures to surface")
+	}
+	if fileExists(record.Path) {
+		t.Fatal("original path should remain absent when rollback fails")
+	}
+	if !fileExists(metadataPathFor(record.Path)) {
+		t.Fatal("original metadata should remain untouched when metadata move fails")
+	}
+
+	dirs, err := os.ReadDir(instance.scriptTrashRoot())
+	if err != nil {
+		t.Fatalf("read trash root: %v", err)
+	}
+	if len(dirs) != 1 || !dirs[0].IsDir() {
+		t.Fatalf("staging entry should be preserved, got %+v", dirs)
+	}
+	entryDir := filepath.Join(instance.scriptTrashRoot(), dirs[0].Name())
+	stagingScript := filepath.Join(entryDir, filepath.Base(record.Path))
+	if !fileExists(stagingScript) {
+		t.Fatal("staged script should remain recoverable")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(entryDir) })
+}
+
+func TestListScriptTrashReportsCorruptEntriesWithoutSilentlyDroppingValidOnes(t *testing.T) {
+	instance, root := newScriptFSTestAPI(t)
+	record, err := instance.CreateScript(model.CreateScriptRequest{
+		Root:     root,
+		Filename: "valid.py",
+		Content:  "print(4)\n",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	valid, err := instance.DeleteScript(record.ID)
+	if err != nil {
+		t.Fatalf("delete valid script: %v", err)
+	}
+
+	corruptID := "corrupt-entry"
+	corruptDir := filepath.Join(instance.scriptTrashRoot(), corruptID)
+	if err := os.MkdirAll(corruptDir, 0o755); err != nil {
+		t.Fatalf("create corrupt entry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(corruptDir, "entry.json"), []byte("{broken"), 0o644); err != nil {
+		t.Fatalf("write corrupt manifest: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(corruptDir) })
+
+	entries, err := instance.ListScriptTrash()
+	if err == nil || !strings.Contains(err.Error(), corruptID) {
+		t.Fatalf("expected explicit corrupt-entry error, got %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != valid.ID {
+		t.Fatalf("valid entries should remain available to callers, got %+v", entries)
+	}
+}
+
+func TestWriteTrashManifestIsAtomic(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "entry.json")
+	entry := model.ScriptTrashEntry{
+		ID:           "atomic-entry",
+		Name:         "atomic",
+		OriginalPath: filepath.Join(root, "atomic.py"),
+		ScriptType:   "python",
+		DeletedAt:    nowRFC3339(),
+	}
+	if err := writeTrashManifest(path, entry); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	decoded, err := readTrashEntry(path)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if decoded.ID != entry.ID || decoded.OriginalPath != entry.OriginalPath {
+		t.Fatalf("manifest = %+v, want %+v", decoded, entry)
+	}
+	items, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read manifest directory: %v", err)
+	}
+	if len(items) != 1 || items[0].Name() != "entry.json" {
+		t.Fatalf("atomic temp file leaked: %+v", items)
 	}
 }
 

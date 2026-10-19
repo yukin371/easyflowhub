@@ -71,21 +71,23 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 		return model.SessionRecord{}, err
 	}
 	if err := m.store.CreateTask(sessionID, script.ID, "{}"); err != nil {
-		return model.SessionRecord{}, err
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
 	if err := m.store.UpdateTaskStatus(sessionID, "running", nil, 0); err != nil {
-		return model.SessionRecord{}, err
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
 	if err := m.store.SetTaskOutput(sessionID, "", outputPath); err != nil {
-		return model.SessionRecord{}, err
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
 
-	// Broadcast running status
+	// Broadcast running status after the task row is durable. The session's
+	// PID is still zero until the child starts, so ListSessions uses the
+	// startup grace period while this process completes the handoff.
 	m.broadcastStatus(sessionID, script.ID, "running", nil, 0)
 
 	exePath, err := os.Executable()
 	if err != nil {
-		return model.SessionRecord{}, err
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
 
 	workerArgs := append([]string{"__worker", sessionID, script.ID}, scriptArgs...)
@@ -93,7 +95,7 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 	cmd.Dir = filepath.Dir(script.Path)
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
-		return model.SessionRecord{}, err
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
 	defer devNull.Close()
 	cmd.Stdout = devNull
@@ -102,9 +104,8 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 	applySysProcAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
-		return model.SessionRecord{}, err
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
-	_ = cmd.Process.Release()
 
 	session.PID = cmd.Process.Pid
 	updated, err := m.store.UpdateSession(sessionID, func(record *model.SessionRecord) error {
@@ -112,9 +113,54 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 		return nil
 	})
 	if err != nil {
-		return model.SessionRecord{}, err
+		_ = cmd.Process.Kill()
+		return model.SessionRecord{}, m.failStart(session, err)
 	}
+	_ = cmd.Process.Release()
 	return updated, nil
+}
+
+// failStart makes a session that was durably created before process startup
+// failure visible as terminal instead of leaving an orphaned running row.
+// The original startup error remains the primary error; cleanup failures are
+// joined so callers can diagnose incomplete compensation.
+func (m *AsyncManager) failStart(session model.SessionRecord, cause error) error {
+	now := time.Now()
+	exitCode := 1
+	transitioned := false
+	updated, updateErr := m.store.UpdateSession(session.SessionID, func(record *model.SessionRecord) error {
+		if record.Status != "running" {
+			return nil
+		}
+		transitioned = true
+		record.Status = "failed"
+		record.ExitCode = &exitCode
+		record.FinishedAt = now.Format(time.RFC3339)
+		record.LastChecked = record.FinishedAt
+		startTime, _ := time.Parse(time.RFC3339, record.StartedAt)
+		if !startTime.IsZero() {
+			record.DurationMs = now.Sub(startTime).Milliseconds()
+		}
+		return nil
+	})
+	if updateErr != nil {
+		return errors.Join(cause, fmt.Errorf("mark startup failure: %w", updateErr))
+	}
+	if transitioned {
+		var cleanupErrs []error
+		if err := m.store.UpdateTaskStatus(session.SessionID, "failed", updated.ExitCode, updated.DurationMs); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("sync failed startup task: %w", err))
+		}
+		if err := m.store.SetTaskError(session.SessionID, cause.Error()); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("record startup error: %w", err))
+		}
+		if err := m.store.AppendHistory(historyFromSession(updated)); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("append failed startup history: %w", err))
+		}
+		m.broadcastStatus(updated.SessionID, updated.ScriptID, updated.Status, updated.ExitCode, updated.DurationMs)
+		return errors.Join(append([]error{cause}, cleanupErrs...)...)
+	}
+	return cause
 }
 
 func (m *AsyncManager) RunWorker(buildCommand func(model.ScriptRecord, []string) ([]string, error), sessionID, scriptID string, scriptArgs []string) error {
@@ -206,6 +252,9 @@ func (m *AsyncManager) Cancel(taskOrSessionID string) (model.SessionRecord, erro
 	if session.Status != "running" {
 		return *session, nil
 	}
+	if session.PID <= 0 {
+		return model.SessionRecord{}, fmt.Errorf("session %s is still starting", taskOrSessionID)
+	}
 
 	if err := exec.Command("taskkill", "/PID", strconv.Itoa(session.PID), "/T", "/F").Run(); err != nil {
 		return model.SessionRecord{}, err
@@ -279,7 +328,9 @@ func (m *AsyncManager) refreshSessions(sessions []model.SessionRecord) ([]model.
 	for i, session := range sessions {
 		session.LastChecked = now.Format(time.RFC3339)
 		sessions[i] = session
-		if session.Status != "running" || processExists(session.PID) {
+		// PID=0 is the startup window used by a process whose PID has not been
+		// persisted yet. Do not reap it as dead until the startup grace expires.
+		if session.Status != "running" || startupPending(session, now) || processExists(session.PID) {
 			continue
 		}
 
@@ -288,7 +339,7 @@ func (m *AsyncManager) refreshSessions(sessions []model.SessionRecord) ([]model.
 		updated, err := m.store.UpdateSession(session.SessionID, func(record *model.SessionRecord) error {
 			// Re-check under the lock: the worker may have just written its
 			// own terminal state.
-			if record.Status != "running" || processExists(record.PID) {
+			if record.Status != "running" || startupPending(*record, now) || processExists(record.PID) {
 				return nil
 			}
 			record.Status = "failed"
@@ -341,6 +392,19 @@ func (m *AsyncManager) syncTask(session model.SessionRecord) error {
 	// Broadcast status change for non-running states
 	m.broadcastStatus(session.SessionID, session.ScriptID, session.Status, session.ExitCode, session.DurationMs)
 	return errors.Join(errs...)
+}
+
+const sessionStartupGrace = 30 * time.Second
+
+func startupPending(session model.SessionRecord, now time.Time) bool {
+	if session.PID > 0 {
+		return false
+	}
+	startedAt, err := time.Parse(time.RFC3339, session.StartedAt)
+	if err != nil || startedAt.IsZero() {
+		return false
+	}
+	return now.Sub(startedAt) < sessionStartupGrace
 }
 
 func processExists(pid int) bool {

@@ -41,8 +41,46 @@ const CONFLICT_MESSAGE = '同名待办不止一条，无法确定目标，请先
 const MISSING_MESSAGE = '该待办已在其他窗口被删除，列表已刷新。';
 const STALE_MESSAGE = '笔记刚被其他窗口修改，本次修改未保存，列表已刷新。';
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+  return '';
+}
+
 function isNoteConflictError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('note_conflict:');
+  return errorMessage(error).startsWith('note_conflict:');
+}
+
+// `createNote` only allocates an id; the title is persisted by a subsequent
+// save. Serializing that pair prevents duplicate inbox notes when two todo
+// controls in the same WebView initialize at the same time. Cross-window
+// uniqueness still belongs in the native store, but this closes the common
+// same-context race without changing the public IPC surface.
+let todoInboxCreationTail: Promise<void> = Promise.resolve();
+
+async function withTodoInboxCreationLock<T>(task: () => Promise<T>): Promise<T> {
+  const previous = todoInboxCreationTail;
+  let release!: () => void;
+  todoInboxCreationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+  }
 }
 
 export function useTodos() {
@@ -62,7 +100,7 @@ export function useTodos() {
       // 只保留未完成 + 保留期内的已完成项
       setTodos(allTodos.filter((todo) => !todo.checked || isWithinRetention(todo.checkedAt, hours)));
     } catch (err) {
-      const rawMessage = err instanceof Error ? err.message : '';
+      const rawMessage = errorMessage(err);
       const unavailable = /invoke|tauri|undefined/i.test(rawMessage);
       setError(
         unavailable
@@ -141,7 +179,7 @@ export function useTodos() {
         return {
           ok: false,
           failure: 'unknown',
-          message: err instanceof Error ? err.message : '更新待办失败',
+          message: errorMessage(err) || '更新待办失败',
         };
       }
     },
@@ -161,18 +199,20 @@ export function useTodos() {
 
   /** 待办箱笔记：唯一归属标题，存在则复用。 */
   const ensureTodoInboxNote = useCallback(async (): Promise<Note> => {
-    const notes = await listNotes();
-    const existing = notes.find((note) => note.title.trim() === TODO_INBOX_TITLE);
-    if (existing) {
-      return existing;
-    }
+    return withTodoInboxCreationLock(async () => {
+      const notes = await listNotes();
+      const existing = notes.find((note) => note.title.trim() === TODO_INBOX_TITLE);
+      if (existing) {
+        return existing;
+      }
 
-    const created = await createNote();
-    return await saveNote({
-      id: created.id,
-      title: TODO_INBOX_TITLE,
-      content: '',
-      tags: created.tags,
+      const created = await createNote();
+      return await saveNote({
+        id: created.id,
+        title: TODO_INBOX_TITLE,
+        content: '',
+        tags: created.tags,
+      });
     });
   }, []);
 
@@ -211,7 +251,7 @@ export function useTodos() {
         return {
           ok: false,
           failure: 'unknown',
-          message: err instanceof Error ? err.message : '新建待办失败',
+          message: errorMessage(err) || '新建待办失败',
         };
       }
     },

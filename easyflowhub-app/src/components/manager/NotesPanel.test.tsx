@@ -10,6 +10,7 @@ import { DEFAULT_SHORTCUT_CONFIG } from '../../types/shortcut';
 const flushSaveMock = vi.hoisted(() => vi.fn());
 const scheduleSaveMock = vi.hoisted(() => vi.fn());
 const resetSaveFeedbackMock = vi.hoisted(() => vi.fn());
+const invalidateSaveSessionMock = vi.hoisted(() => vi.fn());
 const clearBackupDraftMock = vi.hoisted(() => vi.fn());
 const inspectBackupMock = vi.hoisted(() => vi.fn());
 
@@ -53,6 +54,7 @@ vi.mock('../../hooks/useAutoSave', () => ({
     scheduleSave: scheduleSaveMock,
     flushSave: flushSaveMock,
     resetSaveFeedback: resetSaveFeedbackMock,
+    invalidateSaveSession: invalidateSaveSessionMock,
   }),
 }));
 
@@ -153,6 +155,7 @@ describe('NotesPanel', () => {
     flushSaveMock.mockResolvedValue(undefined);
     scheduleSaveMock.mockImplementation(() => undefined);
     resetSaveFeedbackMock.mockImplementation(() => undefined);
+    invalidateSaveSessionMock.mockImplementation(() => undefined);
     clearBackupDraftMock.mockImplementation(() => undefined);
     inspectBackupMock.mockImplementation(() => undefined);
   });
@@ -219,6 +222,62 @@ describe('NotesPanel', () => {
     await waitFor(() => {
       expect(screen.queryByText('Editing: target-note')).not.toBeInTheDocument();
     });
+  });
+
+  it('外部导航时先保存当前笔记并隔离旧 autosave 会话', async () => {
+    const target = createFixtureNote({
+      id: 'target-note',
+      title: 'Target note',
+      content: 'draft content',
+      tags: 'beta',
+    });
+    const next = createFixtureNote({
+      id: 'next-note',
+      title: 'Next note',
+      content: 'next content',
+      tags: 'gamma',
+    });
+    getNoteMock.mockResolvedValueOnce(target).mockResolvedValueOnce(next);
+
+    render(<NotesPanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
+    await screen.findByText('Existing note');
+
+    window.dispatchEvent(
+      new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+        detail: { noteId: target.id },
+      })
+    );
+    await screen.findByText(`Editing: ${target.id}`);
+
+    let releaseFlush: (() => void) | undefined;
+    flushSaveMock.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        releaseFlush = resolve;
+      })
+    );
+
+    window.dispatchEvent(
+      new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+        detail: { noteId: next.id },
+      })
+    );
+
+    await waitFor(() => {
+      expect(flushSaveMock).toHaveBeenCalledWith({
+        noteId: target.id,
+        title: target.title,
+        content: target.content,
+        tags: target.tags,
+      });
+    });
+    expect(screen.getByText(`Editing: ${target.id}`)).toBeInTheDocument();
+
+    releaseFlush?.();
+    await waitFor(() => {
+      expect(screen.getByText(`Editing: ${next.id}`)).toBeInTheDocument();
+    });
+    expect(invalidateSaveSessionMock).toHaveBeenCalled();
   });
 
   it('打开包含图片的笔记时保留内联 markdown 内容用于原位编辑', async () => {

@@ -322,7 +322,13 @@ func (a *API) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) {
 	fileName := filepath.Base(path)
 	stagingScript := filepath.Join(entryDir, fileName)
 	if err := moveFile(path, stagingScript); err != nil {
-		_ = os.RemoveAll(entryDir)
+		// moveFile may have copied the source before failing to remove it. Do
+		// not remove the entry directory blindly: it may contain the only
+		// remaining copy of the script. Cleanup is safe only when the staging
+		// directory contains no user files.
+		if cleanupErr := cleanupTrashStagingDir(entryDir); cleanupErr != nil {
+			return model.ScriptTrashEntry{}, errors.Join(err, cleanupErr)
+		}
 		return model.ScriptTrashEntry{}, err
 	}
 
@@ -332,11 +338,19 @@ func (a *API) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) {
 	movedMeta := false
 	if fileExists(meta) {
 		if err := moveFile(meta, stagingMeta); err != nil {
-			// Roll the script back to its original path; if the rollback
-			// move also fails the staging dir still contains the file so
-			// manual recovery is possible.
-			_ = moveFile(stagingScript, path)
-			_ = os.RemoveAll(entryDir)
+			// Roll the script back to its original path. If the rollback
+			// move fails, retain the staging directory because it still
+			// contains the user's script (and possibly a partially copied
+			// metadata file).
+			if rollbackErr := moveFile(stagingScript, path); rollbackErr != nil {
+				return model.ScriptTrashEntry{}, errors.Join(
+					err,
+					fmt.Errorf("rollback script: %w", rollbackErr),
+				)
+			}
+			if cleanupErr := cleanupTrashStagingDir(entryDir); cleanupErr != nil {
+				return model.ScriptTrashEntry{}, errors.Join(err, cleanupErr)
+			}
 			return model.ScriptTrashEntry{}, err
 		}
 		movedMeta = true
@@ -345,12 +359,23 @@ func (a *API) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) {
 	if err := writeTrashManifest(filepath.Join(entryDir, "entry.json"), entry); err != nil {
 		// Manifest write failed after the user's file left its original
 		// location. Restore everything we moved so the user is no worse
-		// off than before this call.
-		_ = moveFile(stagingScript, path)
-		if movedMeta {
-			_ = moveFile(stagingMeta, meta)
+		// off than before this call. If either move fails, retain the entry
+		// directory so the remaining copy is still recoverable.
+		rollbackErrs := make([]error, 0, 2)
+		if rollbackErr := moveFile(stagingScript, path); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback script: %w", rollbackErr))
 		}
-		_ = os.RemoveAll(entryDir)
+		if movedMeta {
+			if rollbackErr := moveFile(stagingMeta, meta); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback metadata: %w", rollbackErr))
+			}
+		}
+		if len(rollbackErrs) > 0 {
+			return model.ScriptTrashEntry{}, errors.Join(append([]error{err}, rollbackErrs...)...)
+		}
+		if cleanupErr := cleanupTrashStagingDir(entryDir); cleanupErr != nil {
+			return model.ScriptTrashEntry{}, errors.Join(err, cleanupErr)
+		}
 		return model.ScriptTrashEntry{}, err
 	}
 	return entry, nil
@@ -368,17 +393,26 @@ func (a *API) ListScriptTrash() ([]model.ScriptTrashEntry, error) {
 	}
 
 	entries := make([]model.ScriptTrashEntry, 0, len(dirs))
+	corrupt := make([]string, 0)
 	for _, dir := range dirs {
 		if !dir.IsDir() {
 			continue
 		}
 		entry, err := readTrashEntry(filepath.Join(root, dir.Name(), "entry.json"))
 		if err != nil {
+			corrupt = append(corrupt, fmt.Sprintf("%s: %v", dir.Name(), err))
+			continue
+		}
+		if entry.ID != dir.Name() {
+			corrupt = append(corrupt, fmt.Sprintf("%s: manifest id is %q", dir.Name(), entry.ID))
 			continue
 		}
 		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].DeletedAt > entries[j].DeletedAt })
+	if len(corrupt) > 0 {
+		return entries, fmt.Errorf("trash contains invalid entries: %s", strings.Join(corrupt, "; "))
+	}
 	return entries, nil
 }
 
@@ -486,10 +520,33 @@ func fileExists(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
+// cleanupTrashStagingDir removes only the manifest (or its atomic-write
+// temporary files) and then the now-empty staging directory. Any unexpected
+// file is deliberately preserved because it may be the user's only copy.
+func cleanupTrashStagingDir(entryDir string) error {
+	items, err := os.ReadDir(entryDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, item := range items {
+		name := item.Name()
+		if name != "entry.json" && !strings.HasPrefix(name, ".entry.json.tmp-") {
+			return fmt.Errorf("preserving trash staging directory %s: unexpected file %q", entryDir, name)
+		}
+		if err := os.Remove(filepath.Join(entryDir, name)); err != nil {
+			return err
+		}
+	}
+	return os.Remove(entryDir)
+}
+
 // writeTrashManifest persists the entry.json manifest. It is a package-level
 // variable so tests can inject failures to exercise the rollback path.
 var writeTrashManifest = func(path string, entry model.ScriptTrashEntry) error {
-	return writeJSONFile(path, entry)
+	return writeJSONFileAtomic(path, entry)
 }
 
 func copyFile(source, destination string) error {
@@ -514,7 +571,9 @@ func copyFile(source, destination string) error {
 // moveFile renames when possible and falls back to copy+remove when the source
 // and destination live on different volumes (script roots are frequently on a
 // different drive than %APPDATA%).
-func moveFile(source, destination string) error {
+var moveFile = moveFileImpl
+
+func moveFileImpl(source, destination string) error {
 	if err := os.Rename(source, destination); err == nil {
 		return nil
 	}
@@ -532,6 +591,40 @@ func writeJSONFile(path string, value any) error {
 	return os.WriteFile(path, content, 0o644)
 }
 
+func writeJSONFileAtomic(path string, value any) error {
+	content, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".entry.json.tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 func readTrashEntry(path string) (model.ScriptTrashEntry, error) {
 	var entry model.ScriptTrashEntry
 	content, err := os.ReadFile(path)
@@ -543,6 +636,9 @@ func readTrashEntry(path string) (model.ScriptTrashEntry, error) {
 	}
 	if entry.ID == "" {
 		return entry, errors.New("trash entry is missing an id")
+	}
+	if filepath.IsAbs(entry.OriginalPath) == false || strings.TrimSpace(entry.OriginalPath) == "" {
+		return entry, errors.New("trash entry is missing an absolute original path")
 	}
 	return entry, nil
 }
