@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,12 +67,7 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 		LastChecked: startedAt.Format(time.RFC3339),
 	}
 
-	sessions, err := m.store.LoadSessions()
-	if err != nil {
-		return model.SessionRecord{}, err
-	}
-	sessions = append(sessions, session)
-	if err := m.store.SaveSessions(sessions); err != nil {
+	if err := m.store.AppendSession(session); err != nil {
 		return model.SessionRecord{}, err
 	}
 	if err := m.store.CreateTask(sessionID, script.ID, "{}"); err != nil {
@@ -111,16 +107,14 @@ func (m *AsyncManager) Start(script model.ScriptRecord, scriptArgs []string, com
 	_ = cmd.Process.Release()
 
 	session.PID = cmd.Process.Pid
-	for i := range sessions {
-		if strings.EqualFold(sessions[i].SessionID, sessionID) {
-			sessions[i] = session
-			break
-		}
-	}
-	if err := m.store.SaveSessions(sessions); err != nil {
+	updated, err := m.store.UpdateSession(sessionID, func(record *model.SessionRecord) error {
+		record.PID = session.PID
+		return nil
+	})
+	if err != nil {
 		return model.SessionRecord{}, err
 	}
-	return session, nil
+	return updated, nil
 }
 
 func (m *AsyncManager) RunWorker(buildCommand func(model.ScriptRecord, []string) ([]string, error), sessionID, scriptID string, scriptArgs []string) error {
@@ -133,22 +127,11 @@ func (m *AsyncManager) RunWorker(buildCommand func(model.ScriptRecord, []string)
 		return err
 	}
 
-	sessions, err := m.store.LoadSessions()
+	session, err := m.store.GetSession(sessionID)
 	if err != nil {
 		return err
 	}
-	index := -1
-	for i, session := range sessions {
-		if strings.EqualFold(session.SessionID, sessionID) {
-			index = i
-			break
-		}
-	}
-	if index < 0 {
-		return fmt.Errorf("session not found: %s", sessionID)
-	}
 
-	session := sessions[index]
 	outputFile, err := os.OpenFile(session.OutputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -177,20 +160,27 @@ func (m *AsyncManager) RunWorker(buildCommand func(model.ScriptRecord, []string)
 		exitCode = 1
 	}
 
-	session.Command = command
-	session.WorkingDir = cmd.Dir
-	session.FinishedAt = finishedAt.Format(time.RFC3339)
-	session.LastChecked = session.FinishedAt
-	session.DurationMs = finishedAt.Sub(startedAt).Milliseconds()
-	session.ExitCode = intPointer(exitCode)
-	session.Status = statusFromExitCode(exitCode)
-	sessions[index] = session
-
-	if err := m.store.SaveSessions(sessions); err != nil {
+	// Only this worker's own record is rewritten, and the store re-reads the
+	// file under the cross-process lock, so sessions started by other
+	// processes while this one ran are preserved (F01).
+	finalStatus := statusFromExitCode(exitCode)
+	updated, err := m.store.UpdateSession(sessionID, func(record *model.SessionRecord) error {
+		record.Command = command
+		record.WorkingDir = cmd.Dir
+		record.FinishedAt = finishedAt.Format(time.RFC3339)
+		record.LastChecked = record.FinishedAt
+		record.DurationMs = finishedAt.Sub(startedAt).Milliseconds()
+		record.ExitCode = intPointer(exitCode)
+		record.Status = finalStatus
+		return nil
+	})
+	if err != nil {
 		return err
 	}
-	m.syncTask(session)
-	return m.store.AppendHistory(historyFromSession(session))
+	if err := m.syncTask(updated); err != nil {
+		return err
+	}
+	return m.store.AppendHistory(historyFromSession(updated))
 }
 
 func (m *AsyncManager) ListSessions() ([]model.SessionRecord, error) {
@@ -198,8 +188,8 @@ func (m *AsyncManager) ListSessions() ([]model.SessionRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	sessions = m.refreshSessions(sessions)
-	if err := m.store.SaveSessions(sessions); err != nil {
+	sessions, err = m.refreshSessions(sessions)
+	if err != nil {
 		return nil, err
 	}
 	sort.Slice(sessions, func(i, j int) bool {
@@ -209,26 +199,12 @@ func (m *AsyncManager) ListSessions() ([]model.SessionRecord, error) {
 }
 
 func (m *AsyncManager) Cancel(taskOrSessionID string) (model.SessionRecord, error) {
-	sessions, err := m.store.LoadSessions()
+	session, err := m.store.GetSession(taskOrSessionID)
 	if err != nil {
 		return model.SessionRecord{}, err
 	}
-	sessions = m.refreshSessions(sessions)
-
-	index := -1
-	for i, session := range sessions {
-		if strings.EqualFold(session.SessionID, taskOrSessionID) {
-			index = i
-			break
-		}
-	}
-	if index < 0 {
-		return model.SessionRecord{}, fmt.Errorf("session not found: %s", taskOrSessionID)
-	}
-
-	session := sessions[index]
 	if session.Status != "running" {
-		return session, m.store.SaveSessions(sessions)
+		return *session, nil
 	}
 
 	if err := exec.Command("taskkill", "/PID", strconv.Itoa(session.PID), "/T", "/F").Run(); err != nil {
@@ -237,21 +213,33 @@ func (m *AsyncManager) Cancel(taskOrSessionID string) (model.SessionRecord, erro
 
 	now := time.Now()
 	exitCode := -1
-	session.Status = "cancelled"
-	session.ExitCode = &exitCode
-	session.FinishedAt = now.Format(time.RFC3339)
-	session.LastChecked = session.FinishedAt
-	startTime, _ := time.Parse(time.RFC3339, session.StartedAt)
-	if !startTime.IsZero() {
-		session.DurationMs = now.Sub(startTime).Milliseconds()
-	}
-	sessions[index] = session
-	if err := m.store.SaveSessions(sessions); err != nil {
+	// Guard on "still running" inside the locked update: if the worker
+	// finished and wrote its own terminal state between the check above and
+	// this write, the cancel must not resurrect or overwrite it.
+	updated, err := m.store.UpdateSession(taskOrSessionID, func(record *model.SessionRecord) error {
+		if record.Status != "running" {
+			return nil
+		}
+		record.Status = "cancelled"
+		record.ExitCode = &exitCode
+		record.FinishedAt = now.Format(time.RFC3339)
+		record.LastChecked = record.FinishedAt
+		startTime, _ := time.Parse(time.RFC3339, record.StartedAt)
+		if !startTime.IsZero() {
+			record.DurationMs = now.Sub(startTime).Milliseconds()
+		}
+		return nil
+	})
+	if err != nil {
 		return model.SessionRecord{}, err
 	}
-	m.syncTask(session)
-	_ = m.store.AppendHistory(historyFromSession(session))
-	return session, nil
+	if updated.Status == "cancelled" {
+		if err := m.syncTask(updated); err != nil {
+			return updated, err
+		}
+		_ = m.store.AppendHistory(historyFromSession(updated))
+	}
+	return updated, nil
 }
 
 func (m *AsyncManager) ReadTaskLog(taskID string, offset, limit int, tail bool) (string, *model.Task, error) {
@@ -280,45 +268,79 @@ func (m *AsyncManager) ReadTaskLog(taskID string, offset, limit int, tail bool) 
 	return output, task, nil
 }
 
-func (m *AsyncManager) refreshSessions(sessions []model.SessionRecord) []model.SessionRecord {
+// refreshSessions reconciles "running" rows whose process died without a
+// completion write. Only the transitioned records are persisted, each through
+// its own locked update, so a refresh can never overwrite a session another
+// process is concurrently starting or finishing. LastChecked is refreshed in
+// memory for display only; it is not worth a cross-process write per poll.
+func (m *AsyncManager) refreshSessions(sessions []model.SessionRecord) ([]model.SessionRecord, error) {
 	now := time.Now()
+	var firstErr error
 	for i, session := range sessions {
 		session.LastChecked = now.Format(time.RFC3339)
-		if session.Status != "running" {
-			sessions[i] = session
-			continue
-		}
-		if processExists(session.PID) {
-			sessions[i] = session
+		sessions[i] = session
+		if session.Status != "running" || processExists(session.PID) {
 			continue
 		}
 
 		exitCode := 1
-		session.Status = "failed"
-		session.ExitCode = &exitCode
-		session.FinishedAt = now.Format(time.RFC3339)
-		startTime, _ := time.Parse(time.RFC3339, session.StartedAt)
-		if !startTime.IsZero() {
-			session.DurationMs = now.Sub(startTime).Milliseconds()
+		finishedAt := now.Format(time.RFC3339)
+		updated, err := m.store.UpdateSession(session.SessionID, func(record *model.SessionRecord) error {
+			// Re-check under the lock: the worker may have just written its
+			// own terminal state.
+			if record.Status != "running" || processExists(record.PID) {
+				return nil
+			}
+			record.Status = "failed"
+			record.ExitCode = &exitCode
+			record.FinishedAt = finishedAt
+			record.LastChecked = finishedAt
+			startTime, _ := time.Parse(time.RFC3339, record.StartedAt)
+			if !startTime.IsZero() {
+				record.DurationMs = now.Sub(startTime).Milliseconds()
+			}
+			return nil
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
-		sessions[i] = session
-		m.syncTask(session)
-		_ = m.store.AppendHistory(historyFromSession(session))
+		sessions[i] = updated
+		if updated.Status == "failed" {
+			if err := m.syncTask(updated); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			_ = m.store.AppendHistory(historyFromSession(updated))
+		}
 	}
-	return sessions
+	return sessions, firstErr
 }
 
-func (m *AsyncManager) syncTask(session model.SessionRecord) {
-	_ = m.store.UpdateTaskStatus(session.SessionID, session.Status, session.ExitCode, session.DurationMs)
+// syncTask mirrors a session's terminal state into tasks.db. Storage errors
+// are returned instead of swallowed so a diverging task record is visible to
+// the caller rather than silently drift.
+func (m *AsyncManager) syncTask(session model.SessionRecord) error {
+	if err := m.store.UpdateTaskStatus(session.SessionID, session.Status, session.ExitCode, session.DurationMs); err != nil {
+		m.broadcastStatus(session.SessionID, session.ScriptID, session.Status, session.ExitCode, session.DurationMs)
+		return fmt.Errorf("sync task status %s: %w", session.SessionID, err)
+	}
 	output := historyFromSession(session).Output
 	summary := ProcessOutput(output, session.OutputPath)
-	_ = m.store.SetTaskOutput(session.SessionID, summary.Preview, session.OutputPath)
+	var errs []error
+	if err := m.store.SetTaskOutput(session.SessionID, summary.Preview, session.OutputPath); err != nil {
+		errs = append(errs, fmt.Errorf("sync task output %s: %w", session.SessionID, err))
+	}
 	if session.Status == "failed" && session.ExitCode != nil && *session.ExitCode < 0 {
-		_ = m.store.SetTaskError(session.SessionID, "process terminated unexpectedly")
+		if err := m.store.SetTaskError(session.SessionID, "process terminated unexpectedly"); err != nil {
+			errs = append(errs, fmt.Errorf("sync task error %s: %w", session.SessionID, err))
+		}
 	}
 
 	// Broadcast status change for non-running states
 	m.broadcastStatus(session.SessionID, session.ScriptID, session.Status, session.ExitCode, session.DurationMs)
+	return errors.Join(errs...)
 }
 
 func processExists(pid int) bool {

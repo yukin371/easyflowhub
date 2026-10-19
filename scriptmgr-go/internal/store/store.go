@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,6 +95,119 @@ func (s *Store) LoadSessions() ([]model.SessionRecord, error) {
 
 func (s *Store) SaveSessions(sessions []model.SessionRecord) error {
 	return writeJSONFile(s.SessionsPath(), sessions)
+}
+
+// ---------------------------------------------------------------------------
+// Session mutations (F01)
+//
+// sessions.json is shared between the serve process and every worker
+// process. A whole-list load/modify/save in one process erases whatever the
+// other process wrote in between, so all mutations below re-read the file
+// inside a cross-process lock and only touch the single record they own.
+// ---------------------------------------------------------------------------
+
+const (
+	sessionsLockRetry = 20 * time.Millisecond
+	// A lock older than this belongs to a crashed process; break it instead
+	// of wedging every future script run.
+	sessionsLockStale = 10 * time.Second
+)
+
+// sessionsLockWait bounds how long a caller blocks on a held lock. It is a
+// var so tests can shorten the wait instead of paying the production timeout.
+var sessionsLockWait = 5 * time.Second
+
+// withSessionsLock serialises a sessions.json read-modify-write cycle across
+// processes. The lock is a sibling lock file created with O_EXCL, which is
+// atomic on Windows and POSIX alike; stale locks from dead processes are
+// broken after sessionsLockStale.
+func (s *Store) withSessionsLock(fn func() error) error {
+	lockPath := filepath.Join(s.stateDir, "sessions.lock")
+	deadline := time.Now().Add(sessionsLockWait)
+	var lastErr error
+	for {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, _ = f.WriteString(strconv.Itoa(os.Getpid()))
+			_ = f.Close()
+			break
+		}
+		// Windows surfaces a transient ACCESS_DENIED while another process
+		// is deleting the lock file mid-handoff; that means "busy", not
+		// "broken", so it joins ErrExist on the retry path.
+		if !errors.Is(err, os.ErrExist) && !os.IsPermission(err) {
+			return fmt.Errorf("acquire sessions lock: %w", err)
+		}
+		lastErr = err
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionsLockStale {
+			_ = os.Remove(lockPath)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for the sessions lock (%w)", lastErr)
+		}
+		time.Sleep(sessionsLockRetry)
+	}
+	defer func() { _ = os.Remove(lockPath) }()
+	return fn()
+}
+
+// AppendSession adds one record under the lock so a session started by one
+// process can never be erased by a completion write from another.
+func (s *Store) AppendSession(session model.SessionRecord) error {
+	return s.withSessionsLock(func() error {
+		sessions, err := s.LoadSessions()
+		if err != nil {
+			return err
+		}
+		sessions = append(sessions, session)
+		return s.SaveSessions(sessions)
+	})
+}
+
+// UpdateSession re-reads sessions.json under the lock, applies mutate to the
+// single record with the given ID, and writes the list back. Records added or
+// updated by other processes in the meantime are preserved because the file
+// is re-read inside the lock. The returned record reflects the stored state
+// after the mutation ran.
+func (s *Store) UpdateSession(sessionID string, mutate func(*model.SessionRecord) error) (model.SessionRecord, error) {
+	var updated model.SessionRecord
+	err := s.withSessionsLock(func() error {
+		sessions, err := s.LoadSessions()
+		if err != nil {
+			return err
+		}
+		for i := range sessions {
+			if !strings.EqualFold(sessions[i].SessionID, sessionID) {
+				continue
+			}
+			if err := mutate(&sessions[i]); err != nil {
+				return err
+			}
+			updated = sessions[i]
+			return s.SaveSessions(sessions)
+		}
+		return fmt.Errorf("session not found: %s", sessionID)
+	})
+	if err != nil {
+		return model.SessionRecord{}, err
+	}
+	return updated, nil
+}
+
+// GetSession returns a single session record without taking the lock; reads
+// never race a locked mutation into losing data.
+func (s *Store) GetSession(sessionID string) (*model.SessionRecord, error) {
+	sessions, err := s.LoadSessions()
+	if err != nil {
+		return nil, err
+	}
+	for i := range sessions {
+		if strings.EqualFold(sessions[i].SessionID, sessionID) {
+			return &sessions[i], nil
+		}
+	}
+	return nil, fmt.Errorf("session not found: %s", sessionID)
 }
 
 func (s *Store) LoadRoots() (model.ScriptRootsStore, error) {
@@ -290,12 +405,22 @@ func readJSONFile(path string, target any) error {
 	return json.Unmarshal(content, target)
 }
 
+// writeJSONFile writes via a temp file + rename so a crash or a concurrent
+// reader can never observe a half-written state file.
 func writeJSONFile(path string, value any) error {
 	content, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, content, 0o644)
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, content, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	return nil
 }
 
 func splitStatuses(raw string) []string {
