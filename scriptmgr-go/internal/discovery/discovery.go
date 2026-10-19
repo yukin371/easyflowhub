@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -151,8 +150,11 @@ func (s *Service) ScriptRoots() ([]string, error) {
 		}
 	}
 
+	// An empty root set is a normal state for the desktop app (nothing
+	// configured yet), not a hard failure: the UI guides the user to add a
+	// storage location instead of showing a service error.
 	if len(roots) == 0 {
-		return nil, errors.New("no script directories found; expected PowerShell or Python under the repo root")
+		return []string{}, nil
 	}
 
 	sort.Slice(roots, func(i, j int) bool {

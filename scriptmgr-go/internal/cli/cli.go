@@ -619,7 +619,7 @@ func printUsage() {
 	fmt.Println("  mcp-add <name> <command> - Add an MCP server")
 	fmt.Println("  mcp-remove <name>        - Remove an MCP server")
 	fmt.Println("  mcp-import-claude        - Import MCP servers from Claude config")
-	fmt.Println("  serve [addr]             - Start HTTP API server (default :8765)")
+	fmt.Println("  serve [addr]             - Start HTTP API server (default 127.0.0.1:8765)")
 	fmt.Println("  relay <subcommand>       - Start or inspect the OpenAI-compatible relay")
 	fmt.Println("  extensions [list]        - List manifest-based extension contributions")
 }

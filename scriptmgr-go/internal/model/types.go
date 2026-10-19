@@ -143,6 +143,67 @@ type RootsResponse struct {
 	GeneratedAt string   `json:"generated_at"`
 }
 
+// ScriptSource is the editable text behind a discovered script.
+type ScriptSource struct {
+	ID           string `json:"id"`
+	Path         string `json:"path"`
+	Content      string `json:"content"`
+	Language     string `json:"language"`
+	SizeBytes    int64  `json:"size_bytes"`
+	ModifiedAt   string `json:"modified_at"`
+	MetadataPath string `json:"metadata_path,omitempty"`
+}
+
+type CreateScriptRequest struct {
+	Root        string `json:"root"`
+	Filename    string `json:"filename"`
+	Content     string `json:"content"`
+	Name        string `json:"name"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+}
+
+type ImportScriptsRequest struct {
+	Root  string   `json:"root"`
+	Paths []string `json:"paths"`
+}
+
+type ImportFailure struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
+type ImportScriptsResponse struct {
+	OK          bool            `json:"ok"`
+	Imported    []ScriptRecord  `json:"imported"`
+	Failed      []ImportFailure `json:"failed"`
+	GeneratedAt string          `json:"generated_at"`
+}
+
+// ScriptTrashEntry describes a script moved to the trash directory.
+type ScriptTrashEntry struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	OriginalPath string `json:"original_path"`
+	ScriptType   string `json:"script_type"`
+	DeletedAt    string `json:"deleted_at"`
+	SizeBytes    int64  `json:"size_bytes"`
+}
+
+type ScriptTrashResponse struct {
+	OK          bool               `json:"ok"`
+	Count       int                `json:"count"`
+	Entries     []ScriptTrashEntry `json:"entries"`
+	GeneratedAt string             `json:"generated_at"`
+}
+
+type RootsDetailResponse struct {
+	OK          bool     `json:"ok"`
+	Roots       []string `json:"roots"`
+	Custom      []string `json:"custom"`
+	GeneratedAt string   `json:"generated_at"`
+}
+
 type RunOptions struct {
 	DryRun        bool
 	AsJSON        bool

@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"scriptmgr/internal/hostconfig"
+	"scriptmgr/internal/localapi"
 	"scriptmgr/internal/relay"
 )
 
@@ -36,26 +37,13 @@ func runRelayCommand(args []string, stateDir string) error {
 }
 
 func runRelayServe(args []string, stateDir string) error {
-	port := relay.DefaultPort
-
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--port", "-p":
-			if i+1 >= len(args) {
-				return errors.New("missing value for --port")
-			}
-			i++
-			parsed, err := strconv.Atoi(args[i])
-			if err != nil {
-				return fmt.Errorf("invalid relay port: %s", args[i])
-			}
-			port = parsed
-		case "--help", "-h":
-			printRelayUsage()
-			return nil
-		default:
-			return fmt.Errorf("unknown relay option: %s", args[i])
-		}
+	addr, showHelp, err := parseRelayServeAddress(args)
+	if err != nil {
+		return err
+	}
+	if showHelp {
+		printRelayUsage()
+		return nil
 	}
 
 	server, err := relay.NewServer(stateDir)
@@ -63,7 +51,6 @@ func runRelayServe(args []string, stateDir string) error {
 		return err
 	}
 
-	addr := fmt.Sprintf(":%d", port)
 	fmt.Fprintf(os.Stderr, "Relay server listening on %s\n", addr)
 	fmt.Fprintln(os.Stderr, "Endpoints:")
 	fmt.Fprintln(os.Stderr, "  GET  /health")
@@ -84,6 +71,29 @@ func runRelayServe(args []string, stateDir string) error {
 	}()
 
 	return http.ListenAndServe(addr, server)
+}
+
+func parseRelayServeAddress(args []string) (string, bool, error) {
+	port := relay.DefaultPort
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--port", "-p":
+			if i+1 >= len(args) {
+				return "", false, errors.New("missing value for --port")
+			}
+			i++
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil || parsed < 1 || parsed > 65535 {
+				return "", false, fmt.Errorf("invalid relay port: %s", args[i])
+			}
+			port = parsed
+		case "--help", "-h":
+			return "", true, nil
+		default:
+			return "", false, fmt.Errorf("unknown relay option: %s", args[i])
+		}
+	}
+	return localapi.LoopbackAddress(strconv.Itoa(port)), false, nil
 }
 
 func runRelayConfig(args []string, stateDir string) error {
@@ -122,7 +132,7 @@ func printRelayUsage() {
 	fmt.Println("Usage: scriptmgr relay <subcommand> [options]")
 	fmt.Println()
 	fmt.Println("Subcommands:")
-	fmt.Println("  serve [--port 8787]                 Start OpenAI-compatible relay server")
+	fmt.Println("  serve [--port 8787]                 Start local relay on 127.0.0.1")
 	fmt.Println("  config [--json]                     Print current relay config and provider health")
 	fmt.Println("  hosts status [--json]               Inspect Claude/Codex host relay settings")
 	fmt.Println("  hosts switch [options]              Update Claude/Codex host configs to target relay upstreams")

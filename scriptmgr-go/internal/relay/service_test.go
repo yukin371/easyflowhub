@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -100,6 +101,218 @@ func TestStoreLoadSaveRoundTrip(t *testing.T) {
 	}
 	if loaded.Routes[0].Strategy != DefaultStrategy {
 		t.Fatalf("expected default strategy %q, got %q", DefaultStrategy, loaded.Routes[0].Strategy)
+	}
+}
+
+func TestSnapshotRedactsSecretsAndSaveConfigPreservesOrClearsThem(t *testing.T) {
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{{
+			ID:      "primary",
+			Name:    "Primary",
+			BaseURL: "https://user:base-url-secret@example.com/v1?tenant=query-secret",
+			APIKey:  "plain-secret",
+			Headers: map[string]string{
+				"Authorization":      "Bearer header-secret",
+				"X-API-Key":          "header-api-secret",
+				"X-Session-ID":       "session-secret",
+				"X-Signature":        "signature-secret",
+				"X-Client-Assertion": "assertion-secret",
+				"DPoP":               "dpop-secret",
+				"X-Region":           "us-west",
+			},
+			Enabled: true,
+		}},
+	})
+
+	snapshot, err := service.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot failed: %v", err)
+	}
+	if got := snapshot.Config.Providers[0].APIKey; got != redactedSecretValue {
+		t.Fatalf("expected config API key redaction, got %q", got)
+	}
+	if got := snapshot.EffectiveConfig.Providers[0].APIKey; got != redactedSecretValue {
+		t.Fatalf("expected effective config API key redaction, got %q", got)
+	}
+	if got := snapshot.Providers[0].Provider.APIKey; got != redactedSecretValue {
+		t.Fatalf("expected provider snapshot API key redaction, got %q", got)
+	}
+	for _, provider := range []Provider{snapshot.Config.Providers[0], snapshot.EffectiveConfig.Providers[0], snapshot.Providers[0].Provider} {
+		if provider.BaseURL != redactedSecretValue {
+			t.Fatalf("expected credential-bearing base_url to be redacted, got %q", provider.BaseURL)
+		}
+	}
+	for _, provider := range []Provider{snapshot.Config.Providers[0], snapshot.EffectiveConfig.Providers[0], snapshot.Providers[0].Provider} {
+		for _, name := range []string{"Authorization", "X-API-Key", "X-Session-ID", "X-Signature", "X-Client-Assertion", "DPoP"} {
+			if provider.Headers[name] != redactedSecretValue {
+				t.Fatalf("expected sensitive header %q redaction, got %#v", name, provider.Headers)
+			}
+		}
+		if provider.Headers["X-Region"] != "us-west" {
+			t.Fatalf("expected non-sensitive header to remain visible, got %#v", provider.Headers)
+		}
+	}
+	encodedSnapshot, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot failed: %v", err)
+	}
+	for _, secret := range []string{"plain-secret", "header-secret", "header-api-secret", "base-url-secret", "query-secret", "session-secret", "signature-secret", "assertion-secret", "dpop-secret"} {
+		if strings.Contains(string(encodedSnapshot), secret) {
+			t.Fatalf("snapshot leaked secret %q", secret)
+		}
+	}
+
+	if err := service.SaveConfig(snapshot.Config); err != nil {
+		t.Fatalf("saving unmodified redacted config failed: %v", err)
+	}
+	saved, err := service.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if got := saved.Providers[0].APIKey; got != "plain-secret" {
+		t.Fatalf("expected unchanged API key to be preserved, got %q", got)
+	}
+	if got := saved.Providers[0].BaseURL; got != "https://user:base-url-secret@example.com/v1?tenant=query-secret" {
+		t.Fatalf("expected unchanged credential-bearing base_url to be preserved, got %q", got)
+	}
+	if got := saved.Providers[0].Headers["Authorization"]; got != "Bearer header-secret" {
+		t.Fatalf("expected unchanged Authorization header to be preserved, got %q", got)
+	}
+	if got := saved.Providers[0].Headers["X-API-Key"]; got != "header-api-secret" {
+		t.Fatalf("expected unchanged API key header to be preserved, got %q", got)
+	}
+
+	cleared := snapshot.Config
+	cleared.Providers[0].APIKey = ""
+	delete(cleared.Providers[0].Headers, "Authorization")
+	cleared.Providers[0].Headers["X-API-Key"] = ""
+	if err := service.SaveConfig(cleared); err != nil {
+		t.Fatalf("saving cleared secrets failed: %v", err)
+	}
+	saved, err = service.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig after clear failed: %v", err)
+	}
+	if saved.Providers[0].APIKey != "" || saved.Providers[0].Headers["Authorization"] != "" || saved.Providers[0].Headers["X-API-Key"] != "" {
+		t.Fatalf("expected cleared secrets to be removed, got %#v", saved.Providers[0])
+	}
+	if saved.Providers[0].Headers["X-Region"] != "us-west" {
+		t.Fatalf("expected non-sensitive header to remain, got %#v", saved.Providers[0].Headers)
+	}
+	if err := service.SaveConfig(Config{Version: 1, Providers: []Provider{{
+		ID: "new", Name: "New", BaseURL: "https://new.example.com", APIKey: redactedSecretValue,
+		Headers: map[string]string{"X-API-Key": redactedSecretValue}, Enabled: true,
+	}}}); err != nil {
+		t.Fatalf("saving new provider with placeholder failed: %v", err)
+	}
+	saved, err = service.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig after new provider save failed: %v", err)
+	}
+	if saved.Providers[0].APIKey != "" || len(saved.Providers[0].Headers) != 0 {
+		t.Fatalf("redaction marker must not be persisted as a credential: %#v", saved.Providers[0])
+	}
+}
+
+func TestRelayServerConfigAPIUsesRedactedSnapshotWithoutLosingSecrets(t *testing.T) {
+	stateDir := t.TempDir()
+	writeManifest(t, filepath.Join(stateDir, "extensions", "manifest-provider", "plugin.json"), `{
+  "id": "manifest-provider",
+  "name": "Manifest Provider",
+  "version": "1.0.0",
+  "contributions": {
+    "relay_providers": [{
+      "id": "manifest-provider",
+      "name": "Manifest Provider",
+      "base_url": "https://extension-user:manifest-url-secret@extension.example.com?token=manifest-query-secret",
+      "headers": {"X-Provider-Token": "manifest-header-secret"}
+    }]
+  }
+}`)
+	service, err := NewService(stateDir)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	if err := service.SaveConfig(Config{
+		Version: 1,
+		Providers: []Provider{{
+			ID: "primary", Name: "Primary", BaseURL: "https://example.com", Enabled: true,
+			APIKey: "relay-api-secret", Headers: map[string]string{"X-Provider-Token": "relay-header-secret"},
+		}},
+	}); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+	server := NewServerWithService(service)
+
+	get := httptest.NewRequest(http.MethodGet, "/api/relay/config", nil)
+	getRec := httptest.NewRecorder()
+	server.ServeHTTP(getRec, get)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected config GET 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	for _, secret := range []string{"relay-api-secret", "relay-header-secret", "manifest-header-secret", "manifest-url-secret", "manifest-query-secret"} {
+		if strings.Contains(getRec.Body.String(), secret) {
+			t.Fatalf("Relay config GET leaked secret %q", secret)
+		}
+	}
+	var getResponse struct {
+		Snapshot Snapshot `json:"snapshot"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getResponse); err != nil {
+		t.Fatalf("decode config GET failed: %v", err)
+	}
+	if getResponse.Snapshot.Config.Providers[0].APIKey != redactedSecretValue {
+		t.Fatalf("expected redacted API key, got %q", getResponse.Snapshot.Config.Providers[0].APIKey)
+	}
+	if getResponse.Snapshot.EffectiveConfig.Providers[1].BaseURL != redactedSecretValue {
+		t.Fatalf("expected extension URL credentials to be redacted, got %q", getResponse.Snapshot.EffectiveConfig.Providers[1].BaseURL)
+	}
+	if len(getResponse.Snapshot.Extensions) != 1 || getResponse.Snapshot.Extensions[0].Manifest.Contributions.RelayProviders[0].Headers["X-Provider-Token"] != redactedSecretValue {
+		t.Fatalf("expected nested extension headers to be redacted, got %+v", getResponse.Snapshot.Extensions)
+	}
+	if getResponse.Snapshot.Extensions[0].Manifest.Contributions.RelayProviders[0].BaseURL != redactedSecretValue {
+		t.Fatalf("expected nested extension URL credentials to be redacted, got %+v", getResponse.Snapshot.Extensions[0].Manifest.Contributions.RelayProviders[0])
+	}
+
+	for _, path := range []string{"/api/extensions", "/api/extensions/contributions"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected %s GET 200, got %d: %s", path, rec.Code, rec.Body.String())
+		}
+		for _, secret := range []string{"manifest-header-secret", "manifest-url-secret", "manifest-query-secret"} {
+			if strings.Contains(rec.Body.String(), secret) {
+				t.Fatalf("%s leaked extension secret %q: %s", path, secret, rec.Body.String())
+			}
+		}
+		if !strings.Contains(rec.Body.String(), redactedSecretValue) {
+			t.Fatalf("%s did not redact extension header: %s", path, rec.Body.String())
+		}
+	}
+
+	body, err := json.Marshal(getResponse.Snapshot.Config)
+	if err != nil {
+		t.Fatalf("marshal redacted config failed: %v", err)
+	}
+	put := httptest.NewRequest(http.MethodPut, "/api/relay/config", bytes.NewReader(body))
+	putRec := httptest.NewRecorder()
+	server.ServeHTTP(putRec, put)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("expected config PUT 200, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+	for _, secret := range []string{"relay-api-secret", "relay-header-secret", "manifest-header-secret", "manifest-url-secret", "manifest-query-secret"} {
+		if strings.Contains(putRec.Body.String(), secret) {
+			t.Fatalf("Relay config PUT leaked secret %q", secret)
+		}
+	}
+	saved, err := service.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig after PUT failed: %v", err)
+	}
+	if saved.Providers[0].APIKey != "relay-api-secret" || saved.Providers[0].Headers["X-Provider-Token"] != "relay-header-secret" {
+		t.Fatalf("redacted config PUT lost stored secrets: %#v", saved.Providers[0])
 	}
 }
 
@@ -220,6 +433,66 @@ func TestProxyPreservesStreamingResponse(t *testing.T) {
 	}
 }
 
+func TestServerAcceptsRelayV1AliasForOpenAIChatCompletions(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("expected upstream OpenAI path /v1/chat/completions, got %q", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"translated"}}]}`))
+	}))
+	defer upstream.Close()
+
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{{
+			ID:      "translation",
+			Name:    "Translation",
+			BaseURL: upstream.URL,
+			Enabled: true,
+		}},
+	})
+	server := httptest.NewServer(NewServerWithService(service))
+	defer server.Close()
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		server.URL+"/relay/v1/chat/completions",
+		strings.NewReader(`{"model":"translation-model","stream":false,"messages":[]}`),
+	)
+	if err != nil {
+		t.Fatalf("build relay request failed: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://tauri.localhost")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("relay request failed: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("expected 200, got %d: %s", response.StatusCode, body)
+	}
+	if got := response.Header.Get("X-EasyFlowHub-Relay-Provider"); got != "translation" {
+		t.Fatalf("expected translation provider header, got %q", got)
+	}
+	if got := response.Header.Get("Access-Control-Allow-Origin"); got != "http://tauri.localhost" {
+		t.Fatalf("expected exact allowed CORS origin for browser preview, got %q", got)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response failed: %v", err)
+	}
+	if !strings.Contains(string(body), "translated") {
+		t.Fatalf("expected translated response, got %s", body)
+	}
+}
+
 func TestProxyRetriesOn429AndUsesProviderSpecificAuth(t *testing.T) {
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer primary-secret" {
@@ -294,6 +567,149 @@ func TestProxyRetriesOn429AndUsesProviderSpecificAuth(t *testing.T) {
 	}
 	if got := snapshots["primary"].Status.LastError; !strings.Contains(got, "429") {
 		t.Fatalf("expected primary error to mention 429, got %q", got)
+	}
+}
+
+func TestProxyClassifiesExhaustedProviderFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		statuses []int
+		want     int
+	}{
+		{name: "single rate limit", statuses: []int{429}, want: 429},
+		{name: "all rate limited", statuses: []int{429, 429, 429}, want: 429},
+		{name: "all unauthorized", statuses: []int{401, 401}, want: 401},
+		{name: "all forbidden", statuses: []int{403, 403}, want: 403},
+		{name: "mixed auth ends forbidden", statuses: []int{401, 403}, want: 403},
+		{name: "mixed auth ends unauthorized", statuses: []int{403, 401}, want: 401},
+		{name: "rate limit and server failure", statuses: []int{429, 503}, want: 502},
+		{name: "server failure and rate limit", statuses: []int{503, 429}, want: 502},
+		{name: "auth and rate limit", statuses: []int{401, 429}, want: 502},
+		{name: "auth and server failure", statuses: []int{403, 500}, want: 502},
+		{name: "network and rate limit", statuses: []int{0, 429}, want: 502},
+		{name: "auth and network", statuses: []int{401, 0}, want: 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var providers []Provider
+			for index, status := range tc.statuses {
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-Upstream-Secret", "SECRET")
+					http.Error(w, "SECRET provider credentials and diagnostics", status)
+				}))
+				t.Cleanup(upstream.Close)
+				if status == 0 {
+					// Keep a real closed address to exercise a transport failure,
+					// rather than treating an HTTP status as a network failure.
+					upstream.Close()
+				}
+				id := fmt.Sprintf("provider-%d", index)
+				providers = append(providers, Provider{ID: id, Name: id, BaseURL: upstream.URL, Enabled: true, APIKey: "SECRET"})
+			}
+			service := newRelayServiceForTest(t, Config{Version: 1, Providers: providers})
+			rec := performRelayRequest(t, service, http.MethodPost, "/v1/chat/completions", []byte(`{"model":"test-model","messages":[]}`), nil)
+			if rec.Code != tc.want {
+				t.Fatalf("expected HTTP %d, got %d: %s", tc.want, rec.Code, rec.Body.String())
+			}
+			var response struct {
+				Error     string   `json:"error"`
+				Attempted []string `json:"attempted"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("invalid exhaustion response: %v", err)
+			}
+			if response.Error != "all upstream providers failed" || len(response.Attempted) != len(providers) {
+				t.Fatalf("unexpected exhaustion response: %+v", response)
+			}
+			if strings.Contains(rec.Body.String(), "SECRET") || rec.Header().Get("X-Upstream-Secret") != "" {
+				t.Fatal("exhaustion response leaked upstream content or headers")
+			}
+			snapshots := snapshotByProviderID(t, service)
+			for index, status := range tc.statuses {
+				provider := snapshots[providers[index].ID]
+				if provider.Status.LastPickedAt == nil || provider.Status.LastStatusCode != status {
+					t.Fatalf("provider %d was not attempted or recorded correctly", index)
+				}
+			}
+		})
+	}
+}
+
+func TestProxyRetriesAfterAuthenticationFailure(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "SECRET rejected key", status)
+			}))
+			defer primary.Close()
+			secondary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"translated"}}]}`))
+			}))
+			defer secondary.Close()
+			service := newRelayServiceForTest(t, Config{
+				Version: 1,
+				Providers: []Provider{
+					{ID: "primary", Name: "Primary", BaseURL: primary.URL, Enabled: true},
+					{ID: "secondary", Name: "Secondary", BaseURL: secondary.URL, Enabled: true},
+				},
+			})
+			rec := performRelayRequest(t, service, http.MethodPost, "/v1/chat/completions", []byte(`{"model":"test-model","messages":[]}`), nil)
+			if rec.Code != http.StatusOK || rec.Header().Get("X-EasyFlowHub-Relay-Provider") != "secondary" || !strings.Contains(rec.Body.String(), "translated") {
+				t.Fatalf("expected secondary success, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := snapshotByProviderID(t, service)["primary"].Status.LastStatusCode; got != status {
+				t.Fatalf("expected primary failure status %d, got %d", status, got)
+			}
+		})
+	}
+}
+
+func TestProxyNoMatchingProviderRemainsGatewayError(t *testing.T) {
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{{
+			ID: "primary", Name: "Primary", BaseURL: "http://127.0.0.1:1", Enabled: true, ModelPatterns: []string{"other-model"},
+		}},
+	})
+	rec := performRelayRequest(t, service, http.MethodPost, "/v1/chat/completions", []byte(`{"model":"test-model","messages":[]}`), nil)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "all upstream providers failed") {
+		t.Fatalf("expected generic gateway error for no matching candidates, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProxyNoConfiguredProviderHasStableError(t *testing.T) {
+	service := newRelayServiceForTest(t, Config{Version: 1})
+	rec := performRelayRequest(t, service, http.MethodPost, "/v1/chat/completions", []byte(`{"model":"test-model","messages":[]}`), nil)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "no enabled relay providers configured") {
+		t.Fatalf("expected stable no-provider error, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTransportFailureSnapshotDoesNotExposeRequestURLCredentials(t *testing.T) {
+	service := newRelayServiceForTest(t, Config{
+		Version: 1,
+		Providers: []Provider{{
+			ID: "primary", Name: "Primary",
+			BaseURL: "http://url-user:url-password@127.0.0.1:1/v1?token=base-query-secret",
+			Enabled: true,
+		}},
+	})
+	rec := performRelayRequest(
+		t,
+		service,
+		http.MethodPost,
+		"/v1/chat/completions?client_key=request-query-secret",
+		[]byte(`{"model":"test-model","messages":[]}`),
+		nil,
+	)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected gateway error for unavailable upstream, got %d: %s", rec.Code, rec.Body.String())
+	}
+	status := snapshotByProviderID(t, service)["primary"].Status
+	for _, secret := range []string{"url-user", "url-password", "base-query-secret", "request-query-secret"} {
+		if strings.Contains(status.LastError, secret) {
+			t.Fatalf("provider status leaked URL credential %q: %s", secret, status.LastError)
+		}
 	}
 }
 

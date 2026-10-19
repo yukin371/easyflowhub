@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"scriptmgr/internal/extensions"
+	"scriptmgr/internal/localapi"
 	"scriptmgr/internal/mcpcli"
 	"scriptmgr/internal/model"
 	"scriptmgr/internal/relay"
@@ -25,15 +26,29 @@ type API interface {
 	CancelSession(sessionID string) (model.SessionRecord, error)
 	CancelTask(taskID string) (model.SessionRecord, error)
 	ListCategories() (map[string]int, error)
+	// Script file management (roots, source editing, import, trash)
+	ListRootDetails() ([]string, []string, error)
+	AddRoot(path string) (string, error)
+	RemoveRoot(path string) error
+	ReadScriptSource(scriptID string) (model.ScriptSource, error)
+	WriteScriptSource(scriptID, content string) (model.ScriptSource, error)
+	CreateScript(req model.CreateScriptRequest) (model.ScriptRecord, error)
+	ImportScripts(req model.ImportScriptsRequest) (model.ImportScriptsResponse, error)
+	DeleteScript(scriptID string) (model.ScriptTrashEntry, error)
+	ListScriptTrash() ([]model.ScriptTrashEntry, error)
+	RestoreScriptTrash(entryID string) (model.ScriptTrashEntry, error)
+	PurgeScriptTrash(entryID string) error
+	EmptyScriptTrash() (int, error)
 }
 
 // Server handles HTTP API requests
 type Server struct {
-	api   API
-	mux   *http.ServeMux
-	hub   *Hub
-	mcp   *MCPServer
-	relay *relay.Service
+	api     API
+	mux     *http.ServeMux
+	handler http.Handler
+	hub     *Hub
+	mcp     *MCPServer
+	relay   *relay.Service
 }
 
 // MCPServer handles MCP-related state tracking
@@ -61,6 +76,7 @@ func NewServerWithRelay(api API, relayService *relay.Service) *Server {
 		},
 	}
 	s.routes()
+	s.handler = localapi.WithBrowserOrigins(s.mux)
 	return s
 }
 
@@ -74,6 +90,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/tasks/{id}/log", s.handleTaskLog)
 	s.mux.HandleFunc("POST /api/cancel/{id}", s.handleCancel)
 	s.mux.HandleFunc("GET /ws", ServeWS(s.hub, DefaultUpgrader))
+	// Script file management
+	s.mux.HandleFunc("GET /api/roots", s.handleListRoots)
+	s.mux.HandleFunc("POST /api/roots", s.handleAddRoot)
+	s.mux.HandleFunc("DELETE /api/roots", s.handleRemoveRoot)
+	s.mux.HandleFunc("GET /api/scripts/{id}/source", s.handleReadScriptSource)
+	s.mux.HandleFunc("PUT /api/scripts/{id}/source", s.handleWriteScriptSource)
+	s.mux.HandleFunc("POST /api/scripts", s.handleCreateScript)
+	s.mux.HandleFunc("POST /api/scripts/import", s.handleImportScripts)
+	s.mux.HandleFunc("DELETE /api/scripts/{id}", s.handleDeleteScript)
+	s.mux.HandleFunc("GET /api/trash/scripts", s.handleListScriptTrash)
+	s.mux.HandleFunc("DELETE /api/trash/scripts", s.handleEmptyScriptTrash)
+	s.mux.HandleFunc("POST /api/trash/scripts/{id}/restore", s.handleRestoreScriptTrash)
+	s.mux.HandleFunc("DELETE /api/trash/scripts/{id}", s.handlePurgeScriptTrash)
 	// MCP category management endpoints
 	s.mux.HandleFunc("GET /api/mcp/categories", s.handleListMCPCategories)
 	s.mux.HandleFunc("GET /api/mcp/servers", s.handleListMCPServers)
@@ -99,17 +128,7 @@ func (s *Server) StartHub() {
 
 // ServeHTTP implements http.Handler interface
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Add CORS headers for Tauri
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	s.mux.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }
 
 func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
@@ -457,7 +476,7 @@ func (s *Server) handleRelayPutConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
-	items, roots, err := s.relay.ListExtensions()
+	items, roots, err := s.relay.ListExtensionsForAPI()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -472,7 +491,7 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListExtensionContributions(w http.ResponseWriter, r *http.Request) {
-	contributions, err := s.relay.EffectiveContributions()
+	contributions, err := s.relay.EffectiveContributionsForAPI()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return

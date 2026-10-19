@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,8 @@ type Service struct {
 	providerStatuses map[string]*ProviderStatus
 	failureThreshold int
 }
+
+const redactedSecretValue = "__EASYFLOWHUB_REDACTED__"
 
 func NewService(stateDir string) (*Service, error) {
 	registry, err := extensions.NewRegistry(stateDir)
@@ -59,6 +62,9 @@ func (s *Service) LoadConfigPath() string {
 }
 
 func (s *Service) SaveConfig(cfg Config) error {
+	if existing, err := s.store.Load(); err == nil {
+		cfg = preserveUnchangedSecrets(cfg, existing)
+	}
 	return s.store.Save(cfg)
 }
 
@@ -70,6 +76,22 @@ func (s *Service) ListExtensions() ([]extensions.ListedExtension, []string, erro
 	return items, s.extensions.Roots(), err
 }
 
+func (s *Service) ListExtensionsForAPI() ([]extensions.ListedExtension, []string, error) {
+	items, roots, err := s.ListExtensions()
+	if err != nil {
+		return nil, roots, err
+	}
+	return redactListedExtensions(items), roots, nil
+}
+
+func (s *Service) EffectiveContributionsForAPI() (extensions.EffectiveContributions, error) {
+	contributions, err := s.EffectiveContributions()
+	if err != nil {
+		return extensions.EffectiveContributions{}, err
+	}
+	return redactEffectiveContributions(contributions), nil
+}
+
 func (s *Service) Snapshot() (Snapshot, error) {
 	cfg, err := s.LoadConfig()
 	if err != nil {
@@ -77,8 +99,8 @@ func (s *Service) Snapshot() (Snapshot, error) {
 	}
 
 	snapshot := Snapshot{
-		Config:          cfg,
-		EffectiveConfig: cfg.Normalize(),
+		Config:          redactConfig(cfg),
+		EffectiveConfig: redactConfig(cfg.Normalize()),
 		Providers:       s.providerSnapshots(cfg.Normalize()),
 	}
 
@@ -88,9 +110,9 @@ func (s *Service) Snapshot() (Snapshot, error) {
 		if err != nil {
 			snapshot.ExtensionError = err.Error()
 		} else {
-			snapshot.Extensions = items
+			snapshot.Extensions = redactListedExtensions(items)
 			if effectiveCfg, err := s.mergeEffectiveConfig(cfg); err == nil {
-				snapshot.EffectiveConfig = effectiveCfg
+				snapshot.EffectiveConfig = redactConfig(effectiveCfg)
 				snapshot.Providers = s.providerSnapshots(effectiveCfg)
 			} else {
 				snapshot.ExtensionError = err.Error()
@@ -143,11 +165,12 @@ func (s *Service) handleProxy(w http.ResponseWriter, r *http.Request, stripPrefi
 
 	excluded := map[string]bool{}
 	attempted := []string{}
+	failedStatuses := []int{}
 
 	for {
 		provider, ok := s.pickProvider(cfg, route, model, excluded)
 		if !ok {
-			writeJSON(w, http.StatusBadGateway, map[string]any{
+			writeJSON(w, exhaustedStatus(failedStatuses), map[string]any{
 				"ok":        false,
 				"error":     "all upstream providers failed",
 				"route_id":  route.ID,
@@ -161,14 +184,16 @@ func (s *Service) handleProxy(w http.ResponseWriter, r *http.Request, stripPrefi
 		attempted = append(attempted, provider.ID)
 		resp, err := s.forward(r, body, provider, targetPath)
 		if err != nil {
-			s.recordFailure(provider.ID, 0, err.Error())
+			s.recordFailure(provider.ID, 0, safeProviderErrorMessage(err))
 			excluded[provider.ID] = true
+			failedStatuses = append(failedStatuses, 0)
 			continue
 		}
 
 		if retryableStatus(resp.StatusCode) {
 			s.recordFailure(provider.ID, resp.StatusCode, fmt.Sprintf("upstream status %d", resp.StatusCode))
 			excluded[provider.ID] = true
+			failedStatuses = append(failedStatuses, resp.StatusCode)
 			_ = resp.Body.Close()
 			continue
 		}
@@ -367,7 +392,7 @@ func (s *Service) providerSnapshots(cfg Config) []ProviderSnapshot {
 		status := s.ensureStatusLocked(provider.ID)
 		copyStatus := *status
 		snapshots = append(snapshots, ProviderSnapshot{
-			Provider: provider,
+			Provider: redactProvider(provider),
 			Status:   copyStatus,
 		})
 	}
@@ -377,6 +402,154 @@ func (s *Service) providerSnapshots(cfg Config) []ProviderSnapshot {
 	})
 
 	return snapshots
+}
+
+func redactConfig(cfg Config) Config {
+	for i := range cfg.Providers {
+		cfg.Providers[i] = redactProvider(cfg.Providers[i])
+	}
+	return cfg
+}
+
+func redactProvider(provider Provider) Provider {
+	if provider.APIKey != "" {
+		provider.APIKey = redactedSecretValue
+	}
+	if hasURLCredentials(provider.BaseURL) {
+		provider.BaseURL = redactedSecretValue
+	}
+	provider.Headers = redactHeaders(provider.Headers)
+	return provider
+}
+
+func hasURLCredentials(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return strings.ContainsAny(value, "?#@")
+	}
+	return parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != ""
+}
+
+func safeProviderErrorMessage(err error) string {
+	var requestErr *url.Error
+	if errors.As(err, &requestErr) {
+		return requestErr.Op + " upstream request failed"
+	}
+	message := err.Error()
+	if strings.Contains(message, " missing env ") || strings.Contains(message, " is empty") {
+		return message
+	}
+	return "provider request failed"
+}
+
+func redactHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	result := cloneHeaders(headers)
+	for name, value := range result {
+		if isSensitiveHeaderName(name) && value != "" {
+			result[name] = redactedSecretValue
+		}
+	}
+	return result
+}
+
+func redactListedExtensions(items []extensions.ListedExtension) []extensions.ListedExtension {
+	result := append([]extensions.ListedExtension(nil), items...)
+	for i := range result {
+		if result[i].Manifest == nil {
+			continue
+		}
+		manifest := *result[i].Manifest
+		manifest.Contributions.RelayProviders = append([]extensions.RelayProviderContribution(nil), manifest.Contributions.RelayProviders...)
+		for j := range manifest.Contributions.RelayProviders {
+			provider := &manifest.Contributions.RelayProviders[j]
+			if hasURLCredentials(provider.BaseURL) {
+				provider.BaseURL = redactedSecretValue
+			}
+			provider.Headers = redactHeaders(provider.Headers)
+		}
+		result[i].Manifest = &manifest
+	}
+	return result
+}
+
+func redactEffectiveContributions(contributions extensions.EffectiveContributions) extensions.EffectiveContributions {
+	result := contributions
+	result.RelayProviders = append([]extensions.EffectiveRelayProviderContribution(nil), contributions.RelayProviders...)
+	for i := range result.RelayProviders {
+		if hasURLCredentials(result.RelayProviders[i].BaseURL) {
+			result.RelayProviders[i].BaseURL = redactedSecretValue
+		}
+		result.RelayProviders[i].Headers = redactHeaders(result.RelayProviders[i].Headers)
+	}
+	return result
+}
+
+func preserveUnchangedSecrets(next, existing Config) Config {
+	previousByID := make(map[string]Provider, len(existing.Providers))
+	for _, provider := range existing.Providers {
+		previousByID[provider.ID] = provider
+	}
+
+	for i := range next.Providers {
+		provider := &next.Providers[i]
+		previous, ok := previousByID[provider.ID]
+		if provider.BaseURL == redactedSecretValue {
+			if ok {
+				provider.BaseURL = previous.BaseURL
+			} else {
+				provider.BaseURL = ""
+			}
+		}
+		if provider.APIKey == redactedSecretValue {
+			if !ok {
+				provider.APIKey = ""
+			} else if provider.APIKeyEnv == "" || provider.APIKeyEnv == previous.APIKeyEnv {
+				provider.APIKey = previous.APIKey
+			} else {
+				provider.APIKey = ""
+			}
+		}
+		for name, value := range provider.Headers {
+			if !isSensitiveHeaderName(name) {
+				continue
+			}
+			if value == "" {
+				delete(provider.Headers, name)
+				continue
+			}
+			if value != redactedSecretValue {
+				continue
+			}
+			if previousValue, found := lookupHeader(previous.Headers, name); ok && found {
+				provider.Headers[name] = previousValue
+			} else {
+				delete(provider.Headers, name)
+			}
+		}
+	}
+	return next
+}
+
+func lookupHeader(headers map[string]string, name string) (string, bool) {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func isSensitiveHeaderName(name string) bool {
+	name = strings.ToLower(strings.ReplaceAll(name, "-", ""))
+	for _, marker := range []string{"authorization", "auth", "apikey", "key", "token", "secret", "credential", "password", "cookie", "signature", "session", "assertion", "bearer", "private", "dpop"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) statusHealthy(providerID string) bool {
@@ -453,7 +626,28 @@ func extractModel(body []byte) string {
 }
 
 func retryableStatus(statusCode int) bool {
-	return statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError
+	return statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden ||
+		statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError
+}
+
+// Preserve actionable categories only when every attempted provider failed
+// for that reason. Mixed failures and transport errors remain gateway errors.
+func exhaustedStatus(statuses []int) int {
+	if len(statuses) == 0 {
+		return http.StatusBadGateway
+	}
+	allRateLimited, allAuthFailed := true, true
+	for _, status := range statuses {
+		allRateLimited = allRateLimited && status == http.StatusTooManyRequests
+		allAuthFailed = allAuthFailed && (status == http.StatusUnauthorized || status == http.StatusForbidden)
+	}
+	if allRateLimited {
+		return http.StatusTooManyRequests
+	}
+	if allAuthFailed {
+		return statuses[len(statuses)-1]
+	}
+	return http.StatusBadGateway
 }
 
 func joinURLPath(basePath, requestPath string) string {

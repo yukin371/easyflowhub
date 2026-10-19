@@ -77,6 +77,56 @@ func (m *MockAPI) ListCategories() (map[string]int, error) {
 	return make(map[string]int), nil
 }
 
+// Script file management stubs: the HTTP tests only assert routing and status
+// codes, so these return zero values unless a test overrides them.
+func (m *MockAPI) ListRootDetails() ([]string, []string, error) {
+	return m.Roots, m.Roots, m.Err
+}
+
+func (m *MockAPI) AddRoot(path string) (string, error) {
+	return path, m.Err
+}
+
+func (m *MockAPI) RemoveRoot(path string) error {
+	return m.Err
+}
+
+func (m *MockAPI) ReadScriptSource(scriptID string) (model.ScriptSource, error) {
+	return model.ScriptSource{ID: scriptID}, m.Err
+}
+
+func (m *MockAPI) WriteScriptSource(scriptID, content string) (model.ScriptSource, error) {
+	return model.ScriptSource{ID: scriptID, Content: content}, m.Err
+}
+
+func (m *MockAPI) CreateScript(req model.CreateScriptRequest) (model.ScriptRecord, error) {
+	return model.ScriptRecord{ID: req.Filename, Path: req.Filename}, m.Err
+}
+
+func (m *MockAPI) ImportScripts(req model.ImportScriptsRequest) (model.ImportScriptsResponse, error) {
+	return model.ImportScriptsResponse{OK: m.Err == nil, Imported: []model.ScriptRecord{}, Failed: []model.ImportFailure{}}, m.Err
+}
+
+func (m *MockAPI) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) {
+	return model.ScriptTrashEntry{ID: scriptID}, m.Err
+}
+
+func (m *MockAPI) ListScriptTrash() ([]model.ScriptTrashEntry, error) {
+	return []model.ScriptTrashEntry{}, m.Err
+}
+
+func (m *MockAPI) RestoreScriptTrash(entryID string) (model.ScriptTrashEntry, error) {
+	return model.ScriptTrashEntry{ID: entryID}, m.Err
+}
+
+func (m *MockAPI) PurgeScriptTrash(entryID string) error {
+	return m.Err
+}
+
+func (m *MockAPI) EmptyScriptTrash() (int, error) {
+	return 0, m.Err
+}
+
 func TestNewServer(t *testing.T) {
 	mock := &MockAPI{}
 	srv := NewServer(mock)
@@ -300,6 +350,25 @@ func TestHandleGetTask_NotFound(t *testing.T) {
 
 func TestHandleRelayGetConfig(t *testing.T) {
 	stateDir := t.TempDir()
+	extensionDir := filepath.Join(stateDir, "extensions", "secret-provider")
+	if err := os.MkdirAll(extensionDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll extension dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(extensionDir, "plugin.json"), []byte(`{
+  "id": "secret-provider",
+  "name": "Secret Provider",
+  "version": "1.0.0",
+  "contributions": {
+    "relay_providers": [{
+      "id": "extension-provider",
+      "name": "Extension Provider",
+      "base_url": "https://extension.example.com",
+      "headers": {"X-API-Key": "extension-manifest-secret"}
+    }]
+  }
+}`), 0o644); err != nil {
+		t.Fatalf("WriteFile extension manifest failed: %v", err)
+	}
 	relayService, err := relay.NewService(stateDir)
 	if err != nil {
 		t.Fatalf("NewService failed: %v", err)
@@ -307,7 +376,7 @@ func TestHandleRelayGetConfig(t *testing.T) {
 	if err := relayService.SaveConfig(relay.Config{
 		Version: 1,
 		Providers: []relay.Provider{
-			{ID: "primary", Name: "Primary", BaseURL: "https://api.example.com", Enabled: true},
+			{ID: "primary", Name: "Primary", BaseURL: "https://api.example.com", APIKey: "scriptmgr-api-secret", Headers: map[string]string{"Authorization": "Bearer scriptmgr-header-secret"}, Enabled: true},
 		},
 		Routes: []relay.Route{
 			{ID: "default", PathPrefixes: []string{"/v1/"}, ProviderIDs: []string{"primary"}},
@@ -325,20 +394,49 @@ func TestHandleRelayGetConfig(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	for _, secret := range []string{"scriptmgr-api-secret", "scriptmgr-header-secret", "extension-manifest-secret"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Fatalf("relay config GET leaked secret %q", secret)
+		}
+	}
 
 	var response struct {
-		OK       bool `json:"ok"`
-		Snapshot struct {
-			Config struct {
-				Providers []relay.Provider `json:"providers"`
-			} `json:"config"`
-		} `json:"snapshot"`
+		OK       bool           `json:"ok"`
+		Snapshot relay.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("json decode failed: %v", err)
 	}
 	if !response.OK || len(response.Snapshot.Config.Providers) != 1 {
 		t.Fatalf("unexpected relay response: %+v", response)
+	}
+	if got := response.Snapshot.Config.Providers[0].APIKey; got != "__EASYFLOWHUB_REDACTED__" {
+		t.Fatalf("expected main HTTP API to redact API key, got %q", got)
+	}
+	if len(response.Snapshot.Extensions) != 1 || response.Snapshot.Extensions[0].Manifest.Contributions.RelayProviders[0].Headers["X-API-Key"] != "__EASYFLOWHUB_REDACTED__" {
+		t.Fatalf("expected extension snapshot headers to be redacted, got %+v", response.Snapshot.Extensions)
+	}
+	body, err := json.Marshal(response.Snapshot.Config)
+	if err != nil {
+		t.Fatalf("marshal redacted relay config failed: %v", err)
+	}
+	putReq := httptest.NewRequest(http.MethodPut, "/api/relay/config", strings.NewReader(string(body)))
+	putRec := httptest.NewRecorder()
+	srv.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("expected relay config PUT 200, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+	for _, secret := range []string{"scriptmgr-api-secret", "scriptmgr-header-secret", "extension-manifest-secret"} {
+		if strings.Contains(putRec.Body.String(), secret) {
+			t.Fatalf("relay config PUT leaked secret %q", secret)
+		}
+	}
+	saved, err := relayService.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig after redacted PUT failed: %v", err)
+	}
+	if saved.Providers[0].APIKey != "scriptmgr-api-secret" || saved.Providers[0].Headers["Authorization"] != "Bearer scriptmgr-header-secret" {
+		t.Fatalf("redacted config PUT lost saved secrets: %+v", saved.Providers[0])
 	}
 }
 
@@ -348,7 +446,12 @@ func TestHandleListExtensions(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{"id":"sample","name":"Sample","version":"1.0.0"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{
+  "id":"sample",
+  "name":"Sample",
+  "version":"1.0.0",
+  "contributions":{"relay_providers":[{"id":"sample-provider","name":"Sample Provider","base_url":"https://ext.example.com","headers":{"X-API-Key":"extension-api-secret"}}]}
+}`), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
@@ -365,6 +468,9 @@ func TestHandleListExtensions(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "extension-api-secret") || !strings.Contains(rec.Body.String(), "__EASYFLOWHUB_REDACTED__") {
+		t.Fatalf("extension list did not redact provider credentials: %s", rec.Body.String())
 	}
 
 	var response struct {
@@ -386,6 +492,15 @@ func TestHandleListExtensions(t *testing.T) {
 	if response.Extensions[0].Manifest == nil || response.Extensions[0].Manifest.ID != "sample" {
 		t.Fatalf("unexpected manifest payload: %+v", response.Extensions[0].Manifest)
 	}
+	contributionsReq := httptest.NewRequest(http.MethodGet, "/api/extensions/contributions", nil)
+	contributionsRec := httptest.NewRecorder()
+	srv.ServeHTTP(contributionsRec, contributionsReq)
+	if contributionsRec.Code != http.StatusOK {
+		t.Fatalf("expected contributions 200, got %d: %s", contributionsRec.Code, contributionsRec.Body.String())
+	}
+	if strings.Contains(contributionsRec.Body.String(), "extension-api-secret") || !strings.Contains(contributionsRec.Body.String(), "__EASYFLOWHUB_REDACTED__") {
+		t.Fatalf("extension contributions did not redact provider credentials: %s", contributionsRec.Body.String())
+	}
 }
 
 func TestHandleListExtensionContributions(t *testing.T) {
@@ -400,7 +515,7 @@ func TestHandleListExtensionContributions(t *testing.T) {
   "version":"1.0.0",
   "contributions":{
     "relay_providers":[
-      {"id":"provider-ext","name":"Extension Provider","base_url":"https://ext.example.com"}
+      {"id":"provider-ext","name":"Extension Provider","base_url":"https://ext.example.com","headers":{"Authorization":"Bearer contribution-secret"}}
     ]
   }
 }`), 0o644); err != nil {
@@ -441,6 +556,9 @@ func TestHandleListExtensionContributions(t *testing.T) {
 	}
 	if response.Contributions.RelayProviders[0].ID != "provider-ext" {
 		t.Fatalf("unexpected provider payload: %+v", response.Contributions.RelayProviders[0])
+	}
+	if strings.Contains(rec.Body.String(), "contribution-secret") || !strings.Contains(rec.Body.String(), "__EASYFLOWHUB_REDACTED__") {
+		t.Fatalf("extension contribution secret was not redacted: %s", rec.Body.String())
 	}
 }
 

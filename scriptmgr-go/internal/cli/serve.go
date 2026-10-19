@@ -9,46 +9,25 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"scriptmgr/internal/api"
 	httpsrv "scriptmgr/internal/http"
+	"scriptmgr/internal/localapi"
 	"scriptmgr/internal/relay"
 	"scriptmgr/internal/runtime"
 )
 
 // runServe starts the HTTP API server
 func runServe(args []string, svc *api.API, stateDir string) error {
-	addr := ":8765" // Default port (less common than 8080)
-
-	// Parse arguments
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--port", "-p":
-			if i+1 >= len(args) {
-				return errors.New("missing value for --port")
-			}
-			i++
-			port := args[i]
-			// Validate port format
-			if port[0] != ':' {
-				port = ":" + port
-			}
-			addr = port
-		case "--help", "-h":
-			printServeUsage()
-			return nil
-		default:
-			// Assume it's an address without flag
-			if args[i][0] == ':' || (len(args[i]) > 1 && args[i][0] >= '0' && args[i][0] <= '9') {
-				addr = args[i]
-				if addr[0] != ':' {
-					addr = ":" + addr
-				}
-			} else {
-				return fmt.Errorf("unknown option: %s", args[i])
-			}
-		}
+	addr, showHelp, err := parseServeAddress(args)
+	if err != nil {
+		return err
+	}
+	if showHelp {
+		printServeUsage()
+		return nil
 	}
 
 	// Create runtime manager for PID/Port/Lock file management
@@ -141,14 +120,61 @@ func printServeUsage() {
 	fmt.Println("Usage: scriptmgr serve [options] [addr]")
 	fmt.Println()
 	fmt.Println("Options:")
-	fmt.Println("  --port, -p <port>  Port to listen on (default: 8765)")
+	fmt.Println("  --port, -p <port>  Port to listen on at 127.0.0.1 (default: 8765)")
 	fmt.Println("  --help, -h           Show this help message")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  scriptmgr serve                    # Start on default port 8765")
-	fmt.Println("  scriptmgr serve :3000              # Start on port 3000")
-	fmt.Println("  scriptmgr serve --port 9000       # Start on port 9000")
-	fmt.Println("  scriptmgr serve 127.0.0.1:8765  # Bind to specific IP")
+	fmt.Println("  scriptmgr serve                    # Start on 127.0.0.1:8765")
+	fmt.Println("  scriptmgr serve --port 9000        # Start on 127.0.0.1:9000")
+	fmt.Println("  scriptmgr serve 127.0.0.1:8765     # Bind to a specific IP")
+	fmt.Println("  scriptmgr serve [::1]:8765         # Bind to IPv6 loopback")
+}
+
+func parseServeAddress(args []string) (string, bool, error) {
+	addr := localapi.LoopbackAddress("8765")
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--port", "-p":
+			if i+1 >= len(args) {
+				return "", false, errors.New("missing value for --port")
+			}
+			i++
+			port := strings.TrimPrefix(args[i], ":")
+			if !validPort(port) {
+				return "", false, fmt.Errorf("invalid server port: %s", args[i])
+			}
+			addr = localapi.LoopbackAddress(port)
+		case "--help", "-h":
+			return "", true, nil
+		default:
+			arg := args[i]
+			if strings.HasPrefix(arg, ":") {
+				port := strings.TrimPrefix(arg, ":")
+				if !validPort(port) {
+					return "", false, fmt.Errorf("invalid server address: %s", arg)
+				}
+				addr = net.JoinHostPort("", port)
+				continue
+			}
+			if _, _, err := net.SplitHostPort(arg); err == nil {
+				addr = arg
+				continue
+			}
+			if !validPort(arg) {
+				return "", false, fmt.Errorf("unknown option: %s", arg)
+			}
+			addr = localapi.LoopbackAddress(arg)
+		}
+	}
+	if !localapi.IsLoopbackAddress(addr) {
+		return "", false, fmt.Errorf("scriptmgr serve only supports loopback addresses; got %s", addr)
+	}
+	return addr, false, nil
+}
+
+func validPort(value string) bool {
+	port, err := strconv.Atoi(value)
+	return err == nil && port >= 1 && port <= 65535
 }
 
 // extractPort parses the port number from an address string

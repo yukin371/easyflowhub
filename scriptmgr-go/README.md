@@ -42,7 +42,7 @@ Claude Code 配置示例：
 {
   "mcpServers": {
     "scriptmgr": {
-      "command": "D:/AllScripts/deskflow/scriptmgr-go/scriptmgr.exe", // 路径根据实际情况调整
+      "command": "<path-to-easyflowhub>/scriptmgr-go/scriptmgr.exe", // 替换为本机实际路径
       "args": ["mcp"]
     }
   }
@@ -84,8 +84,10 @@ Claude Code 配置示例：
 
 启动服务器：
 ```bash
-scriptmgr serve :8765
+scriptmgr serve
 ```
+
+默认监听 `127.0.0.1:8765`，也可绑定 `127.0.0.0/8` 或 `[::1]` 的 loopback 地址。非 loopback 地址（包括 `:8765`、`0.0.0.0` 和局域网 IP）会被拒绝；管理 API 可执行本机脚本，目前不提供远程认证模式。Tauri 打包与 Vite 开发来源采用 CORS 白名单；CLI 等不带 `Origin` 的本机客户端仍可调用。CORS 不提供本机进程认证。
 
 端点：
 - `GET /api/scripts` - 列出脚本
@@ -93,9 +95,23 @@ scriptmgr serve :8765
 - `POST /api/run` - 运行脚本
 - `GET /api/tasks` - 任务列表
 - `GET /api/tasks/{id}` - 任务详情
+- `GET /api/roots` - 列出存储位置（`roots` 全部 / `custom` 已固定）
+- `POST /api/roots` - 固定存储位置（`{"path": "..."}`）
+- `DELETE /api/roots?path=...` - 取消固定
+- `GET /api/scripts/{id}/source` - 读取脚本源码
+- `PUT /api/scripts/{id}/source` - 保存脚本源码（原子替换）
+- `POST /api/scripts` - 在已配置 root 中新建脚本
+- `POST /api/scripts/import` - 导入外部脚本文件（不覆盖同名）
+- `DELETE /api/scripts/{id}` - 移入脚本回收站
+- `GET /api/trash/scripts` - 回收站列表
+- `POST /api/trash/scripts/{id}/restore` - 恢复
+- `DELETE /api/trash/scripts/{id}` - 彻底删除
+- `DELETE /api/trash/scripts` - 清空脚本回收站
 - `GET /api/relay/config` - 读取 relay 配置快照（供 manager 使用）
 - `PUT /api/relay/config` - 保存 relay 配置
 - `GET /api/extensions` - 列出 manifest 扩展
+
+文件写入边界：目标必须在已配置 root 内，扩展名限定 `.ps1` / `.py` / `.bat` / `.cmd`，源码上限 2 MB。删除走 `trash/scripts/` 目录（跨盘时自动退化为复制 + 删除），恢复遇到同名文件会报错而不是覆盖。
 
 说明：
 - `scriptmgr serve` 负责管理接口
@@ -107,6 +123,8 @@ scriptmgr serve :8765
 ```bash
 scriptmgr relay serve --port 8787
 ```
+
+Relay 默认绑定 `127.0.0.1:8787`。配置 API 会隐藏 API key、认证类 header 和 URL 中的 userinfo / query / fragment；原样保存占位值会保留既有值。旧 `api_key` 仍以明文保存在本地 `relay.json`，新配置应优先使用 `api_key_env`。
 
 示例 `relay.json`：
 ```json
@@ -147,13 +165,14 @@ scriptmgr relay serve --port 8787
 
 - 推荐使用 `api_key_env` 引用环境变量，而不是把密钥直接写进 `relay.json`
 - 旧 `api_key` 仍兼容，但应视为迁移期字段
+- Relay 与 ScriptMgr 默认只监听 loopback；未知浏览器来源由白名单策略拒绝，但本机进程仍可直接访问本地 API
 
 当前正式支持的 relay / 负载均衡能力：
 
 - OpenAI 兼容路径转发：`/v1/*`
 - provider + route 配置驱动的选路
 - `weighted_round_robin` 作为当前唯一正式承诺的负载策略
-- 最小 failover：`429`、`5xx`、timeout
+- 最小 failover：`401` / `403`、`429`、`5xx`、timeout；只有所有尝试均为限流时才向调用方返回 `429`，只有所有尝试均为鉴权失败时才返回最后一次 `401` / `403`，混合失败仍返回 `502`
 - provider health 快照和管理接口
 - extension manifest 注入的 relay provider / route 贡献
 
