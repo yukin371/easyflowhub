@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"scriptmgr/internal/extensions"
 	"scriptmgr/internal/localapi"
+	"scriptmgr/internal/mcp"
 	"scriptmgr/internal/mcpcli"
 	"scriptmgr/internal/model"
 	"scriptmgr/internal/relay"
@@ -41,21 +41,33 @@ type API interface {
 	EmptyScriptTrash() (int, error)
 }
 
+// ExtensionCatalog is the narrow read surface the HTTP layer needs to serve
+// the extension list, extension contributions and the MCP server catalog (F13).
+// It is deliberately separate from relay.Service so those endpoints do not
+// detour through relay: relay only consumes its own provider/route
+// contributions, while manifest discovery and the MCP catalog are served
+// independently of whether relay is initialised.
+type ExtensionCatalog interface {
+	ListExtensionsForAPI() ([]extensions.ListedExtension, []string, error)
+	EffectiveContributionsForAPI() (extensions.EffectiveContributions, error)
+	EffectiveContributions() (extensions.EffectiveContributions, error)
+	ExtensionRoots() []string
+}
+
 // Server handles HTTP API requests
 type Server struct {
 	api     API
 	mux     *http.ServeMux
 	handler http.Handler
 	hub     *Hub
-	mcp     *MCPServer
+	// router is the single owner of MCP tool-loading state (F09). The HTTP
+	// handlers delegate to it instead of tracking a parallel boolean map, so
+	// the reported "loaded" flag always reflects the tools that are actually
+	// registered for tools/call.
+	router *mcp.ToolRouter
+	// catalog serves extension and MCP-catalog queries independently of relay.
+	catalog ExtensionCatalog
 	relay   *relay.Service
-}
-
-// MCPServer handles MCP-related state tracking
-type MCPServer struct {
-	mu               sync.RWMutex
-	loadedCategories map[string]bool
-	api              API
 }
 
 // NewServer creates a new HTTP server
@@ -64,16 +76,32 @@ func NewServer(api API) *Server {
 }
 
 // NewServerWithRelay creates a new HTTP server with optional relay integration.
+// relay.Service satisfies ExtensionCatalog, so it doubles as the catalog by
+// default; use NewServerWithCatalog when extension queries must work without a
+// relay service (F13).
 func NewServerWithRelay(api API, relayService *relay.Service) *Server {
+	var catalog ExtensionCatalog
+	if relayService != nil {
+		catalog = relayService
+	}
+	return newServer(api, relayService, catalog)
+}
+
+// NewServerWithCatalog creates a server whose extension / MCP-catalog queries
+// are served by an injected catalog, independently of relay. This keeps
+// /api/extensions and /api/mcp/servers reachable when relay is not initialised.
+func NewServerWithCatalog(api API, catalog ExtensionCatalog) *Server {
+	return newServer(api, nil, catalog)
+}
+
+func newServer(api API, relayService *relay.Service, catalog ExtensionCatalog) *Server {
 	s := &Server{
-		api:   api,
-		mux:   http.NewServeMux(),
-		hub:   NewHub(),
-		relay: relayService,
-		mcp: &MCPServer{
-			loadedCategories: make(map[string]bool),
-			api:              api,
-		},
+		api:     api,
+		mux:     http.NewServeMux(),
+		hub:     NewHub(),
+		relay:   relayService,
+		catalog: catalog,
+		router:  mcp.NewToolRouter(api, mcp.DefaultRouterConfig()),
 	}
 	s.routes()
 	s.handler = localapi.WithBrowserOrigins(s.mux)
@@ -111,6 +139,10 @@ func (s *Server) routes() {
 	if s.relay != nil {
 		s.mux.HandleFunc("GET /api/relay/config", s.handleRelayGetConfig)
 		s.mux.HandleFunc("PUT /api/relay/config", s.handleRelayPutConfig)
+	}
+	// Extension queries are served by the injected catalog, not relay, so they
+	// stay reachable when relay is not initialised (F13).
+	if s.catalog != nil {
 		s.mux.HandleFunc("GET /api/extensions", s.handleListExtensions)
 		s.mux.HandleFunc("GET /api/extensions/contributions", s.handleListExtensionContributions)
 	}
@@ -356,41 +388,28 @@ func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
-// handleListMCPCategories returns all categories with their loaded status
+// handleListMCPCategories returns all categories with their loaded status.
+// The router is the single owner of loading state, so "loaded" here always
+// matches what tools/call will actually serve (F09).
 func (s *Server) handleListMCPCategories(w http.ResponseWriter, r *http.Request) {
-	// Get all categories from scripts
-	categories, err := s.api.ListCategories()
+	categories, err := s.router.ListCategories()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	s.mcp.mu.RLock()
-	loaded := s.mcp.loadedCategories
-	s.mcp.mu.RUnlock()
-
-	// Build category info list
-	var result []map[string]any
-	for name, count := range categories {
-		result = append(result, map[string]any{
-			"name":   name,
-			"count":  count,
-			"loaded": loaded[name],
-		})
-	}
-
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
-		"categories":   result,
+		"categories":   categories,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
 func (s *Server) handleListMCPServers(w http.ResponseWriter, r *http.Request) {
 	effectiveContributions := extensions.EffectiveContributions{}
-	if s.relay != nil {
+	if s.catalog != nil {
 		var err error
-		effectiveContributions, err = s.relay.EffectiveContributions()
+		effectiveContributions, err = s.catalog.EffectiveContributions()
 		if err != nil {
 			s.writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -409,7 +428,9 @@ func (s *Server) handleListMCPServers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMCPLoadCategory marks a category as loaded
+// handleMCPLoadCategory loads a category's script tools through the router.
+// This registers the real handlers, so a reported "loaded" state corresponds
+// to tools that tools/call will actually serve (F09).
 func (s *Server) handleMCPLoadCategory(w http.ResponseWriter, r *http.Request) {
 	category := r.PathValue("category")
 	if category == "" {
@@ -417,18 +438,25 @@ func (s *Server) handleMCPLoadCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mcp.mu.Lock()
-	s.mcp.loadedCategories[category] = true
-	s.mcp.mu.Unlock()
+	result, err := s.router.LoadCategory(category)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"category": category,
-		"loaded":   true,
+		"ok":              true,
+		"category":        result.Category,
+		"loaded":          true,
+		"already_loaded":  result.AlreadyLoaded,
+		"script_count":    result.ScriptCount,
+		"total_tools":     result.TotalTools,
+		"evicted_categories": result.EvictedCategories,
 	})
 }
 
-// handleMCPUnloadCategory marks a category as unloaded
+// handleMCPUnloadCategory unloads a category's script tools through the
+// router, deregistering the handlers so the tools stop being served.
 func (s *Server) handleMCPUnloadCategory(w http.ResponseWriter, r *http.Request) {
 	category := r.PathValue("category")
 	if category == "" {
@@ -436,9 +464,10 @@ func (s *Server) handleMCPUnloadCategory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	s.mcp.mu.Lock()
-	delete(s.mcp.loadedCategories, category)
-	s.mcp.mu.Unlock()
+	if err := s.router.UnloadCategory(category); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
@@ -476,7 +505,7 @@ func (s *Server) handleRelayPutConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
-	items, roots, err := s.relay.ListExtensionsForAPI()
+	items, roots, err := s.catalog.ListExtensionsForAPI()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -491,7 +520,7 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListExtensionContributions(w http.ResponseWriter, r *http.Request) {
-	contributions, err := s.relay.EffectiveContributionsForAPI()
+	contributions, err := s.catalog.EffectiveContributionsForAPI()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -499,7 +528,7 @@ func (s *Server) handleListExtensionContributions(w http.ResponseWriter, r *http
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":            true,
-		"roots":         s.relay.ExtensionRoots(),
+		"roots":         s.catalog.ExtensionRoots(),
 		"contributions": contributions,
 	})
 }
