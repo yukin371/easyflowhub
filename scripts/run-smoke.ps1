@@ -32,7 +32,27 @@ function Invoke-Step {
         # explicitly. Without this the gate would report "passed" on a red
         # test suite.
         $global:LASTEXITCODE = 0
-        & $Action
+        # Redirecting native stderr into the pipeline keeps incidental
+        # warnings (cargo incremental lock cleanup, bun notices) from becoming
+        # terminating errors under $ErrorActionPreference = "Stop", which
+        # previously failed healthy steps in milliseconds.
+        $ErrorActionPreference = 'Continue'
+        $output = & $Action 2>&1
+        $ErrorActionPreference = 'Stop'
+        $output | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                # PowerShell 5.1 wraps merged native stderr in RemoteException;
+                # print the underlying message so real failures stay readable.
+                $text = $_.Exception.Message
+                if ([string]::IsNullOrWhiteSpace($text)) {
+                    $text = $_.ToString()
+                }
+                Write-Host "    $text" -ForegroundColor DarkYellow
+            }
+            else {
+                Write-Host "    $_"
+            }
+        }
         $exitCode = $LASTEXITCODE
         if ($null -ne $exitCode -and $exitCode -ne 0) {
             throw "step exited with code $exitCode"
