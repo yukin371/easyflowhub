@@ -31,6 +31,11 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: scriptmgr-go/go.mod
+
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
@@ -45,6 +50,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bunx tauri build
+
+      - name: Verify bundled scriptmgr sidecar
+        shell: pwsh
+        run: |
+          $builtSidecar = Resolve-Path "..\scriptmgr-go\scriptmgr.exe"
+          $bundledSidecar = "src-tauri\target\release\scriptmgr.exe"
+          if (-not (Test-Path $bundledSidecar)) {
+            throw "Tauri release output is missing scriptmgr.exe"
+          }
+          $builtHash = (Get-FileHash $builtSidecar -Algorithm SHA256).Hash
+          $bundledHash = (Get-FileHash $bundledSidecar -Algorithm SHA256).Hash
+          if ($builtHash -ne $bundledHash) {
+            throw "Bundled scriptmgr.exe does not match the freshly built sidecar"
+          }
 
       - name: List build output
         shell: pwsh
@@ -80,6 +99,10 @@ jobs:
           go-version-file: scriptmgr-go/go.mod
 
       - name: Build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
         run: go build -ldflags="-s -w" -o scriptmgr.exe ./cmd/scriptmgr
 
       - name: Upload artifact

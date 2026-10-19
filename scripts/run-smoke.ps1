@@ -9,6 +9,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
 
 $steps = New-Object System.Collections.Generic.List[object]
+$smokeFailed = $false
 
 function Invoke-Step {
     param(
@@ -26,7 +27,16 @@ function Invoke-Step {
 
     Push-Location $resolvedWorkingDirectory
     try {
+        # Native commands (bun / cargo / go) report failure through the exit
+        # code, not through a PowerShell exception, so reset it and check it
+        # explicitly. Without this the gate would report "passed" on a red
+        # test suite.
+        $global:LASTEXITCODE = 0
         & $Action
+        $exitCode = $LASTEXITCODE
+        if ($null -ne $exitCode -and $exitCode -ne 0) {
+            throw "step exited with code $exitCode"
+        }
         $duration = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 1)
         $steps.Add([pscustomobject]@{
             Name = $Name
@@ -43,7 +53,8 @@ function Invoke-Step {
             DurationSeconds = $duration
         }) | Out-Null
         Write-Host "    failed (${duration}s)" -ForegroundColor Red
-        throw
+        Write-Host ("    " + $_.Exception.Message) -ForegroundColor Red
+        $script:smokeFailed = $true
     }
     finally {
         Pop-Location
@@ -61,8 +72,20 @@ Invoke-Step -Name "Type check" -WorkingDirectory "easyflowhub-app" -Action {
     bunx tsc --noEmit
 }
 
+Invoke-Step -Name "Production build" -WorkingDirectory "easyflowhub-app" -Action {
+    bun run build
+}
+
+Invoke-Step -Name "Manager theme token audit" -WorkingDirectory "." -Action {
+    & (Join-Path $scriptRoot "check-theme-tokens.ps1")
+}
+
 Invoke-Step -Name "Cargo check" -WorkingDirectory "easyflowhub-app" -Action {
     cargo check --manifest-path src-tauri/Cargo.toml
+}
+
+Invoke-Step -Name "Rust library tests" -WorkingDirectory "easyflowhub-app" -Action {
+    cargo test --manifest-path src-tauri/Cargo.toml --lib
 }
 
 Invoke-Step -Name "Go tests" -WorkingDirectory "scriptmgr-go" -Action {
@@ -83,3 +106,9 @@ $steps | ForEach-Object {
 
 Write-Host ""
 Write-Host "Next manual step: follow docs/checklists/windows-package-smoke.md when validating packaged Windows behavior." -ForegroundColor Yellow
+
+if ($smokeFailed) {
+    Write-Host ""
+    Write-Host "Smoke FAILED: at least one gate did not pass." -ForegroundColor Red
+    exit 1
+}

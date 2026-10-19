@@ -26,3 +26,8 @@ Thumbs.db
 
 # Tauri
 easyflowhub-app/src-tauri/target/
+easyflowhub-app/src-tauri/gen/
+
+# Local sidecar and development artifacts
+scriptmgr-go/*.exe
+easyflowhub-app/.tmp-tauri-dev.log

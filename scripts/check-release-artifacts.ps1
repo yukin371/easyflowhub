@@ -60,6 +60,10 @@ Require-Artifacts -Label "Portable executable" -Patterns @(
     (Join-Path $resolvedReleaseDir "EasyFlowHub.exe")
 )
 
+Require-Artifacts -Label "ScriptMgr sidecar" -Patterns @(
+    (Join-Path $resolvedReleaseDir "scriptmgr.exe")
+)
+
 Write-Host ""
 Write-Host "Artifact preflight passed." -ForegroundColor Green
 Write-Host "Next step: follow docs/checklists/windows-package-smoke.md for manual Windows smoke." -ForegroundColor Yellow

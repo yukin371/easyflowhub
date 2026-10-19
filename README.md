@@ -47,9 +47,11 @@
 - 键盘快捷键自定义
 - 开机自启动（设置 > 通用）
 
-## v1.0.0 发布范围
+## 既有 v1.0.0 治理基线
 
-当前 `v1.0.0` 的正式目标不是做成完整平台，而是先交付稳定的桌面主路径：
+`v1.0.0` 是仓库中保留的发布治理基线，不代表当前安装包版本。当前安装包仍处于 `0.1.1`，下一轮用户体验规划见下方 `v0.2.0`。
+
+该治理基线的目标不是做成完整平台，而是先交付稳定的桌面主路径：
 
 - quick note、notes manager、todo、scripts、manager/settings 形成可回归闭环
 - Windows 打包产物下的多窗口、托盘、自启动、关闭行为稳定
@@ -62,9 +64,18 @@
 - 在扩展系统中执行任意第三方代码
 - 完整的 provider 平台化治理
 
+## v0.2.0 规划
+
+下一轮产品体验以个人效率 Hub 为目标，围绕 `Capture -> Understand -> Retrieve -> Act` 逐步加入截屏、翻译、Inbox 快速捕获、文件搜索、资源下载、录音和录音后转写，并将主要页面迁移到可读的 Windows 毛玻璃工作空间。
+
+- 需求基线：[docs/PRD-v0.2.0.md](./docs/PRD-v0.2.0.md)
+- 实施计划：[docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md](./docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md)
+- 视觉与入口决策：[docs/decisions/ADR-0004-glass-theme-and-efficiency-workspace.md](./docs/decisions/ADR-0004-glass-theme-and-efficiency-workspace.md)
+
 ## 文档入口
 
-- 正式需求基线：[docs/PRD-v1.0.0.md](./docs/PRD-v1.0.0.md)
+- 当前执行需求基线：[docs/PRD-v0.2.0.md](./docs/PRD-v0.2.0.md)
+- 既有发布治理基线：[docs/PRD-v1.0.0.md](./docs/PRD-v1.0.0.md)
 - 当前执行状态：[docs/roadmap.md](./docs/roadmap.md)
 - 项目画像与验证命令：[docs/PROJECT_PROFILE.md](./docs/PROJECT_PROFILE.md)
 - 架构边界：[docs/ARCHITECTURE_GUARDRAILS.md](./docs/ARCHITECTURE_GUARDRAILS.md)
@@ -98,6 +109,7 @@ bun tauri build
 |--------|------|
 | Ctrl+Alt+N | 新建快速笔记 |
 | Ctrl+Alt+M | 显示/隐藏管理窗口 |
+| Ctrl+Alt+Space | 打开 Action Launcher（可在设置中重录） |
 | Ctrl+Alt+D | 关闭所有快速笔记 |
 | Ctrl+Alt+H | 隐藏/显示所有快速笔记 |
 

@@ -1,4 +1,6 @@
-# build-deskflow.ps1 - Build DeskFlow with scriptmgr integration
+# build-deskflow.ps1 - Legacy DeskFlow build helper
+# DEPRECATED: the DeskFlow paths in this script no longer match the EasyFlowHub repo.
+# Use `cd easyflowhub-app; bunx tauri build` or the release workflow instead.
 #
 # Usage: .\scripts\build-deskflow.ps1
 
