@@ -3,10 +3,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPanel } from './SettingsPanel';
 import { getSettings, updateSettings } from '../../lib/tauri/settings';
-import { moduleRegistry, useToggleableModules } from '../../modules';
+import { moduleRegistry, useToggleableModules } from '../../modules/runtime';
 import { isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import type { AppSettings } from '../../types/settings';
-import type { FeatureModule } from '../../modules';
+import type { FeatureModule } from '../../modules/runtime';
 
 vi.mock('../../lib/tauri/settings', () => ({
   getSettings: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock('../../lib/tauri/launcher', () => ({
   saveConfiguredSnowShotPath: vi.fn(),
 }));
 
-vi.mock('../../modules', () => ({
+vi.mock('../../modules/runtime', () => ({
   moduleRegistry: {
     isEnabled: vi.fn(),
     toggleModule: vi.fn(),

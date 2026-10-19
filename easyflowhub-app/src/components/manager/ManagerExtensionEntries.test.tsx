@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { EffectiveManagerModuleEntry } from '../../types/scriptmgr';
-import type { FeatureModule } from '../../modules';
+import type { FeatureModule } from '../../modules/runtime';
 import {
   MANAGER_NAVIGATE_TO_EXTENSION_EVENT,
   type ManagerExtensionNavigationDetail,

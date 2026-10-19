@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { scriptsApi, tasksApi } from '../../../lib/api/scriptmgr';
 import type { ScriptSummary } from '../../../types/scriptmgr';
-import { ScriptWorkbenchDialog } from './ScriptFileDialogs';
+import { ScriptWorkbenchDialog } from './ScriptWorkbenchDialog';
 
 vi.mock('../../../lib/api/scriptmgr', () => ({
   scriptsApi: {

@@ -1,5 +1,5 @@
 import type { EffectiveExtensionContributions } from '../../types/scriptmgr';
-import type { FeatureModule as ManagerFeatureModule } from '../../modules';
+import type { FeatureModule as ManagerFeatureModule } from '../../modules/runtime';
 import { navigateToManagerExtension } from './shared/extensionNavigation';
 
 type ExtensionManagerEntry = NonNullable<

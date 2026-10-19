@@ -26,7 +26,7 @@ import {
   saveConfiguredSnowShotPath,
 } from '../../lib/tauri/launcher';
 import { DEFAULT_SETTINGS, type AppSettings, type LauncherTriggerSettings } from '../../types/settings';
-import { moduleRegistry, useToggleableModules } from '../../modules';
+import { moduleRegistry, useToggleableModules } from '../../modules/runtime';
 import { isEnabled as isAutostartEnabled, enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 import { SettingsSectionCard } from './shared/SettingsSectionCard';
 import { useAppearance } from '../../hooks/useAppearance';

@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { FeatureModule } from '../../modules';
+import type { FeatureModule } from '../../modules/runtime';
 import { ManagerSidebar } from './ManagerSidebar';
 
 function module(id: string, name: string, icon: string): FeatureModule {

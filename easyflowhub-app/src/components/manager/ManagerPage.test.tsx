@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extensionsApi } from '../../lib/api/scriptmgr';
 import type { ExtensionContributionsResponse } from '../../types/scriptmgr';
-import type { FeatureModule } from '../../modules';
-import { useEnabledModules } from '../../modules';
+import type { FeatureModule } from '../../modules/runtime';
+import { useEnabledModules } from '../../modules/runtime';
 import {
   MANAGER_OPEN_EXTENSION_EVENT,
   type ManagerExtensionNavigationDetail,
@@ -17,7 +17,7 @@ vi.mock('../../lib/api/scriptmgr', () => ({
   },
 }));
 
-vi.mock('../../modules', () => ({
+vi.mock('../../modules/runtime', () => ({
   useEnabledModules: vi.fn(),
 }));
 

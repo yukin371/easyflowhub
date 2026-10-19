@@ -16,12 +16,12 @@ import { useAutoSave } from '../../hooks/useAutoSave';
 import { useBackupRestore } from '../../hooks/useBackupRestore';
 import { NoteEditor } from './notes/NoteEditor';
 import { InboxPanel } from './notes/InboxPanel';
-import type { SaveState } from './notes/types';
+import type { SaveState } from '../../types/notes';
 import {
   relativeTimeLabel,
   splitTags,
   timelineBucket,
-} from './notes/utils';
+} from '../../lib/notesUtils';
 import { deriveDisplayTitle } from '../../lib/noteParser';
 import { applyTextareaSelectionUpdate, focusTextareaAtEnd } from '../../lib/editorSelection';
 import { useEditorPreferences } from '../../hooks/useEditorPreferences';

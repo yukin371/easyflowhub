@@ -15,3 +15,8 @@ Tauri appearance bridge -> `useAppearance` -> document `data-theme` / `data-blur
 - `App` mounts the hook in every window, so each webview applies the same persisted theme and blur preference.
 - Appearance updates must be broadcast between mounted hook instances and persisted before the document attributes change.
 - Window surface CSS uses `data-blur="off"` for opaque surfaces; changing the setting only in a preview does not change the actual window.
+
+## Dependency rule
+
+- Hooks may depend on `src/types`, `src/lib` and other hooks only. They must not import from `src/components` or `src/pages`; shared note types now live in `src/types/notes.ts` and pure helpers in `src/lib/notesUtils.ts`.
+- A hook that needs panel-owned logic should have that logic promoted to `src/lib` first, so both the hook and the panel consume the same leaf module.

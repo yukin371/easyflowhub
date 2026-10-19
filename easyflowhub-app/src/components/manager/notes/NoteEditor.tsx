@@ -2,7 +2,7 @@ import { useState, useCallback, type ClipboardEventHandler, type DragEventHandle
 import type { Note } from '../../../types/note';
 import type { ShortcutConfig } from '../../../types/shortcut';
 import type { EditorSettings } from '../../../types/settings';
-import type { BackupDraft } from './types';
+import type { BackupDraft } from '../../../types/notes';
 import { BackupRestoreDialog } from '../../shared/BackupRestoreDialog';
 import { EditorTextarea } from '../../shared/EditorTextarea';
 import { StatusBar } from './StatusBar';

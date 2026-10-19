@@ -4,7 +4,7 @@
  */
 
 import type { EffectiveExtensionContributions } from '../../types/scriptmgr';
-import type { FeatureModule } from '../../modules';
+import type { FeatureModule } from '../../modules/runtime';
 import { ManagerExtensionEntries } from './ManagerExtensionEntries';
 
 interface ManagerSidebarProps {

@@ -29,6 +29,8 @@
 - `isCore` 模块不可在设置页关闭；当前核心模块为 `notes` 与 `settings`。
 - `settings` 在侧边栏固定在底部（`ManagerSidebar` 单独渲染，不进 Workspace 滚动列表），图标为 `⚙`；新增模块不得抢占该位置，也不要改回列表项。
 - 执行记录不再是独立模块：`tasks` 已从 builtin 列表移除，作为「脚本」页的运行记录 tab 呈现。旧 `modules.json` 中的 `tasks` 条目会被 registry 忽略，不需要迁移。
+- **依赖方向**：面板组件必须从 `modules/runtime`（只含 types / registry / hooks）导入模块系统，不能从 `modules` 桶导入——后者会带出 `builtin`（绑定面板组件），形成 `components -> modules -> builtin -> components` 的循环。`modules/index.ts` 仅作为应用装配入口（`main.tsx` / `init.ts`）使用。
+- `builtin/*` 是组合根：只做「模块 id + 元数据 + 面板组件」的绑定，不得承载业务状态。
 - 未来若扩展到插件式模块，先扩展 `FeatureModule` / registry 边界，不要让 builtin toggle 冒充完整插件系统。
 - 当前 Stage B3 的 `manager_modules` 仍不进入 `FeatureModule` / registry；它们只允许在 manager 壳层作为只读 extension entry host 出现，并映射到已有面板。
 - 内置 `extensions` 面板属于受控宿主和观测入口，本身是 builtin module，但第三方 `manager_modules` 仍不能借此冒充真正动态插件。

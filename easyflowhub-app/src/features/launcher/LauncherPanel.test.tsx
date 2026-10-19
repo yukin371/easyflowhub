@@ -302,7 +302,8 @@ describe('LauncherPanel', () => {
     window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
     rerender(<LauncherPanel {...props} focusToken={1} />);
-    expect(result).toHaveFocus();
+    // Focus is applied after the token change (effect/rAF); assert it async.
+    await waitFor(() => expect(result).toHaveFocus());
     expect(window.getSelection()?.toString()).toBe(textOutput.text);
     for (const event of [{ key: 'ArrowDown' }, { key: 'Enter' }, { key: '/' }, { key: 'f', ctrlKey: true }, { key: 'c', ctrlKey: true }]) {
       expect(fireEvent.keyDown(result, event)).toBe(true);
@@ -334,7 +335,7 @@ describe('LauncherPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '复制结果' }));
     rerender(<LauncherPanel {...props} activationToken={1} />);
     expect(screen.queryByRole('region')).not.toBeInTheDocument();
-    expect(getSearch()).toHaveFocus();
+    await waitFor(() => expect(getSearch()).toHaveFocus());
     expect(screen.getAllByRole('option')).toHaveLength(3);
     await act(async () => { pendingCopy.reject(new Error('上一次复制失败')); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -350,7 +351,7 @@ describe('LauncherPanel', () => {
     await act(async () => { pending.resolve(textResult); });
     expect(screen.queryByRole('region')).not.toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
-    expect(getSearch()).toHaveFocus();
+    await waitFor(() => expect(getSearch()).toHaveFocus());
   });
 
   it('加载错误先以警告图标提示，点击可展开详情，当前上下文也以图标显示', () => {

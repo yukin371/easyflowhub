@@ -9,7 +9,7 @@ import { ManagerSidebar } from './ManagerSidebar';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { extensionsApi } from '../../lib/api/scriptmgr';
 import type { EffectiveExtensionContributions } from '../../types/scriptmgr';
-import { useEnabledModules } from '../../modules';
+import { useEnabledModules } from '../../modules/runtime';
 import {
   MANAGER_OPEN_EXTENSION_EVENT,
   MANAGER_NAVIGATE_TO_EXTENSION_EVENT,

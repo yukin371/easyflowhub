@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { Note } from '../types/note';
-import type { BackupDraft } from '../components/manager/notes/types';
-import { getBackupKey, normalizeTags } from '../components/manager/notes/utils';
+import type { BackupDraft } from '../types/notes';
+import { getBackupKey, normalizeTags } from '../lib/notesUtils';
 
 interface UseBackupRestoreOptions {
   onApplyDraft: (draft: BackupDraft) => void;

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { saveNote } from '../lib/tauri/notes';
 import type { Note } from '../types/note';
-import type { SaveState } from '../components/manager/notes/types';
-import { getBackupKey, normalizeTags } from '../components/manager/notes/utils';
+import type { SaveState } from '../types/notes';
+import { getBackupKey, normalizeTags } from '../lib/notesUtils';
 import { normalizeStoredTitle, parseNoteContent } from '../lib/noteParser';
 
 interface PersistParams {

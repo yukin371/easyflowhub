@@ -15,6 +15,19 @@
 执行 -> `tasksApi.run`（同步、捕获输出）-> 工作台展示退出码与输出
 运行记录 -> `TasksPanel`（同一页面内的 tab），按可见性与是否有运行中任务调整轮询
 
+## 文件划分
+
+| 文件 | 职责 |
+|---|---|
+| `ScriptsPanel.tsx` | 视图编排：tab、工具栏、对话框状态、根目录缓存 |
+| `scriptStore.tsx` | 列表 / 分类 / 详情 / 抽屉状态 |
+| `ScriptListView.tsx` / `ScriptCategoryTree.tsx` / `ScriptDrawer.tsx` | 列表、分类树、详情抽屉 |
+| `ScriptDialogShell.tsx` | 对话框外壳与共享样式、扩展名白名单 |
+| `ScriptWorkbenchDialog.tsx` | 源码编辑 / 执行 / 删除 |
+| `ScriptCreateDialog.tsx` / `ScriptImportDialog.tsx` / `ScriptRootsDialog.tsx` | 新建 / 导入 / 存储位置 |
+
+单个对话框保持在 250 行以内；新增能力优先加到对应对话框，不要回填成一个大文件。
+
 ## 约定 & 陷阱
 
 - 所有文件写操作必须经 Go 侧接口：目标路径必须在已配置 root 内、扩展名限定 `.ps1/.py/.bat/.cmd`、源码上限 2 MB。前端不得自行拼接或写入路径。
