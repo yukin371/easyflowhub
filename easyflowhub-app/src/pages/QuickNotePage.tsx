@@ -7,13 +7,15 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { closeAllNoteWindows, createNote, getNote, listNotes, toggleNoteWindowsVisibility } from '../lib/tauri/notes';
-import { deriveDisplayTitle, formatNoteForDisplay } from '../lib/noteParser';
+import { deriveDisplayTitle, formatNoteForDisplay, parseNoteContent } from '../lib/noteParser';
 import { buildPersistParams } from '../lib/notePersistence';
 import type { Note } from '../types/note';
 import { EditorTextarea } from '../components/shared/EditorTextarea';
 import { ImageLightbox } from '../components/shared/ImageLightbox';
+import { BackupRestoreDialog } from '../components/shared/BackupRestoreDialog';
 import { useShortcutEngine } from '../hooks/useShortcutEngine';
 import { useAutoSave } from '../hooks/useAutoSave';
+import { useBackupRestore } from '../hooks/useBackupRestore';
 import { useEditorPreferences } from '../hooks/useEditorPreferences';
 import { useHistory } from '../hooks/useHistory';
 import { useEditorImageInsertion } from '../hooks/useEditorImageInsertion';
@@ -106,6 +108,55 @@ export function QuickNotePage() {
     [attachedImages, displayContent]
   );
 
+  // 快捷便签页同样会写入 localStorage 备份，需要提供恢复入口：
+  // 否则进程被杀后备份只能去管理页编辑器里找回。
+  const {
+    backupDraft,
+    inspectBackup,
+    clearBackupDraft,
+    restoreBackupDraft,
+    mergeBackupDraft,
+  } = useBackupRestore({
+    onApplyDraft: (draft) => {
+      const parsed = extractAttachedImageAssets(draft.content);
+      setDisplayContent(parsed.textContent, true);
+      setAttachedImages(parsed.images);
+      if (note?.id) {
+        scheduleSave({
+          noteId: note.id,
+          title: draft.title,
+          content: draft.content,
+          tags: draft.tags,
+        });
+      }
+    },
+    onMergeDraft: (draft) => {
+      const mergedContent = [mergedEditorContent, '', '--- 备份内容 ---', draft.content]
+        .filter(Boolean)
+        .join('\n');
+      const parsed = extractAttachedImageAssets(mergedContent);
+      setDisplayContent(parsed.textContent, true);
+      // 合并时当前内容与备份可能引用同一批图片，按文件名去重
+      const uniqueImages = Array.from(
+        new Map(parsed.images.map((image) => [image.filename, image])).values()
+      );
+      setAttachedImages(uniqueImages);
+      if (note?.id) {
+        scheduleSave({
+          noteId: note.id,
+          title: draft.title,
+          content: mergedContent,
+          tags: draft.tags,
+        });
+      }
+    },
+  });
+
+  const currentDraftTags = useMemo(
+    () => parseNoteContent(mergedEditorContent).tags,
+    [mergedEditorContent]
+  );
+
   const currentPersistParams = useMemo(() => {
     return buildPersistParams(note?.id ?? null, mergedEditorContent, note?.title ?? '');
   }, [mergedEditorContent, note]);
@@ -194,6 +245,7 @@ export function QuickNotePage() {
             setDisplayContent(parsed.textContent, true); // skipHistory
             setAttachedImages(parsed.images);
             resetSaveFeedback();
+            inspectBackup(existingNote);
           } else {
             const newNote = await createNote();
             setNote(newNote);
@@ -444,12 +496,13 @@ export function QuickNotePage() {
         setAttachedImages(parsed.images);
         clearHistory(); // 清空历史
         resetSaveFeedback();
+        inspectBackup(nextNote);
         await refreshRecentNotes(nextNote.id);
       } catch (error) {
         console.error('Failed to switch note:', error);
       }
     },
-    [currentPersistParams, flushSave, note?.id, refreshRecentNotes, resetSaveFeedback, setDisplayContent, clearHistory, flushHistory]
+    [currentPersistParams, flushSave, note?.id, refreshRecentNotes, resetSaveFeedback, setDisplayContent, clearHistory, flushHistory, inspectBackup]
   );
 
   const handleCreateAndSwitch = useCallback(async () => {
@@ -543,6 +596,21 @@ export function QuickNotePage() {
   const dragBg = `color-mix(in srgb, var(--quick-surface-raised) ${Math.round(bgAlpha * 100)}%, transparent)`;
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', backgroundColor: mainBg }}>
+      {backupDraft ? (
+        <BackupRestoreDialog
+          currentTitle={note.title}
+          currentContent={mergedEditorContent}
+          currentTags={currentDraftTags}
+          backupTitle={backupDraft.title}
+          backupContent={backupDraft.content}
+          backupTags={backupDraft.tags}
+          backupTimestamp={backupDraft.timestamp}
+          onKeepCurrent={clearBackupDraft}
+          onRestoreBackup={restoreBackupDraft}
+          onMergeWithBackup={mergeBackupDraft}
+        />
+      ) : null}
+
       {isSwitcherOpen ? (
         <div
           style={{

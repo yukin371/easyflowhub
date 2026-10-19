@@ -193,4 +193,42 @@ describe('QuickNotePage', () => {
 
     expect(await screen.findByRole('dialog', { name: 'legacy' })).toBeInTheDocument();
   });
+
+  it('检测到更新的本地备份时弹出一键恢复对话框', async () => {
+    const noteWithBackup = createFixtureNote({
+      id: 'backup-note',
+      title: '磁盘版本',
+      content: '磁盘上的内容',
+    });
+    window.history.pushState({}, '', '/?mode=quick&note_id=backup-note');
+    getNoteMock.mockResolvedValueOnce(noteWithBackup);
+    localStorage.setItem(
+      'easyflowhub_note_autosave_backup-note',
+      JSON.stringify({
+        title: '备份版本',
+        content: '丢失但已备份的内容',
+        tags: 'important',
+        timestamp: Date.now() + 60_000,
+      })
+    );
+
+    render(<QuickNotePage />);
+
+    const dialog = await screen.findByRole('button', { name: '恢复备份版本' });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText('检测到未恢复的本地备份')).toBeInTheDocument();
+
+    fireEvent.click(dialog);
+
+    await waitFor(() => {
+      expect(scheduleSaveMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          noteId: 'backup-note',
+          title: '备份版本',
+          content: '丢失但已备份的内容',
+          tags: 'important',
+        })
+      );
+    });
+  });
 });

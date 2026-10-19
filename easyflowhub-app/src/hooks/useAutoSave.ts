@@ -17,69 +17,137 @@ interface UseAutoSaveOptions {
   onSaved: (note: Note) => void;
 }
 
+/**
+ * Each call to `scheduleSave` mints a new token. Stale responses that resolve
+ * after a newer session (timer or note switch) is started drop their result:
+ * they neither overwrite the editor draft via `onSaved` nor clear the local
+ * backup that now belongs to a different revision.
+ *
+ * In-flight saves are serialised through a single promise chain so the page
+ * can `flushSave` deterministically, and so a slow save can't be eclipsed by a
+ * later scheduleSave's response.
+ */
 export function useAutoSave(options: UseAutoSaveOptions) {
   const { delayMs, onSaved } = options;
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [saveError, setSaveError] = useState('');
   const saveTimerRef = useRef<number | null>(null);
+  const tokenRef = useRef(0);
+  const inflightRef = useRef<{ token: number; promise: Promise<Note | null> } | null>(null);
+  // `onSaved` is captured into a ref so the chain doesn't restart on every
+  // caller re-render (the page may pass a fresh closure on each render).
+  const onSavedRef = useRef(onSaved);
+  useEffect(() => {
+    onSavedRef.current = onSaved;
+  }, [onSaved]);
 
   const persistNow = useCallback(
-    async ({ noteId, title, content, tags }: PersistParams) => {
+    async ({ noteId, title, content, tags }: PersistParams, token: number) => {
+      // Bail before mutating any UI state if this run has been superseded.
+      if (tokenRef.current !== token) {
+        return null;
+      }
       setSaveState('saving');
       setSaveError('');
 
-      const parsed = parseNoteContent(content);
-      const normalizedTags = normalizeTags([tags, parsed.tags].filter(Boolean).join(' '));
-      const normalizedContent = parsed.cleanContent;
+      try {
+        const parsed = parseNoteContent(content);
+        const normalizedTags = normalizeTags([tags, parsed.tags].filter(Boolean).join(' '));
+        const normalizedContent = parsed.cleanContent;
 
-      const updated = await saveNote({
-        id: noteId,
-        title: normalizeStoredTitle(title),
-        content: normalizedContent,
-        tags: normalizedTags,
-      });
+        const updated = await saveNote({
+          id: noteId,
+          title: normalizeStoredTitle(title),
+          content: normalizedContent,
+          tags: normalizedTags,
+        });
 
-      localStorage.removeItem(getBackupKey(noteId));
-      onSaved(updated);
-      setSaveState('saved');
-      return updated;
+        // Stale responses must not clear the backup that now belongs to a
+        // later session for the same note id, and must not call back into the
+        // page with a draft that no longer matches the editor.
+        if (tokenRef.current !== token) {
+          return null;
+        }
+
+        try {
+          localStorage.removeItem(getBackupKey(noteId));
+        } catch (err) {
+          console.warn('Failed to clear the local autosave backup:', err);
+        }
+        onSavedRef.current(updated);
+        setSaveState('saved');
+        return updated;
+      } catch (err) {
+        if (tokenRef.current === token) {
+          console.error('Failed to save note:', err);
+          setSaveState('error');
+          setSaveError('本地服务连接失败');
+        }
+        throw err;
+      }
     },
-    [onSaved]
+    []
+  );
+
+  const runPersist = useCallback(
+    (params: PersistParams, token: number): Promise<Note | null> => {
+      const previous = inflightRef.current?.promise ?? Promise.resolve(null);
+      const promise = previous
+        .catch(() => null)
+        .then(() => {
+          if (tokenRef.current !== token) {
+            return null;
+          }
+          return persistNow(params, token);
+        })
+        .finally(() => {
+          if (inflightRef.current?.token === token) {
+            inflightRef.current = null;
+          }
+        });
+      inflightRef.current = { token, promise };
+      return promise;
+    },
+    [persistNow]
   );
 
   const scheduleSave = useCallback(
     ({ noteId, title, content, tags }: PersistParams) => {
-      if (saveTimerRef.current) {
+      const token = ++tokenRef.current;
+
+      if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
       }
 
       const normalizedTags = normalizeTags(tags);
       setSaveState('unsaved');
       setSaveError('');
 
-      localStorage.setItem(
-        getBackupKey(noteId),
-        JSON.stringify({
-          title,
-          content,
-          tags: normalizedTags,
-          timestamp: Date.now(),
-        })
-      );
+      // The backup is a best-effort safety net: localStorage can reject writes
+      // (quota exceeded, private mode) and a thrown exception here would break
+      // the editor's onChange handler.
+      try {
+        localStorage.setItem(
+          getBackupKey(noteId),
+          JSON.stringify({
+            title,
+            content,
+            tags: normalizedTags,
+            timestamp: Date.now(),
+          })
+        );
+      } catch (err) {
+        console.warn('Failed to persist the local autosave backup:', err);
+      }
 
-      saveTimerRef.current = window.setTimeout(async () => {
-        try {
-          await persistNow({ noteId, title, content, tags: normalizedTags });
-        } catch (err) {
-          console.error('Failed to save note:', err);
-          setSaveState('error');
-          setSaveError('本地服务连接失败');
-        } finally {
-          saveTimerRef.current = null;
-        }
+      const params: PersistParams = { noteId, title, content, tags: normalizedTags };
+      saveTimerRef.current = window.setTimeout(() => {
+        saveTimerRef.current = null;
+        void runPersist(params, token);
       }, delayMs);
     },
-    [delayMs, persistNow]
+    [delayMs, runPersist]
   );
 
   const flushSave = useCallback(
@@ -88,23 +156,36 @@ export function useAutoSave(options: UseAutoSaveOptions) {
         return null;
       }
 
-      if (saveTimerRef.current === null) {
-        return null;
+      const token = tokenRef.current;
+
+      // Timer is scheduled but not yet fired: the user wants to close the
+      // window now, so promote the queued save to the in-flight chain
+      // instead of dropping it on the floor.
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        try {
+          return await runPersist(params, token);
+        } catch (err) {
+          console.error('Failed to flush save:', err);
+          return null;
+        }
       }
 
-      window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-
-      try {
-        return await persistNow(params);
-      } catch (err) {
-        console.error('Failed to flush save:', err);
-        setSaveState('error');
-        setSaveError('本地服务连接失败');
-        return null;
+      // No pending timer; if a save is currently in flight, surface its
+      // result so callers can observe a real save attempt before closing.
+      if (inflightRef.current) {
+        try {
+          return await inflightRef.current.promise;
+        } catch (err) {
+          console.error('Failed to await inflight save:', err);
+          return null;
+        }
       }
+
+      return null;
     },
-    [persistNow]
+    [runPersist]
   );
 
   const resetSaveFeedback = useCallback(() => {
@@ -114,8 +195,9 @@ export function useAutoSave(options: UseAutoSaveOptions) {
 
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) {
+      if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
       }
     };
   }, []);
