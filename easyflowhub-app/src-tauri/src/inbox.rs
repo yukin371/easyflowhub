@@ -97,7 +97,7 @@ struct PendingAttachment {
     final_path: PathBuf,
 }
 
-pub(crate) fn init_db(conn: &Connection) -> SqliteResult<()> {
+pub(crate) fn init_db(conn: &mut Connection) -> SqliteResult<()> {
     conn.execute_batch(
         r#"
         PRAGMA foreign_keys = ON;
@@ -139,8 +139,15 @@ pub(crate) fn init_db(conn: &Connection) -> SqliteResult<()> {
 
 /// Rebuild the additive Inbox tables once for databases created before the
 /// audio or transcript kinds existed. SQLite cannot alter a CHECK constraint
-/// in place.
-fn migrate_capture_kinds_schema(conn: &Connection) -> SqliteResult<()> {
+/// in place, so we rename the old tables aside, recreate the new schema, copy
+/// data over, and drop the renamed copies.
+///
+/// The whole rebuild runs inside a single transaction so a partial failure
+/// (for example a CHECK violation on the data copy, a disk-full rename, or a
+/// crash mid-insert) cannot leave the database with both old and new tables
+/// half-populated — the rollback restores the original schema and the next
+/// call to `init_db` retries the migration against intact legacy data.
+fn migrate_capture_kinds_schema(conn: &mut Connection) -> SqliteResult<()> {
     let item_sql: Option<String> = conn
         .query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inbox_items'", [], |row| row.get(0))
         .optional()?;
@@ -151,40 +158,56 @@ fn migrate_capture_kinds_schema(conn: &Connection) -> SqliteResult<()> {
     let needs_attachments = attachment_sql
         .as_deref()
         .is_some_and(|sql| !sql.contains("'audio'") || !sql.contains("'transcript'"));
-    if !needs_items && !needs_attachments { return Ok(()); }
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        ALTER TABLE inbox_attachments RENAME TO inbox_attachments_legacy;
-        ALTER TABLE inbox_items RENAME TO inbox_items_legacy;
-        CREATE TABLE inbox_items (
-            id TEXT PRIMARY KEY,
-            kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file', 'audio')),
-            title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
-            captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL, converted_note_id TEXT DEFAULT NULL
-        );
-        INSERT INTO inbox_items SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id FROM inbox_items_legacy;
-        CREATE TABLE inbox_attachments (
-            id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
-            kind TEXT NOT NULL CHECK (kind IN ('image', 'file', 'audio', 'transcript')),
-            name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
-            size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
-        );
-        INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filename, size_bytes, created_at FROM inbox_attachments_legacy;
-        DROP TABLE inbox_attachments_legacy;
-        DROP TABLE inbox_items_legacy;
-        CREATE INDEX IF NOT EXISTS idx_inbox_items_captured_at ON inbox_items(captured_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_inbox_items_archived_at ON inbox_items(archived_at, captured_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_inbox_attachments_item_id ON inbox_attachments(item_id, created_at);
-        PRAGMA foreign_keys = ON;
-        "#,
-    )
+    if !needs_items && !needs_attachments {
+        return Ok(());
+    }
+
+    // `foreign_keys` is a connection-level pragma and is not rolled back with
+    // the transaction, so the closure always restores it after a failure.
+    let migration = conn.transaction().and_then(|tx| {
+        tx.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            ALTER TABLE inbox_attachments RENAME TO inbox_attachments_legacy;
+            ALTER TABLE inbox_items RENAME TO inbox_items_legacy;
+            CREATE TABLE inbox_items (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file', 'audio')),
+                title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
+                captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL, converted_note_id TEXT DEFAULT NULL
+            );
+            INSERT INTO inbox_items SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id FROM inbox_items_legacy;
+            CREATE TABLE inbox_attachments (
+                id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('image', 'file', 'audio', 'transcript')),
+                name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
+                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+            );
+            INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filename, size_bytes, created_at FROM inbox_attachments_legacy;
+            DROP TABLE inbox_attachments_legacy;
+            DROP TABLE inbox_items_legacy;
+            CREATE INDEX IF NOT EXISTS idx_inbox_items_captured_at ON inbox_items(captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_inbox_items_archived_at ON inbox_items(archived_at, captured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_inbox_attachments_item_id ON inbox_attachments(item_id, created_at);
+            PRAGMA foreign_keys = ON;
+            "#,
+        )?;
+        tx.commit()
+    });
+
+    if migration.is_err() {
+        // The transaction was rolled back, but the connection-level pragma
+        // change was not — flip it back so the rest of the app keeps the
+        // foreign-key enforcement it expects.
+        let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+    }
+    migration
 }
 
 fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let conn = crate::notes::get_connection(app)?;
-    init_db(&conn).map_err(|error| format!("Failed to initialize inbox storage: {error}"))?;
+    let mut conn = crate::notes::get_connection(app)?;
+    init_db(&mut conn).map_err(|error| format!("Failed to initialize inbox storage: {error}"))?;
     Ok(conn)
 }
 
@@ -1162,23 +1185,23 @@ mod tests {
     use super::*;
 
     fn memory_db() -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory database");
-        crate::notes::init_db(&conn).expect("notes schema");
-        init_db(&conn).expect("inbox schema");
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
+        crate::notes::init_db(&mut conn).expect("notes schema");
+        init_db(&mut conn).expect("inbox schema");
         conn
     }
 
     #[test]
     fn inbox_schema_is_additive_and_idempotent_for_existing_notes() {
-        let conn = Connection::open_in_memory().expect("in-memory database");
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
         conn.execute_batch(
             "CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, is_pinned INTEGER NOT NULL DEFAULT 0); INSERT INTO notes (id, title, content, created_at, updated_at) VALUES ('old', 'Old note', 'preserved', '2026-01-01', '2026-01-02');",
         )
         .expect("legacy note schema");
 
-        crate::notes::init_db(&conn).expect("migrate existing notes");
-        init_db(&conn).expect("create inbox tables");
-        init_db(&conn).expect("repeat migration");
+        crate::notes::init_db(&mut conn).expect("migrate existing notes");
+        init_db(&mut conn).expect("create inbox tables");
+        init_db(&mut conn).expect("repeat migration");
 
         let note: (String, String) = conn
             .query_row("SELECT title, content FROM notes WHERE id = 'old'", [], |row| {
@@ -1324,7 +1347,7 @@ mod tests {
 
     #[test]
     fn legacy_inbox_tables_gain_audio_and_transcript_kinds() {
-        let conn = Connection::open_in_memory().expect("in-memory database");
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
         conn.execute_batch(
             r#"
             CREATE TABLE inbox_items (
@@ -1347,7 +1370,7 @@ mod tests {
         )
         .expect("legacy inbox schema");
 
-        init_db(&conn).expect("migrate legacy inbox tables");
+        init_db(&mut conn).expect("migrate legacy inbox tables");
 
         let content: String = conn
             .query_row("SELECT content FROM inbox_items WHERE id = 'legacy'", [], |row| row.get(0))
@@ -1358,6 +1381,126 @@ mod tests {
             [],
         )
         .expect("transcript kind accepted after migration");
+    }
+
+    #[test]
+    fn inbox_migration_rolls_back_on_failure_and_retries() {
+        // F03: a partial migration must not leave the database in a state
+        // where the legacy tables are gone and the new tables are empty.
+        // Inject a row that violates the new CHECK constraint, attempt the
+        // migration, then verify rollback preserved the legacy tables and
+        // a second call (after removing the bad row) succeeds.
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE inbox_items (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file')),
+                title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
+                captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL, converted_note_id TEXT DEFAULT NULL
+            );
+            INSERT INTO inbox_items (id, kind, title, content, source, context, captured_at)
+                VALUES ('kept', 'text', 'Kept', 'survive rollback', 'manager', 'manual', '2026-01-01T00:00:00Z');
+            CREATE TABLE inbox_attachments (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
+                -- The legacy schema below cannot store the value that breaks
+                -- the migration; we will inject it into the legacy table
+                -- through a different channel.
+                kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+                name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
+                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("legacy inbox schema");
+
+        // Temporarily allow an 'invalid' kind by dropping the CHECK so the
+        // bad row can land in the legacy table, then re-add a strict CHECK
+        // on the new schema via the migration's INSERT step to force a
+        // constraint failure during the data copy.
+        conn.execute_batch("DROP TABLE inbox_attachments;")
+            .expect("drop legacy attachments");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE inbox_attachments (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
+                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+            );
+            INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at)
+                VALUES ('bad', 'kept', 'invalid-kind', 'boom.png', 'image/png', 'boom.png', 1, '2026-01-01T00:00:00Z');
+            "#,
+        )
+        .expect("seed bad row in legacy attachments");
+
+        // Migration should fail (CHECK on inbox_attachments.kind rejects
+        // 'invalid-kind'), roll back, and leave the legacy schema intact.
+        let migration = init_db(&mut conn);
+        assert!(migration.is_err(), "migration should fail on invalid kind");
+
+        // Legacy tables and data must survive the rollback.
+        let content: String = conn
+            .query_row("SELECT content FROM inbox_items WHERE id = 'kept'", [], |row| row.get(0))
+            .expect("legacy item survives rollback");
+        assert_eq!(content, "survive rollback");
+        let bad_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM inbox_attachments WHERE id = 'bad'", [], |row| row.get(0))
+            .expect("legacy attachments survive rollback");
+        assert_eq!(bad_count, 1);
+        // No new table should have been created either.
+        let new_sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inbox_attachments'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("query legacy attachments sql");
+        assert!(
+            new_sql.as_deref().is_none_or(|s| !s.contains("'audio'")),
+            "migration must not have left a new-schema inbox_attachments around"
+        );
+        // foreign_keys pragma must be back to ON after the failed migration.
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("query foreign_keys pragma");
+        assert_eq!(fk, 1, "foreign_keys must be re-enabled after rollback");
+
+        // Remove the offending row and retry — the second call should succeed
+        // and finish the migration that the first call had to abort.
+        conn.execute("DELETE FROM inbox_attachments WHERE id = 'bad'", [])
+            .expect("remove bad row");
+        // Re-attach the legacy CHECK so the migration detects it as legacy.
+        conn.execute_batch("DROP TABLE inbox_attachments;")
+            .expect("drop unconstrained table");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE inbox_attachments (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+                name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
+                size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("restore legacy check");
+
+        init_db(&mut conn).expect("retry migration after data fix");
+
+        let content_after: String = conn
+            .query_row("SELECT content FROM inbox_items WHERE id = 'kept'", [], |row| row.get(0))
+            .expect("legacy item is present after retry");
+        assert_eq!(content_after, "survive rollback");
+        conn.execute(
+            "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at) VALUES ('t1', 'kept', 'transcript', '转写文稿.txt', 'text/plain', 't1.txt', 4, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("transcript kind accepted after retry");
     }
 
     #[test]

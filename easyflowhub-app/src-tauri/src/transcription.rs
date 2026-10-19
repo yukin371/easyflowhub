@@ -372,9 +372,9 @@ mod tests {
     }
 
     fn memory_db_with_audio_item(assets_dir: &Path, audio_bytes: &[u8]) -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory database");
-        crate::notes::init_db(&conn).expect("notes schema");
-        crate::inbox::init_db(&conn).expect("inbox schema");
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
+        crate::notes::init_db(&mut conn).expect("notes schema");
+        crate::inbox::init_db(&mut conn).expect("inbox schema");
         conn.execute(
             "INSERT INTO inbox_items (id, kind, title, content, source, context, captured_at) VALUES ('item-1', 'audio', '录音', '', 'voice', 'manager', '2026-10-19T10:00:00Z')",
             [],
