@@ -80,6 +80,8 @@ describe('TodoPanel', () => {
       expect(saveNoteMock).toHaveBeenCalledWith({
         id: 'note-1',
         content: expect.stringMatching(/\[x\] Ship panel test @done:/),
+        // F05: 写入携带读取时的 revision，native 侧做 compare-and-swap。
+        expected_updated_at: '2026-04-24T00:00:00.000Z',
       });
     });
   });

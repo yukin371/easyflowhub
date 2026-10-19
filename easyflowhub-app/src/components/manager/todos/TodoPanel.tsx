@@ -3,19 +3,15 @@
  * 展示所有笔记中的 checkbox 待办，支持筛选、勾选和跳转
  */
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { listNotes, saveNote, getNote, createTodoCardWindow } from '../../../lib/tauri/notes';
-import { getSettings } from '../../../lib/tauri/settings';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { createTodoCardWindow } from '../../../lib/tauri/notes';
 import {
   compareTodoGroupsForDisplay,
-  extractAllTodos,
   getTodoStats,
-  toggleTodoInContent,
-  isWithinRetention,
   sortTodosForDisplay,
   TODO_INBOX_TITLE,
-  updateTodoTextInContent,
 } from '../../../lib/todoParser';
+import { useTodos } from '../../../hooks/useTodos';
 import type { TodoItem, TodoFilter } from '../../../types/todo';
 import { MANAGER_ACTIVATED_EVENT } from '../ManagerPage';
 import { ManagerPanelHeader } from '../shared/ManagerPanelHeader';
@@ -25,43 +21,17 @@ interface TodoPanelProps {
 }
 
 export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
-  const [todos, setTodos] = useState<TodoItem[]>([]);
+  // 加载、保留期过滤、勾选与编辑的编排归 useTodos（F05）：定位按文本身份、
+  // 写入带 revision CAS，多窗口并发时不会按旧行号改错条目。
+  const { todos, loading, error, loadTodos, toggleTodo, updateTodoText } = useTodos();
   const [filter, setFilter] = useState<TodoFilter>('pending');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [todoDraft, setTodoDraft] = useState('');
   const [savingTodoId, setSavingTodoId] = useState<string | null>(null);
-  const loadTodos = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [notes, settings] = await Promise.all([
-        listNotes(),
-        getSettings(),
-      ]);
-      const hours = settings.todo?.done_retention_hours ?? 24;
-      const allTodos = extractAllTodos(
-        notes.map((n) => ({ id: n.id, title: n.title, content: n.content }))
-      );
-      // 只保留未完成 + 保留期内的已完成项
-      setTodos(allTodos.filter((t) => !t.checked || isWithinRetention(t.checkedAt, hours)));
-    } catch (err) {
-      const rawMessage = err instanceof Error ? err.message : '';
-      const unavailable = /invoke|tauri|undefined/i.test(rawMessage);
-      setError(
-        unavailable
-          ? '待办数据暂不可用，请在桌面应用中启动后端服务。'
-          : rawMessage || '加载待办失败',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
-  // 加载 & 窗口激活时自动刷新
+  // 窗口激活时自动刷新
   useEffect(() => {
-    loadTodos();
     const handleActivate = () => loadTodos();
     window.addEventListener(MANAGER_ACTIVATED_EVENT, handleActivate);
     return () => window.removeEventListener(MANAGER_ACTIVATED_EVENT, handleActivate);
@@ -69,21 +39,17 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
 
   // 切换 todo 完成状态
   const handleToggle = useCallback(async (todo: TodoItem) => {
-    try {
-      const note = await getNote(todo.noteId);
-      if (!note) return;
-      const newContent = toggleTodoInContent(note.content, todo.lineIndex);
-      if (newContent === null) return;
-      await saveNote({ id: todo.noteId, content: newContent });
-      await loadTodos();
-    } catch (err) {
-      console.error('Failed to toggle todo:', err);
+    setWriteError(null);
+    const result = await toggleTodo(todo);
+    if (!result.ok && result.message) {
+      setWriteError(result.message);
     }
-  }, [loadTodos]);
+  }, [toggleTodo]);
 
   const handleStartEdit = useCallback((todo: TodoItem) => {
     setEditingTodoId(todo.id);
     setTodoDraft(todo.text);
+    setWriteError(null);
   }, []);
 
   const handleCancelEdit = useCallback(() => {
@@ -106,26 +72,15 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
 
     try {
       setSavingTodoId(todo.id);
-      const note = await getNote(todo.noteId);
-      if (!note) {
-        handleCancelEdit();
-        return;
+      setWriteError(null);
+      const result = await updateTodoText(todo, normalizedText);
+      if (!result.ok && result.message) {
+        setWriteError(result.message);
       }
-
-      const newContent = updateTodoTextInContent(note.content, todo.lineIndex, normalizedText);
-      if (newContent === null) {
-        handleCancelEdit();
-        return;
-      }
-
-      await saveNote({ id: todo.noteId, content: newContent });
-      await loadTodos();
-    } catch (err) {
-      console.error('Failed to update todo:', err);
     } finally {
       handleCancelEdit();
     }
-  }, [handleCancelEdit, loadTodos, todoDraft]);
+  }, [handleCancelEdit, todoDraft, updateTodoText]);
 
   const filteredTodos = todos.filter((todo) => {
     if (filter === 'pending') return !todo.checked;
@@ -253,6 +208,22 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
           ))}
         </div>
       </header>
+
+      {/* F05 写入冲突/失败提示：并发修改被拒绝时给出可恢复的说明 */}
+      {writeError ? (
+        <div
+          role="alert"
+          className="mx-7 mt-4 flex items-start justify-between gap-3 rounded-[14px] border border-[color:var(--manager-danger)]/40 bg-[color:var(--manager-danger)]/8 px-4 py-3"
+        >
+          <span className="text-sm text-[color:var(--manager-danger)]">{writeError}</span>
+          <button
+            onClick={() => setWriteError(null)}
+            className="shrink-0 rounded-full border border-[color:var(--manager-danger)]/40 px-3 py-1 text-xs text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/12"
+          >
+            知道了
+          </button>
+        </div>
+      ) : null}
 
       {/* Todo list */}
       <div className="flex-1 overflow-auto px-7 py-4">

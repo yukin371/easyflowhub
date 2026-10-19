@@ -32,6 +32,14 @@ pub struct NoteInput {
     pub updated_at: Option<String>,
     pub is_pinned: Option<bool>,
     pub deleted_at: Option<String>,
+    /// Compare-and-swap guard (F05). When set, the update only applies if
+    /// the stored `updated_at` still equals this value; a mismatch means
+    /// another window wrote the note since it was read, and the save is
+    /// rejected instead of silently overwriting that write. Omitting the
+    /// field keeps the previous last-write-wins behaviour, so existing
+    /// callers are unaffected.
+    #[serde(default)]
+    pub expected_updated_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -249,6 +257,12 @@ pub fn get_note(app: tauri::AppHandle, id: String) -> Result<GetNoteResponse, St
 #[tauri::command]
 pub fn save_note(app: tauri::AppHandle, note: NoteInput) -> Result<SaveNoteResponse, String> {
     let conn = get_connection(&app)?;
+    save_note_with_conn(&conn, note)
+}
+
+/// Core save logic, separated from the Tauri handle so the compare-and-swap
+/// behaviour (F05) can be exercised against an in-memory database in tests.
+fn save_note_with_conn(conn: &Connection, note: NoteInput) -> Result<SaveNoteResponse, String> {
     let now = Utc::now().to_rfc3339();
 
     // Check if note exists
@@ -293,23 +307,53 @@ pub fn save_note(app: tauri::AppHandle, note: NoteInput) -> Result<SaveNoteRespo
     }
 
     if exists {
-        // Update existing note
-        conn.execute(
-            r#"
-            UPDATE notes
-            SET title = ?, content = ?, tags = ?, updated_at = ?, is_pinned = ?
-            WHERE id = ?
-            "#,
-            rusqlite::params![
-                merged_note.title,
-                merged_note.content,
-                merged_note.tags,
-                now,
-                merged_note.is_pinned as i32,
+        // Update existing note. With a compare-and-swap guard the UPDATE is
+        // conditioned on the stored revision; zero affected rows then means
+        // the note changed since the caller read it (F05).
+        let affected = match note.expected_updated_at.as_deref() {
+            Some(expected) => conn
+                .execute(
+                    r#"
+                    UPDATE notes
+                    SET title = ?, content = ?, tags = ?, updated_at = ?, is_pinned = ?
+                    WHERE id = ? AND updated_at = ?
+                    "#,
+                    rusqlite::params![
+                        merged_note.title,
+                        merged_note.content,
+                        merged_note.tags,
+                        now,
+                        merged_note.is_pinned as i32,
+                        merged_note.id,
+                        expected
+                    ],
+                )
+                .map_err(|e| format!("Failed to update note: {}", e))?,
+            None => conn
+                .execute(
+                    r#"
+                    UPDATE notes
+                    SET title = ?, content = ?, tags = ?, updated_at = ?, is_pinned = ?
+                    WHERE id = ?
+                    "#,
+                    rusqlite::params![
+                        merged_note.title,
+                        merged_note.content,
+                        merged_note.tags,
+                        now,
+                        merged_note.is_pinned as i32,
+                        merged_note.id
+                    ],
+                )
+                .map_err(|e| format!("Failed to update note: {}", e))?,
+        };
+
+        if affected == 0 && note.expected_updated_at.is_some() {
+            return Err(format!(
+                "note_conflict: {} was modified by another window since it was read",
                 merged_note.id
-            ],
-        )
-        .map_err(|e| format!("Failed to update note: {}", e))?;
+            ));
+        }
 
         // Fetch the updated note
         let updated_note = get_note_helper(&conn, &merged_note.id)?;
@@ -766,3 +810,83 @@ pub fn cleanup_old_trash(app: &tauri::AppHandle, retention_days: u32) -> Result<
 
     Ok(deleted)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        init_db(&conn).expect("notes schema");
+        conn
+    }
+
+    fn input(id: &str, content: &str) -> NoteInput {
+        NoteInput {
+            id: id.to_string(),
+            title: None,
+            content: Some(content.to_string()),
+            tags: None,
+            created_at: None,
+            updated_at: None,
+            is_pinned: None,
+            deleted_at: None,
+            expected_updated_at: None,
+        }
+    }
+
+    #[test]
+    fn save_creates_then_updates_without_cas() {
+        let conn = memory_db();
+        let created = save_note_with_conn(&conn, input("n1", "first")).expect("create");
+        assert_eq!(created.note.content, "first");
+
+        let updated = save_note_with_conn(&conn, input("n1", "second")).expect("update");
+        assert_eq!(updated.note.content, "second");
+        assert_ne!(updated.note.updated_at, created.note.updated_at);
+    }
+
+    #[test]
+    fn cas_update_succeeds_with_matching_revision() {
+        // F05: 读取后没有其他写入时，带 revision 的保存必须成功。
+        let conn = memory_db();
+        let created = save_note_with_conn(&conn, input("n1", "first")).expect("create");
+
+        let mut cas = input("n1", "second");
+        cas.expected_updated_at = Some(created.note.updated_at.clone());
+        let updated = save_note_with_conn(&conn, cas).expect("cas update");
+        assert_eq!(updated.note.content, "second");
+    }
+
+    #[test]
+    fn cas_update_rejects_stale_revision() {
+        // F05: 读取后另一窗口改写了笔记，旧 revision 的保存必须被拒绝，
+        // 而不是静默覆盖那次写入。
+        let conn = memory_db();
+        let created = save_note_with_conn(&conn, input("n1", "first")).expect("create");
+
+        // 另一窗口写入（不带 CAS，last-write-wins）。
+        let _other = save_note_with_conn(&conn, input("n1", "other-window")).expect("other write");
+
+        let mut stale = input("n1", "mine");
+        stale.expected_updated_at = Some(created.note.updated_at.clone());
+        let err = save_note_with_conn(&conn, stale).expect_err("stale cas must fail");
+        assert!(err.starts_with("note_conflict:"), "unexpected error: {err}");
+
+        // 另一窗口的写入必须完好保留。
+        let stored = get_note_helper(&conn, "n1").expect("read back");
+        assert_eq!(stored.content, "other-window");
+    }
+
+    #[test]
+    fn cas_is_ignored_when_note_does_not_exist_yet() {
+        // 新笔记没有旧 revision：CAS 字段只约束更新路径，创建路径不受
+        // 影响，否则“保存到不存在的笔记”这种正常操作会被误伤。
+        let conn = memory_db();
+        let mut cas = input("ghost", "fresh");
+        cas.expected_updated_at = Some("2026-10-19T00:00:00Z".to_string());
+        let saved = save_note_with_conn(&conn, cas).expect("create with cas field");
+        assert_eq!(saved.note.content, "fresh");
+    }
+}
+

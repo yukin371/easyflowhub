@@ -42,7 +42,18 @@ export async function getNote(id: string): Promise<Note | null> {
 // Save Note
 // ============================================================================
 
-export async function saveNote(note: Partial<Note> & { id: string }): Promise<Note> {
+/**
+ * Optional compare-and-swap guard (F05): when set, the native update only
+ * applies if the stored `updated_at` still matches; otherwise the save is
+ * rejected with a `note_conflict:` error instead of overwriting a newer write
+ * from another window. Omit it for last-write-wins saves.
+ */
+export interface SaveNoteInput extends Partial<Note> {
+  id: string;
+  expected_updated_at?: string;
+}
+
+export async function saveNote(note: SaveNoteInput): Promise<Note> {
   const response: SaveNoteResponse = await invoke('save_note', { note });
   return response.note;
 }

@@ -129,6 +129,86 @@ export function updateTodoTextInContent(
   return lines.join('\n');
 }
 
+/** 待办在正文中的身份引用：行号只是提示，文本才是定位依据。 */
+export interface TodoLineRef {
+  /** 列表快照时的行号（0-based），可能已过期 */
+  lineIndex: number;
+  /** 待办文本（不含 @done 后缀） */
+  text: string;
+}
+
+export type TodoLineLookup =
+  /** 原行号仍然指向同名待办 */
+  | { kind: 'exact'; lineIndex: number }
+  /** 行号已失效，但全文唯一匹配到同名待办 */
+  | { kind: 'relocated'; lineIndex: number }
+  /** 同名待办出现多次，无法确定目标，调用方必须报冲突而不是猜 */
+  | { kind: 'conflict' }
+  /** 待办已被其他窗口删除 */
+  | { kind: 'missing' };
+
+/** 解析单行 checkbox；不是待办行则返回 null。 */
+function parseTodoLine(line: string): { checked: boolean; text: string } | null {
+  const match = TODO_REGEX.exec(line);
+  if (!match) {
+    return null;
+  }
+  const checked = match[3].toLowerCase() === 'x';
+  let text = match[4].trim();
+  if (checked) {
+    text = text.replace(DONE_TIMESTAMP_REGEX, '').trim();
+  }
+  return { checked, text };
+}
+
+/**
+ * 在“最新正文”中定位列表快照里的待办（F05）。
+ *
+ * 快照里的 lineIndex 来自另一次读取：多窗口在上方插入/删除行后，直接用
+ * 旧行号改写正文会命中错误的条目。这里先验证原行号是否仍指向同名待办，
+ * 失败则按文本在全文中重新定位；同名待办多于一条时返回 conflict，宁可
+ * 拒绝写入也不静默改错任务。
+ */
+export function locateTodoLine(content: string, ref: TodoLineRef): TodoLineLookup {
+  const lines = content.split('\n');
+
+  const candidates: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const parsed = parseTodoLine(lines[i]);
+    if (parsed && parsed.text === ref.text) {
+      candidates.push(i);
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { kind: 'missing' };
+  }
+  if (candidates.length > 1) {
+    // 同名待办多于一条：即使快照行号仍落在其中一条上，也无法证明它没
+    // 被其他窗口的插入/删除顶替成另一条同名待办，宁可拒绝也不静默改错。
+    return { kind: 'conflict' };
+  }
+
+  const lineIndex = candidates[0];
+  return lineIndex === ref.lineIndex
+    ? { kind: 'exact', lineIndex }
+    : { kind: 'relocated', lineIndex };
+}
+
+/** 在正文末尾追加一条未完成待办；空正文直接生成首行。 */
+export function appendTodoLine(content: string, text: string): string {
+  const normalizedText = text.trim();
+  if (!normalizedText) {
+    return content;
+  }
+
+  if (!content.trim()) {
+    return `- [ ] ${normalizedText}`;
+  }
+
+  return `${content.replace(/\s*$/, '')}\n- [ ] ${normalizedText}`;
+}
+
 /**
  * 检查已完成的 todo 是否在保留期内
  * @param checkedAt ISO 时间戳字符串

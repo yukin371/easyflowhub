@@ -113,6 +113,8 @@ describe('TodoCardPage', () => {
       expect(saveNoteMock).toHaveBeenCalledWith({
         id: 'note-1',
         content: expect.stringMatching(/\[x\] Ship docs @done:/),
+        // F05: 写入携带读取时的 revision，native 侧做 compare-and-swap。
+        expected_updated_at: '2026-04-24T00:00:00.000Z',
       });
     });
   });
@@ -135,6 +137,10 @@ describe('TodoCardPage', () => {
 
   it('新增待办时会创建待办箱并保存新任务', async () => {
     listNotesMock.mockResolvedValue([]);
+    // useTodos 在追加前会重读待办箱正文（F05：避免覆盖其他窗口刚写入的行）。
+    getNoteMock.mockResolvedValue(
+      createFixtureNote({ id: 'new-note', title: TODO_INBOX_TITLE, content: '' })
+    );
     saveNoteMock
       .mockResolvedValueOnce(
         createFixtureNote({ id: 'new-note', title: TODO_INBOX_TITLE, content: '' })
@@ -171,6 +177,8 @@ describe('TodoCardPage', () => {
         title: TODO_INBOX_TITLE,
         content: '- [ ] Write release note',
         tags: '',
+        // F05: 追加同样带 revision CAS。
+        expected_updated_at: '2026-04-24T00:00:00.000Z',
       });
     });
   });

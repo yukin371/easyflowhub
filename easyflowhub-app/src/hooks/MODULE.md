@@ -1,10 +1,27 @@
-# Appearance Hooks
+# Hooks
 
-> Last updated: 2026-10-18
+> Last updated: 2026-10-19
 
 ## Responsibility
 
-`useAppearance` keeps persisted theme and window appearance settings synchronized with the current Tauri webview. This summary is inferred from the hook and its `App` consumer.
+- `useAppearance` keeps persisted theme and window appearance settings synchronized with the current Tauri webview.
+- `useTodos` (F05) is the single orchestration owner for todo loading, done-retention filtering, toggle, text edit and inbox-note creation. Both `TodoPanel` (Manager) and `TodoCardPage` (floating window) consume it instead of duplicating the read-modify-write flow.
+- `useAutoSave` (F04) owns note save versioning: a token plus a serialised promise chain ensures a slow save's response never clears a newer backup or refills the editor draft of a newer session.
+- `useBackupRestore` inspects the localStorage backup written by `useAutoSave` and offers keep / restore / merge when a note is reopened.
+
+## Todo write safety (F05)
+
+- `lib/todoParser.locateTodoLine` re-finds a snapshot todo by **text identity** in the freshly-read note body; a stale `lineIndex` is only a hint. Duplicate todo text is always reported as `conflict` — the hook refuses to guess which line to modify.
+- Writes go through native `save_note` with `expected_updated_at` (compare-and-swap). A mismatch surfaces a `note_conflict:` error; the hook reloads and returns a readable message instead of silently overwriting another window's write.
+- `resolveTodoLine` / `mutateTodo` inside the hook are the only place that maps lookup failures (`conflict` / `missing` / `stale`) to user-facing messages; panels render them and keep their own view state.
+
+## Conventions & pitfalls
+
+- `App` mounts `useAppearance` in every window, so each webview applies the same persisted theme and blur preference.
+- Appearance updates must be broadcast between mounted hook instances and persisted before the document attributes change.
+- Window surface CSS uses `data-blur="off"` for opaque surfaces; changing the setting only in a preview does not change the actual window.
+- `useAutoSave` drops stale responses by design: do not "fix" a missing `onSaved` call by removing the token check — that reintroduces F04.
+- `useTodos` refreshes the list after every failed write; callers must not assume the pre-write snapshot is still current.
 
 ## Data flow
 

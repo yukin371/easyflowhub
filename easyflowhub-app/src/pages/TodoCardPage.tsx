@@ -7,37 +7,19 @@ import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties }
 import { invoke } from '@tauri-apps/api/core';
 import { emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { createNote, getNote, listNotes, saveNote } from '../lib/tauri/notes';
-import { getSettings } from '../lib/tauri/settings';
 import {
   compareTodoGroupsForDisplay,
-  extractAllTodos,
-  isWithinRetention,
   sortTodosForDisplay,
   TODO_INBOX_TITLE,
-  toggleTodoInContent,
-  updateTodoTextInContent,
 } from '../lib/todoParser';
-import type { Note } from '../types/note';
+import { useTodos } from '../hooks/useTodos';
 import type { TodoItem } from '../types/todo';
 import { MANAGER_NAVIGATE_TO_NOTE_EVENT } from '../components/manager/ManagerPage';
 
-function appendTodoLine(content: string, text: string) {
-  const normalizedText = text.trim();
-  if (!normalizedText) {
-    return content;
-  }
-
-  if (!content.trim()) {
-    return `- [ ] ${normalizedText}`;
-  }
-
-  return `${content.replace(/\s*$/, '')}\n- [ ] ${normalizedText}`;
-}
-
 export function TodoCardPage() {
-  const [todos, setTodos] = useState<TodoItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 加载、保留期过滤、勾选、编辑与新建的编排归 useTodos（F05）：与 Manager
+  // 面板共享同一实现，定位按文本身份、写入带 revision CAS。
+  const { todos, loading, loadTodos, toggleTodo, updateTodoText, createTodo } = useTodos();
   const [pinned, setPinned] = useState(false);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [todoDraft, setTodoDraft] = useState('');
@@ -45,29 +27,13 @@ export function TodoCardPage() {
   const [newTodoText, setNewTodoText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [isWindowFocused, setIsWindowFocused] = useState(true);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
   const addInputRef = useRef<HTMLInputElement | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const windowLabel = getCurrentWindow().label;
 
-  const loadTodos = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [notes, settings] = await Promise.all([listNotes(), getSettings()]);
-      const hours = settings.todo?.done_retention_hours ?? 24;
-      const allTodos = extractAllTodos(
-        notes.map((note) => ({ id: note.id, title: note.title, content: note.content }))
-      );
-      setTodos(allTodos.filter((todo) => !todo.checked || isWithinRetention(todo.checkedAt, hours)));
-    } catch (err) {
-      console.error('Failed to load todos:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void loadTodos();
     const interval = window.setInterval(() => {
       void loadTodos();
     }, 30000);
@@ -190,17 +156,12 @@ export function TodoCardPage() {
   const pendingCount = todos.filter((todo) => !todo.checked).length;
 
   const handleToggle = useCallback(async (todo: TodoItem) => {
-    try {
-      const note = await getNote(todo.noteId);
-      if (!note) return;
-      const newContent = toggleTodoInContent(note.content, todo.lineIndex);
-      if (newContent === null) return;
-      await saveNote({ id: todo.noteId, content: newContent });
-      await loadTodos();
-    } catch (err) {
-      console.error('Failed to toggle todo:', err);
+    setWriteError(null);
+    const result = await toggleTodo(todo);
+    if (!result.ok && result.message) {
+      setWriteError(result.message);
     }
-  }, [loadTodos]);
+  }, [toggleTodo]);
 
   const handleTogglePin = useCallback(async () => {
     try {
@@ -213,22 +174,6 @@ export function TodoCardPage() {
     }
   }, [pinned, windowLabel]);
 
-  const ensureTodoInboxNote = useCallback(async (): Promise<Note> => {
-    const notes = await listNotes();
-    const existing = notes.find((note) => note.title.trim() === TODO_INBOX_TITLE);
-    if (existing) {
-      return existing;
-    }
-
-    const created = await createNote();
-    return await saveNote({
-      id: created.id,
-      title: TODO_INBOX_TITLE,
-      content: '',
-      tags: created.tags,
-    });
-  }, []);
-
   const handleCreateTodo = useCallback(async () => {
     const normalizedText = newTodoText.trim();
     if (!normalizedText) {
@@ -237,25 +182,23 @@ export function TodoCardPage() {
       return;
     }
 
-    try {
-      setSubmitting(true);
-      const inbox = await ensureTodoInboxNote();
-      const updatedContent = appendTodoLine(inbox.content, normalizedText);
-      await saveNote({ id: inbox.id, content: updatedContent, title: inbox.title, tags: inbox.tags });
+    setSubmitting(true);
+    setWriteError(null);
+    const result = await createTodo(normalizedText);
+    if (result.ok) {
       setNewTodoText('');
       setIsComposerOpen(false);
-      await loadTodos();
-    } catch (error) {
-      console.error('Failed to create todo:', error);
-    } finally {
-      setSubmitting(false);
+    } else if (result.message) {
+      setWriteError(result.message);
     }
-  }, [ensureTodoInboxNote, loadTodos, newTodoText]);
+    setSubmitting(false);
+  }, [createTodo, newTodoText]);
 
   const handleStartEdit = useCallback((todo: TodoItem) => {
     setEditingTodoId(todo.id);
     setTodoDraft(todo.text);
     setIsComposerOpen(false);
+    setWriteError(null);
   }, []);
 
   const handleSaveEdit = useCallback(async (todo: TodoItem) => {
@@ -272,28 +215,17 @@ export function TodoCardPage() {
       return;
     }
 
-    try {
-      setSubmitting(true);
-      const note = await getNote(todo.noteId);
-      if (!note) {
-        return;
-      }
-
-      const updatedContent = updateTodoTextInContent(note.content, todo.lineIndex, normalizedText);
-      if (updatedContent === null) {
-        return;
-      }
-
-      await saveNote({ id: note.id, title: note.title, content: updatedContent, tags: note.tags });
+    setSubmitting(true);
+    setWriteError(null);
+    const result = await updateTodoText(todo, normalizedText);
+    if (result.ok) {
       setEditingTodoId(null);
       setTodoDraft('');
-      await loadTodos();
-    } catch (error) {
-      console.error('Failed to update todo:', error);
-    } finally {
-      setSubmitting(false);
+    } else if (result.message) {
+      setWriteError(result.message);
     }
-  }, [loadTodos, todoDraft]);
+    setSubmitting(false);
+  }, [todoDraft, updateTodoText]);
 
   const handleOpenSourceNote = useCallback(async (noteId: string) => {
     try {
@@ -409,6 +341,32 @@ export function TodoCardPage() {
               placeholder="..."
               style={inputStyle}
             />
+          </div>
+        ) : null}
+
+        {/* F05 写入冲突/失败提示：并发修改被拒绝时给出可恢复的说明 */}
+        {writeError ? (
+          <div
+            role="alert"
+            style={{
+              borderRadius: 14,
+              background: 'color-mix(in srgb, var(--quick-danger, #d9534f) 12%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--quick-danger, #d9534f) 40%, transparent)',
+              padding: '8px 10px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 8,
+            }}
+          >
+            <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--quick-ink)' }}>{writeError}</span>
+            <button
+              onClick={() => setWriteError(null)}
+              title="关闭提示"
+              style={{ ...toolbarButtonStyle, flexShrink: 0 }}
+            >
+              ×
+            </button>
           </div>
         ) : null}
 
