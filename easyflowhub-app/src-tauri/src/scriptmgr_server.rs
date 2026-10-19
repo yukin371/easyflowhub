@@ -202,7 +202,21 @@ fn ensure_blocking(app: &tauri::AppHandle) -> Result<String, String> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if *gate {
-        return Ok(url);
+        // The ready marker is only a hint: the sidecar may have exited since
+        // the last successful call (F06). Verify liveness before trusting it
+        // so a killed or crashed sidecar is recovered by a normal retry
+        // instead of the app handing out a dead URL forever.
+        if server_responding(&url) {
+            return Ok(url);
+        }
+        crate::logging::log(
+            "info",
+            "scriptmgr",
+            "cached ready state is stale (sidecar not responding); respawning",
+        );
+        *gate = false;
+        // Reap the dead child handle (if we own one) before respawning.
+        state.shutdown();
     }
 
     let spawned = if server_responding(&url) {

@@ -103,6 +103,46 @@ describe('sidecar lifecycle', () => {
     expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
+  it('recovers after the sidecar dies: a network failure drops the cached URL (F06)', async () => {
+    invokeMock.mockResolvedValue('http://127.0.0.1:8765');
+    const client = await loadClient();
+
+    // First request succeeds and caches the base URL.
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, count: 0, scripts: [] }), { status: 200 })
+    );
+    await client.scriptsApi.list();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    // The sidecar is killed: the next fetch rejects at the transport layer.
+    fetchMock.mockRejectedValueOnce(new TypeError('Connection refused'));
+    await expect(client.scriptsApi.list()).rejects.toThrow('Connection refused');
+
+    // The stale URL was dropped, so the next call re-handshakes with native,
+    // which re-checks liveness and can respawn the sidecar.
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, count: 0, scripts: [] }), { status: 200 })
+    );
+    await client.scriptsApi.list();
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not invalidate the cached URL on an HTTP error response (F06)', async () => {
+    invokeMock.mockResolvedValue('http://127.0.0.1:8765');
+    const client = await loadClient();
+
+    // A 500 means the server is still alive; only transport failures indicate
+    // a dead sidecar, so the cache must be preserved.
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    await expect(client.scriptsApi.list()).rejects.toThrow('HTTP 500');
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, count: 0, scripts: [] }), { status: 200 })
+    );
+    await client.scriptsApi.list();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
   it('health check ensures the sidecar and probes with GET', async () => {
     invokeMock.mockResolvedValue('http://127.0.0.1:8765');
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));

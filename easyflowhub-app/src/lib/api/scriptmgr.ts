@@ -80,6 +80,20 @@ export function ensureScriptmgr(): Promise<string> {
   return ensurePromise;
 }
 
+/**
+ * Drop the cached ready URL so the next request re-handshakes with native.
+ *
+ * The native layer owns the sidecar lifecycle and re-checks liveness on every
+ * ensure call, so it can respawn a killed or crashed sidecar (F06). The TS
+ * side must not keep handing out a stale URL after the sidecar dies: a
+ * network failure invalidates the cache, and the next call re-ensures. We
+ * deliberately only invalidate here and never replay the request, so a
+ * side-effecting call is not silently repeated.
+ */
+export function invalidateScriptmgr(): void {
+  ensurePromise = undefined;
+}
+
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -106,13 +120,24 @@ function asArray<T>(value: T[] | null | undefined): T[] {
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const base = await ensureScriptmgr();
-  const response = await fetch(`${base}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  });
+
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...init?.headers,
+      },
+    });
+  } catch (networkError) {
+    // The sidecar died or the port went away underneath us (F06). Drop the
+    // cached URL so the next call re-handshakes and native can respawn. The
+    // failing request itself is not replayed, so a side-effecting call is
+    // never silently repeated.
+    invalidateScriptmgr();
+    throw networkError;
+  }
 
   if (!response.ok) {
     const text = await response.text();
