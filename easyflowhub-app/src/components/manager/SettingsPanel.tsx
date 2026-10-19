@@ -98,6 +98,10 @@ export function SettingsPanel() {
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState<string>();
+  // Loading the persisted settings can fail (DB locked, native bridge down).
+  // Saving while the form still holds defaults would overwrite the user's real
+  // configuration, so saves stay blocked until a load succeeds.
+  const [settingsLoadState, setSettingsLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<SettingsSection, HTMLDivElement | null>>({
@@ -113,11 +117,22 @@ export function SettingsPanel() {
     editor: null,
   });
 
-  useEffect(() => {
-    setShortcutConfig(loadShortcutConfig());
-    setLauncherSettings(loadLauncherSettings());
-    setSnowShotPath(getConfiguredSnowShotPath() ?? '');
-    void refreshDebugLogs();
+  const refreshDebugLogs = useCallback(async () => {
+    setLogLoading(true);
+    try {
+      setDebugLogLines(await getDebugLogs(200));
+      setLogError(undefined);
+    } catch (err) {
+      // Browser preview / non-Tauri shells cannot read native logs; keep this
+      // out of the settings error banner.
+      setLogError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLogLoading(false);
+    }
+  }, []);
+
+  const loadSettings = useCallback(() => {
+    setSettingsLoadState('loading');
     getSettings().then((settings) => {
       setAppSettings({
         ...DEFAULT_SETTINGS,
@@ -141,11 +156,23 @@ export function SettingsPanel() {
             .filter((app): app is NonNullable<ReturnType<typeof createExcludedApp>> => Boolean(app)),
         });
       }
-    }).catch(console.error);
+      setSettingsLoadState('ready');
+    }).catch((error) => {
+      console.error('Failed to load settings:', error);
+      setSettingsLoadState('failed');
+    });
+  }, []);
+
+  useEffect(() => {
+    setShortcutConfig(loadShortcutConfig());
+    setLauncherSettings(loadLauncherSettings());
+    setSnowShotPath(getConfiguredSnowShotPath() ?? '');
+    void refreshDebugLogs();
+    loadSettings();
 
     // 读取自启动状态
     isAutostartEnabled().then(setAutostartOn).catch(() => setAutostartOn(false));
-  }, []);
+  }, [loadSettings, refreshDebugLogs]);
 
   // 滚动到指定区块
   const scrollToSection = (section: SettingsSection) => {
@@ -321,6 +348,10 @@ export function SettingsPanel() {
 
   const handleSaveSettings = async () => {
     setSettingsError(undefined);
+    if (settingsLoadState !== 'ready') {
+      setSettingsError('设置尚未成功加载，已阻止保存以避免覆盖现有配置。请先点击“重试加载”。');
+      return;
+    }
     try {
       const launcher_trigger: LauncherTriggerSettings = {
         enabled: true,
@@ -348,20 +379,6 @@ export function SettingsPanel() {
       setSettingsError('设置保存失败，请重试。');
     }
   };
-
-  const refreshDebugLogs = useCallback(async () => {
-    setLogLoading(true);
-    try {
-      setDebugLogLines(await getDebugLogs(200));
-      setLogError(undefined);
-    } catch (err) {
-      // Browser preview / non-Tauri shells cannot read native logs; keep this
-      // out of the settings error banner.
-      setLogError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLogLoading(false);
-    }
-  }, []);
 
   return (
     <section className="flex h-full">
@@ -398,6 +415,24 @@ export function SettingsPanel() {
         </header>
 
         <div ref={scrollContainerRef} className="h-[calc(100%-120px)] overflow-y-auto px-6 py-5">
+          {settingsLoadState === 'failed' ? (
+            <div
+              role="alert"
+              className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[color:var(--manager-danger)]/40 bg-[color:var(--manager-danger)]/8 px-4 py-3"
+            >
+              <span className="text-sm text-[color:var(--manager-danger)]">
+                设置加载失败，为避免覆盖现有配置，保存已暂停。
+              </span>
+              <button
+                type="button"
+                onClick={loadSettings}
+                className="rounded-full border border-[color:var(--manager-danger)]/40 px-4 py-1.5 text-sm text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/12"
+              >
+                重试加载
+              </button>
+            </div>
+          ) : null}
+
           {/* 通用设置 */}
           <div
             ref={(el) => { sectionRefs.current.general = el; }}
@@ -815,6 +850,7 @@ export function SettingsPanel() {
                 <button
                   type="button"
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-[color:var(--manager-bg)] transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存翻译设置
@@ -891,6 +927,7 @@ export function SettingsPanel() {
                 <button
                   type="button"
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-[color:var(--manager-bg)] transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存转写设置
@@ -942,6 +979,7 @@ export function SettingsPanel() {
                 <button
                   type="button"
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-[color:var(--manager-bg)] transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存开发者设置
@@ -1052,6 +1090,7 @@ export function SettingsPanel() {
               <div className="mt-4 flex items-center gap-4">
                 <button
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-white transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存设置
@@ -1107,6 +1146,7 @@ export function SettingsPanel() {
               <div className="mt-4 flex items-center gap-4">
                 <button
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-white transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存设置
@@ -1150,6 +1190,7 @@ export function SettingsPanel() {
               <div className="mt-4 flex items-center gap-4">
                 <button
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-white transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存设置
@@ -1259,6 +1300,7 @@ export function SettingsPanel() {
               <div className="mt-4 flex items-center gap-4">
                 <button
                   onClick={handleSaveSettings}
+                  disabled={settingsLoadState !== 'ready'}
                   className="rounded-full bg-[color:var(--manager-accent)] px-5 py-2 text-sm text-white transition hover:bg-[color:var(--manager-accent-strong)]"
                 >
                   保存设置

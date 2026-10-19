@@ -199,4 +199,27 @@ describe('SettingsPanel', () => {
     expect(await screen.findByLabelText('音频语言')).toHaveValue('');
     expect(screen.getByLabelText('转写模型')).toHaveValue('');
   });
+
+  it('设置加载失败时阻止保存，避免用默认值覆盖现有配置', async () => {
+    getSettingsMock.mockRejectedValueOnce(new Error('database is locked'));
+    render(<SettingsPanel />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('设置加载失败');
+
+    // Only the app-settings saves are blocked; the shortcuts config uses its
+    // own localStorage store and stays independent.
+    const settingsSaves = screen.getAllByRole('button', { name: '保存设置' });
+    expect(settingsSaves.length).toBeGreaterThan(0);
+    expect(settingsSaves.every((button) => button.hasAttribute('disabled'))).toBe(true);
+
+    fireEvent.click(settingsSaves[0]);
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+
+    // Retrying a successful load re-enables saving.
+    getSettingsMock.mockResolvedValueOnce(appSettings);
+    fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getAllByRole('button', { name: '保存设置' }).some((button) => !button.hasAttribute('disabled'))).toBe(true);
+  });
 });
