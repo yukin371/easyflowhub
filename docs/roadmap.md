@@ -90,6 +90,17 @@
   - `V1-D2` `[in_progress]` README / PRD / roadmap 同步到正式 v1 范围
   - `V1-D3` `[in_progress]` 每轮 checkpoint 后回填验证结果与剩余风险
 
+#### Track F. Architecture Health
+
+- owner scope: `easyflowhub-app/src`, `easyflowhub-app/src-tauri/src`, `scriptmgr-go/internal`, `.github/workflows`, `docs`
+- 审查基线：[2026-10-19 架构与大文件审查](./plans/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）已实施，F06–F14 与大文件拆分尚未实施。
+- 当前任务：
+  - `V1-F1` `[done]` 盘点规模、依赖、owner 和异常路径；24 个实现文件物理行数超过 500，剔除 Rust 内联测试后约 23 个；TS 静态依赖未发现循环。
+  - `V1-F2` `[done]` 优先修复审查 F01–F05：跨进程 sessions 旧快照覆盖、回收站失败误删、Inbox 非事务迁移、自动保存旧响应、todo 旧行号误写，并补故障/并发回归。
+  - `V1-F3` `[planned]` 收口 sidecar 恢复、模块失败回滚、配置提交、MCP 加载状态、附件生命周期等 owner 边界（F06–F14）。
+  - `V1-F4` `[planned]` 在既有 owner 内按职责拆分 SettingsPanel、mcp/server、native inbox/lib 和编辑页面，保持接口兼容。
+  - `V1-F5` `[planned]` 建立 import/typed bridge/文件规模增量门禁，补 Windows native PR 验证，并同步实际通信路径和模块文档。
+
 ### Release Checkpoints
 
 #### CP1. Experience Stability Gate `[active]`
@@ -114,6 +125,7 @@
 
 ### Validation Debt
 
+- 架构审查 F01–F05 的数据完整性修复已实施并有故障注入/并发回归覆盖；但真实 Windows 多进程/多窗口打包态 smoke（交错启动完成取消、回收站注入失败、Inbox 迁移中断恢复、慢保存切换笔记、多窗口插入行）仍未执行，不能把单测通过当作实机验收。2026-10-19 修复后快照：前端 46 文件 / 349 项、TypeScript、Go 全量 + vet、Rust 81 项 / cargo check 通过。审查 F06–F14 的 owner 边界问题仍未修复。
 - quick note 的 `Esc` / `Alt+F4` / 工具按钮关闭回归仍需在打包产物中复验。
 - 最新人工验收已暴露并修复一轮图片放大、撤销、manager 图片展示问题，但仍缺修复后的 Windows 二次复验。
 - notes manager 仍缺一次发布前 CRUD / 回收 / 恢复 / 重开窗口一致性回归。
@@ -132,6 +144,7 @@
 
 ### Recent Progress
 
+- `2026-10-19` 已完成架构审查阶段A（F01–F05，数据完整性）：F01 `internal/store` 新增跨进程 sessions 锁（O_EXCL 锁文件 + 过期锁回收 + 原子 rename 写），`executor/async.go` 的 Start/RunWorker/Cancel/refreshSessions 全部改为按任务 ID 的锁定单条读改写，`syncTask` 不再吞掉 tasks.db 错误；F02 回收站 manifest/metadata 写失败时回滚脚本到原路径，绝不删除唯一副本；F03 Inbox capture-kind 迁移包进单事务，失败回滚后重启可重试，foreign_keys pragma 失败后恢复；F04 `useAutoSave` 引入 token + 串行 promise 链，旧响应不再清新备份/回填新草稿，flush 等待真实 in-flight；F05 新增 `lib/todoParser.locateTodoLine`（按文本身份重定位、同名多条一律拒绝）、共享 `hooks/useTodos`（加载/保留期/勾选/编辑/新建唯一编排）、native `save_note` 增加 `expected_updated_at` compare-and-swap（opt-in，冲突返回 `note_conflict:`）。新增回归：Go store 并发/过期锁/单条更新 6 项、executor 对账 5 项、Rust CAS 4 项 + Inbox 迁移回滚 1 项、前端 locateTodoLine/useTodos/useAutoSave 19 项。验证：前端 46 文件 / 349 项、tsc、Go 全量 + vet、Rust 81 项 + cargo check 通过。真实 Windows 多进程/多窗口打包态 smoke 仍待人工执行。
 - `2026-10-19` 已完成 Phase 5 第二条切片"录音后语音转文字"（ADR-0008）：native 新增 `transcription.rs` owner，按 `TranscriptionTransport` trait 通过本机 Relay `POST /v1/audio/transcriptions`（multipart）转写，25 MB 大小守卫、180 秒截止、固定中文错误分类；请求在 native 侧执行，音频字节不进入 WebView，密钥与路由仍归 Go Relay。`inbox_attachments.kind` 以 additive schema 增加 `transcript`，transcript 作为文本附件落盘并在重新转写时同事务替换，`convert_inbox_item_to_note` 对 transcript 附件把文本嵌入笔记正文。前端新增 typed bridge、共享 `TranscribeControl`（文件 / 大小 / 时长 / Provider / 模型 + 隐私确认后才发送）、Voice 面板与 Inbox 面板挂载、设置页「转写」段（模型 / 语言）。本轮验证：前端 41 个测试文件 / 299 项、Rust 65 项 library tests、TypeScript、Vite 生产构建、Manager 主题 token 审计、Windows target `cargo check`、Go tests、`git diff --check` 通过（Rust 仅有既有 `NoteInput` 未使用字段 warning）。Windows 打包态麦克风 smoke、真实 Provider 成功转写与重新打开 Manager 后 transcript 恢复仍待人工验收；实时转写、说话人识别、本地模型适配器与自动转写不在本切片。
 - `2026-10-16` 已完成 Action Launcher 最小闭环骨架：独立 Action Registry、脚本动作适配、搜索/最近/收藏、参数输入、执行反馈，以及 Windows `Ctrl+Alt+Space` 全局入口；前端、Rust、Go 验证通过，后续继续补充非脚本动作和真实 Windows 打包验收。
 - `2026-10-16` 已补充 Launcher 触发策略：可选择键盘快捷键、鼠标中键或两者并用；快捷键可重新录入，Windows 前台进程支持排除列表，配置由设置页桥接到 native 层并在保存时重新注册。

@@ -49,6 +49,7 @@
 
 ## Active Plans
 
+- [2026-10-19-architecture-and-file-size-review.md](./2026-10-19-architecture-and-file-size-review.md)：架构审查证据、大文件职责拆分、数据完整性风险和分阶段验收；审查已完成，修复待实施。
 - [2026-10-18-v0.2.0-checkpoint-summary.md](./2026-10-18-v0.2.0-checkpoint-summary.md)
 - [2026-10-16-v0.2.0-product-delivery-plan.md](./2026-10-16-v0.2.0-product-delivery-plan.md)
 - [2026-04-25-ai-host-routing-implementation-plan.md](./2026-04-25-ai-host-routing-implementation-plan.md)
