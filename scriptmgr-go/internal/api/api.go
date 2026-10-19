@@ -30,19 +30,38 @@ func New(d *discovery.Service, e *executor.Service, s *store.Store, o *store.Ove
 	}
 }
 
+// applyOverrides returns the scripts with category overrides applied. Every
+// classification consumer (list, counts, filter, describe) must go through
+// this view so the same override can never yield different categories on
+// different endpoints (F12).
+func (a *API) applyOverrides(scripts []model.ScriptRecord) []model.ScriptRecord {
+	if a.overrides == nil {
+		return scripts
+	}
+	for i := range scripts {
+		if override := a.overrides.Get(scripts[i].ID); override.Category != "" {
+			scripts[i].Category = override.Category
+		}
+	}
+	return scripts
+}
+
+// effectiveCatalog is the single override-aware view of every discovered
+// script; discovery only reports raw findings.
+func (a *API) effectiveCatalog() ([]model.ScriptRecord, error) {
+	scripts, err := a.discovery.DiscoverScripts("")
+	if err != nil {
+		return nil, err
+	}
+	return a.applyOverrides(scripts), nil
+}
+
 func (a *API) ListScripts(search string) ([]model.ScriptRecord, []string, error) {
 	scripts, err := a.discovery.DiscoverScripts(search)
 	if err != nil {
 		return nil, nil, err
 	}
-	// Apply category overrides
-	if a.overrides != nil {
-		for i := range scripts {
-			if override := a.overrides.Get(scripts[i].ID); override.Category != "" {
-				scripts[i].Category = override.Category
-			}
-		}
-	}
+	scripts = a.applyOverrides(scripts)
 	roots, err := a.discovery.ScriptRoots()
 	if err != nil {
 		return nil, nil, err
@@ -52,7 +71,7 @@ func (a *API) ListScripts(search string) ([]model.ScriptRecord, []string, error)
 
 // ListCategories returns all script categories with their counts
 func (a *API) ListCategories() (map[string]int, error) {
-	scripts, err := a.discovery.DiscoverScripts("")
+	scripts, err := a.effectiveCatalog()
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +90,7 @@ func (a *API) ListCategories() (map[string]int, error) {
 
 // ListScriptsByCategory returns scripts filtered by category
 func (a *API) ListScriptsByCategory(category string) ([]model.ScriptRecord, error) {
-	all, err := a.discovery.DiscoverScripts("")
+	all, err := a.effectiveCatalog()
 	if err != nil {
 		return nil, err
 	}
