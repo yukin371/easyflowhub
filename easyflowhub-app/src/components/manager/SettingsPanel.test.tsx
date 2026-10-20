@@ -129,6 +129,31 @@ describe('SettingsPanel', () => {
     });
   });
 
+  it('普通保存不携带未提交的 Launcher 草稿（F08）', async () => {
+    render(<SettingsPanel />);
+
+    // 只修改 Launcher 草稿，不点“保存配置”（Launcher 域的提交入口）。
+    const activation = await screen.findByLabelText('Launcher 唤起方式');
+    fireEvent.change(activation, { target: { value: 'middleMouse' } });
+
+    // 从翻译区提交普通设置。
+    fireEvent.change(screen.getByLabelText('翻译模型'), { target: { value: 'relay-model' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存翻译设置' }));
+
+    await waitFor(() => {
+      expect(updateSettingsMock).toHaveBeenCalledWith({
+        ...appSettings,
+        translation: { target_language: 'zh-CN', model: 'relay-model' },
+      });
+    });
+
+    // launcher_trigger 回写已加载/已提交值，而不是 middleMouse 草稿。
+    const payload = updateSettingsMock.mock.calls[0][0];
+    expect(payload.launcher_trigger).toEqual(appSettings.launcher_trigger);
+    // Launcher 的 UI 镜像也不落盘：草稿仍在等待自己的提交入口。
+    expect(localStorage.getItem('easyflowhub_launcher_settings_v1')).toBeNull();
+  });
+
   it('保存目标语言与模型时复用应用设置且不增加密钥', async () => {
     render(<SettingsPanel />);
 
