@@ -42,6 +42,8 @@ separate from the Manager workbench.
   The close button, Escape and repeated global trigger dismiss the panel.
 - Keep the native Launcher window close to the panel dimensions. The panel fills
   the viewport so the app does not leave a large transparent hit area around it.
+- Keep the action surface portrait and compact: four columns of short tiles in a
+  narrow, tall window, with scrolling for larger catalogs.
 - Pinning is opt-in, lasts for the current native process and does not affect Manager.
 - Search stays mounted while visually collapsed to receive ordinary typing and IME
   composition. Native operations remain in the page/bridge rather than the panel.

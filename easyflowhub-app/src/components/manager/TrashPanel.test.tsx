@@ -11,6 +11,8 @@ import {
 } from '../../lib/tauri/notes';
 import type { Note } from '../../types/note';
 import { scriptTrashApi } from '../../lib/api/scriptmgr';
+import { emptyInboxTrash, listInboxTrash, permanentlyDeleteInboxItem, restoreInboxItemFromTrash } from '../../lib/tauri/inbox';
+import type { InboxItem } from '../../types/inbox';
 
 vi.mock('../../lib/tauri/notes', () => ({
   listTrash: vi.fn(),
@@ -29,6 +31,13 @@ vi.mock('../../lib/api/scriptmgr', () => ({
   },
 }));
 
+vi.mock('../../lib/tauri/inbox', () => ({
+  emptyInboxTrash: vi.fn(),
+  listInboxTrash: vi.fn(),
+  permanentlyDeleteInboxItem: vi.fn(),
+  restoreInboxItemFromTrash: vi.fn(),
+}));
+
 const listScriptTrashMock = vi.mocked(scriptTrashApi.list);
 const restoreScriptMock = vi.mocked(scriptTrashApi.restore);
 const purgeScriptMock = vi.mocked(scriptTrashApi.purge);
@@ -37,6 +46,10 @@ const restoreNoteMock = vi.mocked(restoreNote);
 const restoreNotesBatchMock = vi.mocked(restoreNotesBatch);
 const permanentDeleteNoteMock = vi.mocked(permanentDeleteNote);
 const emptyTrashMock = vi.mocked(emptyTrash);
+const listInboxTrashMock = vi.mocked(listInboxTrash);
+const restoreInboxItemMock = vi.mocked(restoreInboxItemFromTrash);
+const permanentlyDeleteInboxItemMock = vi.mocked(permanentlyDeleteInboxItem);
+const emptyInboxTrashMock = vi.mocked(emptyInboxTrash);
 
 function createFixtureNote(overrides: Partial<Note> = {}): Note {
   return {
@@ -48,6 +61,32 @@ function createFixtureNote(overrides: Partial<Note> = {}): Note {
     updated_at: '2026-04-24T00:00:00.000Z',
     is_pinned: false,
     deleted_at: '2026-04-24T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function createFixtureInboxItem(overrides: Partial<InboxItem> = {}): InboxItem {
+  return {
+    id: 'inbox-1',
+    kind: 'image',
+    title: 'Screenshot',
+    content: '',
+    source: 'manager',
+    context: 'clipboard',
+    capturedAt: '2026-10-19T00:00:00.000Z',
+    archivedAt: null,
+    deletedAt: '2026-10-20T00:00:00.000Z',
+    convertedNoteId: null,
+    attachments: [{
+      id: 'attachment-1',
+      itemId: 'inbox-1',
+      kind: 'image',
+      name: 'screen.png',
+      mimeType: 'image/png',
+      filename: 'stored.png',
+      sizeBytes: 2048,
+      createdAt: '2026-10-19T00:00:00.000Z',
+    }],
     ...overrides,
   };
 }
@@ -64,6 +103,10 @@ describe('TrashPanel', () => {
     permanentDeleteNoteMock.mockResolvedValue('note-1' as never);
     emptyTrashMock.mockResolvedValue(2 as never);
     listScriptTrashMock.mockResolvedValue([]);
+    listInboxTrashMock.mockResolvedValue([]);
+    restoreInboxItemMock.mockResolvedValue('inbox-1' as never);
+    permanentlyDeleteInboxItemMock.mockResolvedValue('inbox-1' as never);
+    emptyInboxTrashMock.mockResolvedValue(0);
   });
 
   it('恢复单条笔记后将其从回收站列表移除', async () => {
@@ -166,6 +209,48 @@ describe('TrashPanel', () => {
 
     await waitFor(() => expect(purgeScriptMock).toHaveBeenCalledWith('trash-2'));
     expect(confirmSpy).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+  });
+
+  it('收集箱分区展示图片并可恢复到收集箱', async () => {
+    listInboxTrashMock.mockResolvedValue([createFixtureInboxItem()]);
+    render(<TrashPanel />);
+    fireEvent.click(await screen.findByRole('tab', { name: /收集箱/ }));
+
+    expect(await screen.findByText('Screenshot')).toBeInTheDocument();
+    expect(screen.getByText('附件：screen.png')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '恢复' }));
+
+    await waitFor(() => expect(restoreInboxItemMock).toHaveBeenCalledWith('inbox-1'));
+    await waitFor(() => expect(screen.queryByText('Screenshot')).not.toBeInTheDocument());
+  });
+
+  it('永久清理收集箱项目需要确认', async () => {
+    listInboxTrashMock.mockResolvedValue([createFixtureInboxItem({ kind: 'audio', title: 'Meeting audio' })]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<TrashPanel />);
+    fireEvent.click(await screen.findByRole('tab', { name: /收集箱/ }));
+    expect(await screen.findByText('Meeting audio')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '永久删除' }));
+
+    await waitFor(() => expect(permanentlyDeleteInboxItemMock).toHaveBeenCalledWith('inbox-1'));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+  });
+
+  it('清空收集箱回收站前确认并刷新为空态', async () => {
+    listInboxTrashMock.mockResolvedValue([createFixtureInboxItem()]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<TrashPanel />);
+    fireEvent.click(await screen.findByRole('tab', { name: /收集箱/ }));
+    await screen.findByText('Screenshot');
+
+    fireEvent.click(screen.getByRole('button', { name: '清空收集箱回收站' }));
+
+    await waitFor(() => expect(emptyInboxTrashMock).toHaveBeenCalledTimes(1));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getAllByText('没有已删除的收集项')).toHaveLength(2));
     confirmSpy.mockRestore();
   });
 });

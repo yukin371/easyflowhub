@@ -41,6 +41,13 @@ pub struct ConvertInboxItemResponse {
     pub note_id: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyInboxTrashResponse {
+    pub ok: bool,
+    pub deleted_count: usize,
+}
+
 #[tauri::command]
 pub fn list_inbox_items(
     app: tauri::AppHandle,
@@ -48,6 +55,16 @@ pub fn list_inbox_items(
 ) -> Result<InboxItemsResponse, String> {
     let conn = repository::get_connection(&app)?;
     let items = repository::list_items(&conn, include_archived.unwrap_or(false))?;
+    Ok(InboxItemsResponse {
+        ok: true,
+        count: items.len(),
+        items,
+    })
+}
+
+#[tauri::command]
+pub fn list_inbox_trash(app: tauri::AppHandle) -> Result<InboxItemsResponse, String> {
+    let items = service::list_trash_items(&app)?;
     Ok(InboxItemsResponse {
         ok: true,
         count: items.len(),
@@ -117,14 +134,46 @@ pub fn open_inbox_link(app: tauri::AppHandle, id: String) -> Result<(), String> 
     open::that(content).map_err(|error| format!("打开链接失败: {error}"))
 }
 
-/// Permanently delete an Inbox item. Deletion of stored files follows the
-/// resource-identity rules owned by `service::delete_item`.
+/// Move an Inbox item to trash without removing its attachment files.
 #[tauri::command]
 pub fn delete_inbox_item(app: tauri::AppHandle, id: String) -> Result<InboxStateResponse, String> {
-    service::delete_item(&app, &id)?;
+    service::trash_item(&app, &id)?;
     Ok(InboxStateResponse {
         ok: true,
         item_id: id,
+    })
+}
+
+#[tauri::command]
+pub fn restore_inbox_item_from_trash(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<InboxStateResponse, String> {
+    service::restore_item_from_trash(&app, &id)?;
+    Ok(InboxStateResponse {
+        ok: true,
+        item_id: id,
+    })
+}
+
+#[tauri::command]
+pub fn permanently_delete_inbox_item(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<InboxStateResponse, String> {
+    service::permanently_delete_item(&app, &id)?;
+    Ok(InboxStateResponse {
+        ok: true,
+        item_id: id,
+    })
+}
+
+#[tauri::command]
+pub fn empty_inbox_trash(app: tauri::AppHandle) -> Result<EmptyInboxTrashResponse, String> {
+    let deleted_count = service::empty_trash(&app)?;
+    Ok(EmptyInboxTrashResponse {
+        ok: true,
+        deleted_count,
     })
 }
 

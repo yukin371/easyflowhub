@@ -21,6 +21,7 @@ export interface InboxItem {
   context: string;
   capturedAt: string;
   archivedAt: string | null;
+  deletedAt: string | null;
   convertedNoteId: string | null;
   attachments: InboxAttachment[];
 }

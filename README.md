@@ -66,7 +66,7 @@
 
 ## v0.2.0 规划
 
-下一轮产品体验以个人效率 Hub 为目标，围绕 `Capture -> Understand -> Retrieve -> Act` 逐步加入截屏、翻译、Inbox 快速捕获、文件搜索、资源下载、录音和录音后转写，并将主要页面迁移到可读的 Windows 毛玻璃工作空间。
+下一轮产品体验以个人效率 Hub 为目标，围绕 `Capture -> Understand -> Retrieve -> Act` 加入截屏、翻译、Inbox 快速捕获、文件搜索和资源下载，并将主要页面迁移到可读的 Windows 毛玻璃工作空间。Voice / 转写延期到 `v0.2.x`，不阻塞 v0.2.0 核心发布。
 
 - 需求基线：[docs/PRD-v0.2.0.md](./docs/PRD-v0.2.0.md)
 - 实施计划：[docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md](./docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md)

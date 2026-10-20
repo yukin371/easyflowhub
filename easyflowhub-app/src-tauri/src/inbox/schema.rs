@@ -45,7 +45,31 @@ pub(crate) fn init_db(conn: &mut Connection) -> SqliteResult<()> {
         "#,
     )?;
     migrate_capture_kinds_schema(conn)?;
-    migrate_attachment_source_path(conn)
+    migrate_attachment_source_path(conn)?;
+    migrate_deleted_at(conn)
+}
+
+/// Add the Inbox trash marker to databases created before Inbox items were
+/// integrated with the shared trash view.
+fn migrate_deleted_at(conn: &Connection) -> SqliteResult<()> {
+    let has_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('inbox_items') WHERE name = 'deleted_at'",
+            [],
+            |row| row.get::<_, i32>(0).map(|count| count > 0),
+        )
+        .unwrap_or(false);
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE inbox_items ADD COLUMN deleted_at TEXT DEFAULT NULL",
+            [],
+        )?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_items_deleted_at ON inbox_items(deleted_at DESC)",
+        [],
+    )?;
+    Ok(())
 }
 
 /// Add the `source_path` column additively for databases created before the
@@ -174,6 +198,14 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'inbox_items'", [], |row| row.get(0))
             .expect("inbox table exists");
         assert_eq!(inbox_table_count, 1);
+        let deleted_at_exists: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('inbox_items') WHERE name = 'deleted_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("trash marker exists");
+        assert_eq!(deleted_at_exists, 1);
     }
 
     #[test]
@@ -207,6 +239,10 @@ mod tests {
             .query_row("SELECT content FROM inbox_items WHERE id = 'legacy'", [], |row| row.get(0))
             .expect("legacy item remains");
         assert_eq!(content, "keep me");
+        let deleted_at: Option<String> = conn
+            .query_row("SELECT deleted_at FROM inbox_items WHERE id = 'legacy'", [], |row| row.get(0))
+            .expect("legacy item has no deletion timestamp");
+        assert!(deleted_at.is_none());
         conn.execute(
             "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at) VALUES ('t1', 'legacy', 'transcript', '转写文稿.txt', 'text/plain', 't1.txt', 4, '2026-01-01T00:00:00Z')",
             [],

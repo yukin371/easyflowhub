@@ -32,7 +32,7 @@ This module must not contain:
 |---|---|---|
 | `index.ts` | barrel export | 前端统一导出 wrapper |
 | `notes.ts` | notes bridge | 笔记 CRUD、回收站、图片落盘、窗口辅助 |
-| `inbox.ts` | capture bridge | 捕获、列表、归档 / 恢复、幂等转笔记、永久删除、打开附件或链接、打开资源文件夹 |
+| `inbox.ts` | capture bridge | 捕获、活动列表、归档 / 恢复、回收站列表 / 恢复 / 清理、幂等转笔记、打开附件或链接、打开资源文件夹 |
 | `scriptmgr.ts` | script runtime bridge | 列表、详情、执行、MCP API |
 | `settings.ts` / `appearance.ts` / `widget.ts` | native feature bridge | 设置、窗口外观、桌面小组件 |
 | `launcher.ts` | launcher bridge | 全局入口配置、前台排除、拖动/隐藏/置顶、唤起 / 聚焦 / 隐藏事件、Snow Shot 截图会话调用与安装页 |

@@ -168,6 +168,15 @@ describe('NotesPanel', () => {
     inspectBackupMock.mockImplementation(() => undefined);
   });
 
+  it('笔记归档排在收集箱之前并作为默认工作区', async () => {
+    render(<NotesPanel />);
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['笔记', '收集箱']);
+    expect(screen.getByRole('tab', { name: '笔记' })).toHaveAttribute('aria-selected', 'true');
+    await screen.findByText('Existing note');
+  });
+
   it('收到 open-note 事件时加载并打开指定笔记', async () => {
     getNoteMock.mockResolvedValueOnce(
       createFixtureNote({

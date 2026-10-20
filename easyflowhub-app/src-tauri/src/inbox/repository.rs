@@ -21,6 +21,7 @@ pub struct InboxItem {
     pub captured_at: String,
     pub archived_at: Option<String>,
     pub converted_note_id: Option<String>,
+    pub deleted_at: Option<String>,
     pub attachments: Vec<InboxAttachment>,
 }
 
@@ -76,28 +77,31 @@ fn list_attachments(conn: &Connection, item_id: &str) -> Result<Vec<InboxAttachm
     Ok(rows)
 }
 
+fn map_item(row: &rusqlite::Row<'_>) -> SqliteResult<InboxItem> {
+    Ok(InboxItem {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title: row.get(2)?,
+        content: row.get(3)?,
+        source: row.get(4)?,
+        context: row.get(5)?,
+        captured_at: row.get(6)?,
+        archived_at: row.get(7)?,
+        converted_note_id: row.get(8)?,
+        deleted_at: row.get(9)?,
+        attachments: Vec::new(),
+    })
+}
+
 pub(crate) fn get_item(conn: &Connection, id: &str) -> Result<Option<InboxItem>, String> {
     let mut item = conn
         .query_row(
             r#"
-            SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id
+            SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id, deleted_at
             FROM inbox_items WHERE id = ?
             "#,
             [id],
-            |row| {
-                Ok(InboxItem {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    title: row.get(2)?,
-                    content: row.get(3)?,
-                    source: row.get(4)?,
-                    context: row.get(5)?,
-                    captured_at: row.get(6)?,
-                    archived_at: row.get(7)?,
-                    converted_note_id: row.get(8)?,
-                    attachments: Vec::new(),
-                })
-            },
+            map_item,
         )
         .optional()
         .map_err(|error| format!("Failed to get inbox item: {error}"))?;
@@ -114,40 +118,76 @@ pub(crate) fn list_items(
     conn: &Connection,
     include_archived: bool,
 ) -> Result<Vec<InboxItem>, String> {
+    list_items_with_query(
+        conn,
+        r#"
+        SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id, deleted_at
+        FROM inbox_items
+        WHERE deleted_at IS NULL AND (? = 1 OR archived_at IS NULL)
+        ORDER BY captured_at DESC, id DESC
+        "#,
+        Some(include_archived),
+    )
+}
+
+/// List soft-deleted Inbox items, each with its attachments attached.
+pub(crate) fn list_trash_items(conn: &Connection) -> Result<Vec<InboxItem>, String> {
+    list_items_with_query(
+        conn,
+        r#"
+        SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id, deleted_at
+        FROM inbox_items
+        WHERE deleted_at IS NOT NULL
+        ORDER BY deleted_at DESC, id DESC
+        "#,
+        None,
+    )
+}
+
+fn list_items_with_query(
+    conn: &Connection,
+    query: &str,
+    include_archived: Option<bool>,
+) -> Result<Vec<InboxItem>, String> {
     let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT id, kind, title, content, source, context, captured_at, archived_at, converted_note_id
-            FROM inbox_items
-            WHERE (? = 1 OR archived_at IS NULL)
-            ORDER BY captured_at DESC, id DESC
-            "#,
-        )
+        .prepare(query)
         .map_err(|error| format!("Failed to prepare inbox list: {error}"))?;
-    let rows = stmt
-        .query_map([include_archived as i32], |row| {
-            Ok(InboxItem {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                title: row.get(2)?,
-                content: row.get(3)?,
-                source: row.get(4)?,
-                context: row.get(5)?,
-                captured_at: row.get(6)?,
-                archived_at: row.get(7)?,
-                converted_note_id: row.get(8)?,
-                attachments: Vec::new(),
-            })
-        })
-        .map_err(|error| format!("Failed to query inbox list: {error}"))?;
-    let mut items = rows
-        .collect::<SqliteResult<Vec<_>>>()
-        .map_err(|error| format!("Failed to collect inbox list: {error}"))?;
+    let mut items = if let Some(include_archived) = include_archived {
+        stmt.query_map([include_archived as i32], map_item)
+            .map_err(|error| format!("Failed to query inbox list: {error}"))?
+            .collect::<SqliteResult<Vec<_>>>()
+            .map_err(|error| format!("Failed to collect inbox list: {error}"))?
+    } else {
+        stmt.query_map([], map_item)
+            .map_err(|error| format!("Failed to query inbox trash: {error}"))?
+            .collect::<SqliteResult<Vec<_>>>()
+            .map_err(|error| format!("Failed to collect inbox trash: {error}"))?
+    };
     drop(stmt);
     for item in &mut items {
         item.attachments = list_attachments(conn, &item.id)?;
     }
     Ok(items)
+}
+
+/// Mark an active Inbox item deleted without touching its attachments.
+pub(crate) fn mark_deleted(conn: &Connection, id: &str) -> Result<bool, String> {
+    conn.execute(
+        "UPDATE inbox_items SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+        params![Utc::now().to_rfc3339(), id],
+    )
+    .map(|changed| changed > 0)
+    .map_err(|error| format!("Failed to move Inbox item to trash: {error}"))
+}
+
+/// Restore a trashed Inbox item without changing its archive marker or files.
+pub(crate) fn restore_deleted(conn: &Connection, id: &str) -> Result<bool, String> {
+    conn.execute(
+        "UPDATE inbox_items SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+        [id],
+    )
+    .map(|changed| changed > 0)
+    .map_err(|error| format!("Failed to restore Inbox item: {error}"))
 }
 
 pub(crate) fn insert_item_row(

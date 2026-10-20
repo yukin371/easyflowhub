@@ -15,8 +15,10 @@ import { scriptTrashApi } from '../../lib/api/scriptmgr';
 import type { Note } from '../../types/note';
 import type { ScriptTrashEntry } from '../../types/scriptmgr';
 import { deriveDisplayTitle } from '../../lib/noteParser';
+import { emptyInboxTrash, listInboxTrash, permanentlyDeleteInboxItem, restoreInboxItemFromTrash } from '../../lib/tauri/inbox';
+import type { InboxItem } from '../../types/inbox';
 
-type TrashView = 'notes' | 'scripts';
+type TrashView = 'notes' | 'inbox' | 'scripts';
 
 function formatDeletedTime(deletedAt: string): string {
   const date = new Date(deletedAt);
@@ -37,6 +39,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function inboxKindLabel(item: InboxItem): string {
+  if (item.kind === 'link') return '链接';
+  if (item.kind === 'image') return '图片';
+  if (item.kind === 'file') return '文件';
+  if (item.kind === 'audio') return '录音';
+  return '文本';
+}
+
 export function TrashPanel() {
   const [view, setView] = useState<TrashView>('notes');
   const [trashedNotes, setTrashedNotes] = useState<Note[]>([]);
@@ -46,6 +56,10 @@ export function TrashPanel() {
   const [trashedScripts, setTrashedScripts] = useState<ScriptTrashEntry[]>([]);
   const [scriptLoading, setScriptLoading] = useState(true);
   const [scriptError, setScriptError] = useState<string>();
+
+  const [trashedInboxItems, setTrashedInboxItems] = useState<InboxItem[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(true);
+  const [inboxError, setInboxError] = useState<string>();
 
   const loadTrash = useCallback(async () => {
     setIsLoading(true);
@@ -71,10 +85,23 @@ export function TrashPanel() {
     }
   }, []);
 
+  const loadInboxTrash = useCallback(async () => {
+    setInboxLoading(true);
+    try {
+      setTrashedInboxItems(await listInboxTrash());
+      setInboxError(undefined);
+    } catch (err) {
+      setInboxError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInboxLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadTrash();
     void loadScriptTrash();
-  }, [loadTrash, loadScriptTrash]);
+    void loadInboxTrash();
+  }, [loadTrash, loadScriptTrash, loadInboxTrash]);
 
   const toggleSelection = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -173,6 +200,39 @@ export function TrashPanel() {
     }
   }, []);
 
+  const handleRestoreInboxItem = useCallback(async (item: InboxItem) => {
+    try {
+      await restoreInboxItemFromTrash(item.id);
+      setTrashedInboxItems((prev) => prev.filter((candidate) => candidate.id !== item.id));
+      setInboxError(undefined);
+    } catch (err) {
+      setInboxError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const handlePurgeInboxItem = useCallback(async (item: InboxItem) => {
+    const label = item.title || item.content || inboxKindLabel(item);
+    if (!window.confirm(`永久删除“${label}”？附件也会被清理，且无法恢复。`)) return;
+    try {
+      await permanentlyDeleteInboxItem(item.id);
+      setTrashedInboxItems((prev) => prev.filter((candidate) => candidate.id !== item.id));
+      setInboxError(undefined);
+    } catch (err) {
+      setInboxError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const handleEmptyInboxTrash = useCallback(async () => {
+    if (!window.confirm('永久删除收集箱回收站中的所有项目？附件也会被清理，且无法恢复。')) return;
+    try {
+      await emptyInboxTrash();
+      setTrashedInboxItems([]);
+      setInboxError(undefined);
+    } catch (err) {
+      setInboxError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   const groupedNotes = useMemo(() => {
     const groups = new Map<string, Note[]>();
     for (const note of trashedNotes) {
@@ -188,7 +248,7 @@ export function TrashPanel() {
     });
   }, [trashedNotes]);
 
-  if (isLoading && scriptLoading) {
+  if (isLoading && scriptLoading && inboxLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="h-7 w-7 rounded-full border-2 border-[color:var(--manager-border)] border-t-[color:var(--manager-accent)] animate-spin" />
@@ -196,11 +256,14 @@ export function TrashPanel() {
     );
   }
 
-  const summary =
-    view === 'notes'
-      ? trashedNotes.length === 0
-        ? '回收站为空'
-        : `共 ${trashedNotes.length} 条笔记，已删除的笔记将保留 30 天后自动清除。`
+  const summary = view === 'notes'
+    ? trashedNotes.length === 0
+      ? '回收站为空'
+      : `共 ${trashedNotes.length} 条笔记，已删除的笔记将保留 30 天后自动清除。`
+    : view === 'inbox'
+      ? trashedInboxItems.length === 0
+        ? '没有已删除的收集项'
+        : `共 ${trashedInboxItems.length} 条收集项，恢复后会回到原收集箱状态。`
       : trashedScripts.length === 0
         ? '没有已删除的脚本'
         : `共 ${trashedScripts.length} 个脚本，恢复后会回到原来的存储位置。`;
@@ -215,7 +278,7 @@ export function TrashPanel() {
               <h2 className="mt-3 font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-4xl leading-none text-[color:var(--manager-ink-strong)]">回收站</h2>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-[color:var(--manager-ink-soft)]">{summary}</p>
               <div className="mt-4 flex items-center gap-2" role="tablist" aria-label="回收站类型">
-                {(['notes', 'scripts'] as const).map((value) => (
+                {(['notes', 'inbox', 'scripts'] as const).map((value) => (
                   <button
                     key={value}
                     type="button"
@@ -228,7 +291,11 @@ export function TrashPanel() {
                         : 'border-transparent text-[color:var(--manager-ink-muted)] hover:bg-[color:var(--manager-panel-strong)]'
                     }`}
                   >
-                    {value === 'notes' ? `笔记 (${trashedNotes.length})` : `脚本 (${trashedScripts.length})`}
+                    {value === 'notes'
+                      ? `笔记 (${trashedNotes.length})`
+                      : value === 'inbox'
+                        ? `收集箱 (${trashedInboxItems.length})`
+                        : `脚本 (${trashedScripts.length})`}
                   </button>
                 ))}
               </div>
@@ -264,6 +331,14 @@ export function TrashPanel() {
                   className="rounded-full border border-[color:var(--manager-danger)]/40 bg-[color:var(--manager-danger)]/12 px-5 py-3 text-sm text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/20"
                 >
                   清空脚本回收站
+                </button>
+              )}
+              {view === 'inbox' && trashedInboxItems.length > 0 && (
+                <button
+                  onClick={() => void handleEmptyInboxTrash()}
+                  className="rounded-full border border-[color:var(--manager-danger)]/40 bg-[color:var(--manager-danger)]/12 px-5 py-3 text-sm text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/20"
+                >
+                  清空收集箱回收站
                 </button>
               )}
             </div>
@@ -324,6 +399,57 @@ export function TrashPanel() {
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        ) : view === 'inbox' ? (
+          <div className="space-y-3">
+            {inboxError ? (
+              <p role="alert" className="rounded-[12px] border border-[color:var(--manager-danger)]/40 px-4 py-2 text-xs text-[color:var(--manager-danger)]">
+                {inboxError}
+              </p>
+            ) : null}
+            {inboxLoading ? (
+              <p className="py-10 text-center text-sm text-[color:var(--manager-ink-muted)]">加载中…</p>
+            ) : trashedInboxItems.length === 0 ? (
+              <div className="flex h-full min-h-[320px] items-center justify-center rounded-[20px] border border-dashed border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] text-center">
+                <div>
+                  <p className="font-['Iowan_Old_Style','Palatino_Linotype','Noto_Serif_SC',serif] text-3xl text-[color:var(--manager-ink-strong)]">没有已删除的收集项</p>
+                  <p className="mt-3 text-sm text-[color:var(--manager-ink-soft)]">从收集箱删除的文字、图片、文件和录音会显示在这里。</p>
+                </div>
+              </div>
+            ) : (
+              trashedInboxItems.map((item) => {
+                const title = item.title || inboxKindLabel(item);
+                return (
+                  <div key={item.id} className="rounded-[18px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4 transition hover:border-[color:var(--manager-accent)]">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-[5px] border border-[color:var(--manager-border)] px-1.5 py-0.5 text-[10px] text-[color:var(--manager-ink-muted)]">{inboxKindLabel(item)}</span>
+                          <span className="text-[11px] text-[color:var(--manager-ink-subtle)]">{item.deletedAt ? formatDeletedTime(item.deletedAt) : '未知时间'}</span>
+                        </div>
+                        <p className="mt-1 break-words text-sm font-medium text-[color:var(--manager-ink-strong)]">{title}</p>
+                        {item.content ? <p className="mt-1 line-clamp-2 break-words text-xs text-[color:var(--manager-ink-soft)]">{item.content}</p> : null}
+                        {item.attachments.length > 0 ? <p className="mt-1 break-words text-xs text-[color:var(--manager-ink-subtle)]">附件：{item.attachments.map((attachment) => attachment.name).join('、')}</p> : null}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          onClick={() => void handleRestoreInboxItem(item)}
+                          className="rounded-full bg-[color:var(--manager-success)]/12 px-3 py-1 text-xs text-[color:var(--manager-success)] transition hover:bg-[color:var(--manager-success)]/20"
+                        >
+                          恢复
+                        </button>
+                        <button
+                          onClick={() => void handlePurgeInboxItem(item)}
+                          className="rounded-full bg-[color:var(--manager-danger)]/12 px-3 py-1 text-xs text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/20"
+                        >
+                          永久删除
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         ) : (

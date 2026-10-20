@@ -4,8 +4,8 @@
 //! orchestration and resource-identity decisions (F10) live here so no command
 //! re-implements them.
 
-use chrono::Utc;
-use rusqlite::{params, Connection, Result as SqliteResult};
+use chrono::{Duration as ChronoDuration, Utc};
+use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult, TransactionBehavior};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
@@ -416,52 +416,200 @@ pub(crate) fn convert_item_to_note(
     Ok(note_id)
 }
 
-/// Permanently delete an Inbox item and its attachments.
-///
-/// Files are kept when the item was already converted to a note: the note body
-/// references them through `asset:` links, so removing them would break the
-/// note. Unconverted items also drop the recorder's raw `.wav` (same filename)
-/// so the audio directory does not grow without bound.
-pub(crate) fn delete_item(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+/// Soft-delete an Inbox item. Attachments stay available for recovery.
+pub(crate) fn trash_item(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let conn = repository::get_connection(app)?;
+    trash_item_with_conn(&conn, id)
+}
+
+fn trash_item_with_conn(conn: &Connection, id: &str) -> Result<(), String> {
+    if repository::mark_deleted(conn, id)? {
+        Ok(())
+    } else {
+        Err("找不到未删除的收集项。".to_string())
+    }
+}
+
+/// Restore a trashed Inbox item while preserving its archive state and files.
+pub(crate) fn restore_item_from_trash(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let conn = repository::get_connection(app)?;
+    restore_item_from_trash_with_conn(&conn, id)
+}
+
+fn restore_item_from_trash_with_conn(conn: &Connection, id: &str) -> Result<(), String> {
+    if repository::restore_deleted(conn, id)? {
+        Ok(())
+    } else {
+        Err("找不到回收站中的收集项。".to_string())
+    }
+}
+
+/// List Inbox trash and apply the same retention setting used by note trash.
+pub(crate) fn list_trash_items(app: &tauri::AppHandle) -> Result<Vec<InboxItem>, String> {
+    if let Ok(settings) = crate::settings::get_settings(app.clone()) {
+        let _ = cleanup_expired_trash(app, settings.settings.trash.retention_days);
+    }
+    let conn = repository::get_connection(app)?;
+    repository::list_trash_items(&conn)
+}
+
+/// Permanently remove a trashed Inbox item and its unreferenced files.
+pub(crate) fn permanently_delete_item(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     let mut conn = repository::get_connection(app)?;
-    let assets = repository::assets_dir(app)?;
+    let assets_dir = repository::assets_dir(app)?;
     let recording_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("获取录音目录失败: {error}"))?
         .join("audio");
-    let filenames = item_attachment_filenames(&conn, id)?;
-    let source_paths = item_attachment_source_paths(&conn, id)?;
-    let converted_note_id = item_converted_note_id(&conn, id)?;
+    purge_trash_items(
+        &mut conn,
+        &assets_dir,
+        &recording_dir,
+        TrashPurgeFilter::Item(id),
+    )?;
+    Ok(())
+}
 
+/// Permanently remove all Inbox trash using the same resource rules as a
+/// single-item purge.
+pub(crate) fn empty_trash(app: &tauri::AppHandle) -> Result<usize, String> {
+    let mut conn = repository::get_connection(app)?;
+    let assets_dir = repository::assets_dir(app)?;
+    let recording_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("获取录音目录失败: {error}"))?
+        .join("audio");
+    purge_trash_items(
+        &mut conn,
+        &assets_dir,
+        &recording_dir,
+        TrashPurgeFilter::All,
+    )
+}
+
+fn cleanup_expired_trash(app: &tauri::AppHandle, retention_days: u32) -> Result<usize, String> {
+    if retention_days == 0 {
+        return Ok(0);
+    }
+    let mut conn = repository::get_connection(app)?;
+    let assets_dir = repository::assets_dir(app)?;
+    let recording_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("获取录音目录失败: {error}"))?
+        .join("audio");
+    let cutoff = (Utc::now() - ChronoDuration::days(retention_days as i64)).to_rfc3339();
+    purge_trash_items(
+        &mut conn,
+        &assets_dir,
+        &recording_dir,
+        TrashPurgeFilter::OlderThan(&cutoff),
+    )
+}
+
+enum TrashPurgeFilter<'a> {
+    Item(&'a str),
+    All,
+    OlderThan(&'a str),
+}
+
+struct PurgedItemFiles {
+    filenames: Vec<String>,
+    source_paths: Vec<String>,
+    converted: bool,
+}
+
+fn purge_trash_items(
+    conn: &mut Connection,
+    assets_dir: &Path,
+    recording_dir: &Path,
+    filter: TrashPurgeFilter<'_>,
+) -> Result<usize, String> {
     let transaction = conn
-        .transaction()
-        .map_err(|error| format!("Failed to begin Inbox delete: {error}"))?;
-    transaction
-        .execute("DELETE FROM inbox_attachments WHERE item_id = ?", [id])
-        .map_err(|error| format!("Failed to delete Inbox attachments: {error}"))?;
-    let removed = transaction
-        .execute("DELETE FROM inbox_items WHERE id = ?", [id])
-        .map_err(|error| format!("Failed to delete Inbox item: {error}"))?;
-    if removed == 0 {
-        return Err("找不到要删除的收集项。".to_string());
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("Failed to begin Inbox trash purge: {error}"))?;
+    let item_ids = match filter {
+        TrashPurgeFilter::Item(id) => {
+            let deleted_at = transaction
+                .query_row(
+                    "SELECT deleted_at FROM inbox_items WHERE id = ?",
+                    [id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| format!("Failed to find Inbox trash item: {error}"))?;
+            match deleted_at {
+                Some(Some(_)) => vec![id.to_string()],
+                Some(None) => return Err("收集项尚未移入回收站。".to_string()),
+                None => return Err("找不到回收站中的收集项。".to_string()),
+            }
+        }
+        TrashPurgeFilter::All => query_trashed_item_ids(&transaction, None)?,
+        TrashPurgeFilter::OlderThan(cutoff) => query_trashed_item_ids(&transaction, Some(cutoff))?,
+    };
+
+    let mut purged_files = Vec::with_capacity(item_ids.len());
+    for id in &item_ids {
+        purged_files.push(PurgedItemFiles {
+            filenames: item_attachment_filenames(&transaction, id)?,
+            source_paths: item_attachment_source_paths(&transaction, id)?,
+            converted: item_converted_note_id(&transaction, id)?.is_some(),
+        });
+        transaction
+            .execute("DELETE FROM inbox_attachments WHERE item_id = ?", [id])
+            .map_err(|error| format!("Failed to delete Inbox attachments: {error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM inbox_items WHERE id = ? AND deleted_at IS NOT NULL",
+                [id],
+            )
+            .map_err(|error| format!("Failed to delete Inbox item: {error}"))?;
     }
     transaction
         .commit()
-        .map_err(|error| format!("Failed to commit Inbox delete: {error}"))?;
+        .map_err(|error| format!("Failed to commit Inbox trash purge: {error}"))?;
 
-    if converted_note_id.is_none() {
-        remove_attachment_files(&assets, &filenames);
-        remove_attachment_files(&recording_dir, &filenames);
-        // Remove the recorder's originals too (F10). The assets copy above is a
-        // fresh UUID and cannot reach `audio/{session-id}.wav`; the recorded
-        // source_path is the only link back to the original recording.
-        for source_path in &source_paths {
-            remove_source_file(source_path);
+    for item in &purged_files {
+        if !item.converted {
+            remove_attachment_files(assets_dir, &item.filenames);
+            remove_attachment_files(recording_dir, &item.filenames);
+            // The assets copy has a fresh UUID; only source_path links back to
+            // the recorder's original audio file.
+            for source_path in &item.source_paths {
+                remove_source_file(source_path);
+            }
         }
     }
+    Ok(item_ids.len())
+}
 
-    Ok(())
+fn query_trashed_item_ids(
+    conn: &Connection,
+    older_than: Option<&str>,
+) -> Result<Vec<String>, String> {
+    if let Some(cutoff) = older_than {
+        let mut stmt = conn
+            .prepare("SELECT id FROM inbox_items WHERE deleted_at IS NOT NULL AND deleted_at < ? ORDER BY deleted_at, id")
+            .map_err(|error| format!("Failed to prepare expired Inbox trash query: {error}"))?;
+        let rows = stmt
+            .query_map([cutoff], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Failed to query expired Inbox trash: {error}"))?;
+        rows
+            .collect::<SqliteResult<Vec<_>>>()
+            .map_err(|error| format!("Failed to collect expired Inbox trash: {error}"))
+    } else {
+        let mut stmt = conn
+            .prepare("SELECT id FROM inbox_items WHERE deleted_at IS NOT NULL ORDER BY deleted_at, id")
+            .map_err(|error| format!("Failed to prepare Inbox trash query: {error}"))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Failed to query Inbox trash: {error}"))?;
+        rows
+            .collect::<SqliteResult<Vec<_>>>()
+            .map_err(|error| format!("Failed to collect Inbox trash: {error}"))
+    }
 }
 
 #[cfg(test)]
@@ -469,7 +617,33 @@ mod tests {
     use super::*;
     use crate::inbox::attachments::{clean_display_name, extension_for_file};
     use crate::inbox::schema::test_memory_db;
-    use std::path::Path as StdPath;
+    use std::path::{Path as StdPath, PathBuf};
+
+    fn test_directory(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("easyflowhub-inbox-{label}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&path).expect("create test directory");
+        path
+    }
+
+    fn insert_attachment(
+        conn: &Connection,
+        id: &str,
+        item_id: &str,
+        kind: &str,
+        filename: &str,
+        source_path: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at, source_path) VALUES (?, ?, ?, ?, ?, ?, 4, '2026-10-20T00:00:00Z', ?)",
+            rusqlite::params![id, item_id, kind, filename, if kind == "image" { "image/png" } else { "audio/wav" }, filename, source_path],
+        )
+        .expect("insert test attachment");
+    }
+
+    fn insert_test_item(conn: &Connection, id: &str, kind: &str, title: &str, source: &str, context: &str) {
+        insert_item_row(conn, id, kind, title, "", source, context, "2026-10-20T00:00:00Z")
+            .expect("insert test item");
+    }
 
     #[test]
     fn conversion_creates_a_note_and_persists_an_idempotent_link() {
@@ -512,5 +686,143 @@ mod tests {
         assert!(!is_http_url("https://example.com unsafe"));
         assert_eq!(clean_display_name("..\\secret.txt\n"), "..secret.txt");
         assert_eq!(extension_for_file(StdPath::new("report.tar.gz")), "gz");
+    }
+
+    #[test]
+    fn soft_delete_hides_item_but_keeps_attachments_and_restore_keeps_archive_state() {
+        let conn = test_memory_db();
+        let assets_dir = test_directory("restore-assets");
+        let filename = "capture.png";
+        fs::write(assets_dir.join(filename), b"image").expect("write image");
+        insert_test_item(&conn, "item-restore", "image", "Captured image", "manager", "clipboard");
+        insert_attachment(&conn, "att-restore", "item-restore", "image", filename, None);
+        conn.execute(
+            "UPDATE inbox_items SET archived_at = '2026-10-19T12:00:00Z' WHERE id = 'item-restore'",
+            [],
+        )
+        .expect("archive item");
+
+        trash_item_with_conn(&conn, "item-restore").expect("soft delete item");
+        assert!(repository::list_items(&conn, false).expect("active items").is_empty());
+        assert!(repository::list_items(&conn, true).expect("all active items").is_empty());
+        let trashed = repository::list_trash_items(&conn).expect("list Inbox trash");
+        assert_eq!(trashed.len(), 1);
+        assert!(trashed[0].deleted_at.is_some());
+        assert_eq!(trashed[0].attachments.len(), 1);
+        assert!(assets_dir.join(filename).exists());
+
+        restore_item_from_trash_with_conn(&conn, "item-restore").expect("restore item");
+        let restored = repository::list_items(&conn, true).expect("restored active items");
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].deleted_at.is_none());
+        assert_eq!(restored[0].archived_at.as_deref(), Some("2026-10-19T12:00:00Z"));
+        assert_eq!(restored[0].attachments.len(), 1);
+        assert!(assets_dir.join(filename).exists());
+        let _ = fs::remove_dir_all(assets_dir);
+    }
+
+    #[test]
+    fn single_purge_removes_unconverted_attachment_and_recording_source_files() {
+        let mut conn = test_memory_db();
+        let assets_dir = test_directory("purge-assets");
+        let recording_dir = test_directory("purge-recordings");
+        let source_dir = test_directory("purge-source");
+        let filename = "stored.wav";
+        let source_path = source_dir.join("original.wav");
+        fs::write(assets_dir.join(filename), b"asset copy").expect("write asset copy");
+        fs::write(recording_dir.join(filename), b"same-name recording").expect("write recording copy");
+        fs::write(&source_path, b"original recording").expect("write recording source");
+        insert_test_item(&conn, "item-purge", "audio", "Recording", "voice", "manager");
+        insert_attachment(
+            &conn,
+            "att-purge",
+            "item-purge",
+            "audio",
+            filename,
+            Some(&source_path.to_string_lossy()),
+        );
+        trash_item_with_conn(&conn, "item-purge").expect("soft delete item");
+
+        let purged = purge_trash_items(
+            &mut conn,
+            &assets_dir,
+            &recording_dir,
+            TrashPurgeFilter::Item("item-purge"),
+        )
+        .expect("permanently purge item");
+        assert_eq!(purged, 1);
+        assert!(!assets_dir.join(filename).exists());
+        assert!(!recording_dir.join(filename).exists());
+        assert!(!source_path.exists());
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM inbox_items WHERE id = 'item-purge'", [], |row| row.get(0))
+            .expect("count purged item");
+        assert_eq!(remaining, 0);
+        let _ = fs::remove_dir_all(assets_dir);
+        let _ = fs::remove_dir_all(recording_dir);
+        let _ = fs::remove_dir_all(source_dir);
+    }
+
+    #[test]
+    fn empty_trash_uses_purge_rules_and_keeps_converted_note_assets() {
+        let mut conn = test_memory_db();
+        let assets_dir = test_directory("empty-assets");
+        let recording_dir = test_directory("empty-recordings");
+        let source_dir = test_directory("empty-source");
+
+        let unconverted_source = source_dir.join("unconverted.wav");
+        fs::write(assets_dir.join("unconverted.wav"), b"asset copy").expect("write unconverted asset");
+        fs::write(recording_dir.join("unconverted.wav"), b"recording copy").expect("write unconverted recording");
+        fs::write(&unconverted_source, b"original recording").expect("write unconverted source");
+        insert_test_item(&conn, "item-unconverted", "audio", "Unconverted audio", "voice", "manager");
+        insert_attachment(
+            &conn,
+            "att-unconverted",
+            "item-unconverted",
+            "audio",
+            "unconverted.wav",
+            Some(&unconverted_source.to_string_lossy()),
+        );
+
+        fs::write(assets_dir.join("converted.png"), b"converted asset").expect("write converted asset");
+        insert_test_item(&conn, "item-converted-trash", "image", "Converted image", "manager", "clipboard");
+        insert_attachment(
+            &conn,
+            "att-converted",
+            "item-converted-trash",
+            "image",
+            "converted.png",
+            None,
+        );
+        let note_id = convert_item_to_note(&mut conn, "item-converted-trash", &assets_dir)
+            .expect("convert item to note");
+
+        trash_item_with_conn(&conn, "item-unconverted").expect("trash unconverted item");
+        trash_item_with_conn(&conn, "item-converted-trash").expect("trash converted item");
+        let purged = purge_trash_items(
+            &mut conn,
+            &assets_dir,
+            &recording_dir,
+            TrashPurgeFilter::All,
+        )
+        .expect("empty Inbox trash");
+
+        assert_eq!(purged, 2);
+        assert!(!assets_dir.join("unconverted.wav").exists());
+        assert!(!recording_dir.join("unconverted.wav").exists());
+        assert!(!unconverted_source.exists());
+        assert!(assets_dir.join("converted.png").exists());
+        let note_content: String = conn
+            .query_row("SELECT content FROM notes WHERE id = ?", [&note_id], |row| row.get(0))
+            .expect("converted note remains");
+        assert!(note_content.contains("asset:converted.png"));
+        let remaining_items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM inbox_items WHERE deleted_at IS NOT NULL", [], |row| row.get(0))
+            .expect("count Inbox trash after empty");
+        assert_eq!(remaining_items, 0);
+
+        let _ = fs::remove_dir_all(assets_dir);
+        let _ = fs::remove_dir_all(recording_dir);
+        let _ = fs::remove_dir_all(source_dir);
     }
 }

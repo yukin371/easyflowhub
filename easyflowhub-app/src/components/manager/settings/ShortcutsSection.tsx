@@ -78,7 +78,7 @@ export function ShortcutsSection({ domain }: ShortcutsSectionProps) {
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,180px)_minmax(0,1fr)] lg:items-center">
           <div>
             <p className="text-sm text-[color:var(--manager-ink-soft)]">键盘快捷键</p>
-            <p className="mt-1 text-xs text-[color:var(--manager-ink-subtle)]">系统级快捷键，建议使用不常被其他软件占用的组合。</p>
+            <p className="mt-1 text-xs leading-5 text-[color:var(--manager-ink-subtle)]">系统级快捷键。若同一组合也被其他软件（如 QQ 截图）监听，两个程序可能同时响应；请重新录入一个不同组合并保存，或在另一软件中解绑。</p>
           </div>
           <div>
             <button

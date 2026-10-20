@@ -8,7 +8,7 @@
 
 ## Split (Phase C, 2026-10-20)
 
-- `NotesPanel` (in `components/manager`) is only the Inbox / Archive tab shell.
+- `NotesPanel` (in `components/manager`) is only the Archive / Inbox tab shell; the notes archive is the default workspace, while the voice event can still open Inbox directly.
 - `notes/NotesArchivePanel` composes the archive views plus window interactions (activation refresh, `MANAGER_OPEN_NOTE_EVENT`, Delete batch delete); its list + edit-session orchestration lives in `hooks/useNotesArchive`, not in the component.
 - Search token matching (`title:` / `content:` / `tag:`) is the pure helper `lib/noteSearch.matchesSearchQuery`.
 - Save versioning / flush remains owned by `hooks/useAutoSave` (F04); SQLite CRUD stays in native notes via `lib/tauri/notes`. Do not re-inline any of these into the panel.
@@ -25,6 +25,6 @@ Inbox UI -> typed `lib/tauri/inbox` bridge -> Rust Inbox commands -> additive ta
 - Snow Shot does not report its result path to EasyFlowHub. A copied screenshot enters Inbox through the normal image-paste path.
 - Reject empty or oversized clipboard images before reading their contents; native code enforces the same limit before decoding. Feedback must remain visible in both active and archived views and use theme tokens.
 - Inbox items with an audio attachment render the shared `TranscribeControl` (`components/manager/shared`); this view never reads audio bytes or calls the provider itself. Transcription follows ADR-0008: the user confirms provider and privacy before anything is sent, and transcribing refreshes the list so the stored transcript attachment appears.
-- Permanent delete is the only destructive Inbox action and always asks for confirmation first; the native command removes attachment files unless the item was already converted to a note (the note body still references them). Archiving stays reversible and never touches files.
+- Deleting an Inbox item moves the whole item to the unified Trash and asks for confirmation; restore preserves its archived state and attachments. Only permanent deletion from Trash removes stored attachment files and recording originals, and it preserves files already referenced by a converted note.
 - The toolbar "打开资源文件夹" action opens the shared `assets/` folder through `lib/tauri/inbox`; the view must not compose filesystem paths itself.
 - Notes editor controls and status bar surfaces use the shared `manager-*` tokens so the dark theme does not inherit light-only `bg-white` surfaces.

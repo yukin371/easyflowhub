@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import { archiveInboxItem, captureInboxItem, convertInboxItemToNote, deleteInboxItem, listInboxItems, openInboxAssetsDir, openInboxAttachment, openInboxLink, restoreInboxItem } from './inbox';
+import { archiveInboxItem, captureInboxItem, convertInboxItemToNote, deleteInboxItem, emptyInboxTrash, listInboxItems, listInboxTrash, openInboxAssetsDir, openInboxAttachment, openInboxLink, permanentlyDeleteInboxItem, restoreInboxItem, restoreInboxItemFromTrash } from './inbox';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -39,7 +39,7 @@ describe('Inbox Tauri bridge', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('open_inbox_link', { id: 'item-1' });
   });
 
-  it('forwards permanent delete and the resource folder command', async () => {
+  it('forwards move-to-trash and the resource folder commands', async () => {
     invokeMock.mockResolvedValue({ itemId: 'item-1' });
     await expect(deleteInboxItem('item-1')).resolves.toBe('item-1');
     expect(invokeMock).toHaveBeenLastCalledWith('delete_inbox_item', { id: 'item-1' });
@@ -47,5 +47,21 @@ describe('Inbox Tauri bridge', () => {
     invokeMock.mockResolvedValue(undefined);
     await openInboxAssetsDir();
     expect(invokeMock).toHaveBeenLastCalledWith('open_inbox_assets_dir');
+  });
+
+  it('forwards Inbox trash list, restore, purge, and empty commands', async () => {
+    invokeMock.mockResolvedValue({ items: [] });
+    await listInboxTrash();
+    expect(invokeMock).toHaveBeenLastCalledWith('list_inbox_trash');
+
+    invokeMock.mockResolvedValue({ itemId: 'item-1' });
+    await restoreInboxItemFromTrash('item-1');
+    expect(invokeMock).toHaveBeenLastCalledWith('restore_inbox_item_from_trash', { id: 'item-1' });
+    await permanentlyDeleteInboxItem('item-1');
+    expect(invokeMock).toHaveBeenLastCalledWith('permanently_delete_inbox_item', { id: 'item-1' });
+
+    invokeMock.mockResolvedValue({ deletedCount: 2 });
+    await expect(emptyInboxTrash()).resolves.toBe(2);
+    expect(invokeMock).toHaveBeenLastCalledWith('empty_inbox_trash');
   });
 });

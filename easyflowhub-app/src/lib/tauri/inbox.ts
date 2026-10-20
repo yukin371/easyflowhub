@@ -45,6 +45,26 @@ export async function deleteInboxItem(id: string): Promise<string> {
   return response.itemId;
 }
 
+export async function listInboxTrash(): Promise<InboxItem[]> {
+  const response: InboxItemsResponse = await invoke('list_inbox_trash');
+  return response.items;
+}
+
+export async function restoreInboxItemFromTrash(id: string): Promise<string> {
+  const response: InboxStateResponse = await invoke('restore_inbox_item_from_trash', { id });
+  return response.itemId;
+}
+
+export async function permanentlyDeleteInboxItem(id: string): Promise<string> {
+  const response: InboxStateResponse = await invoke('permanently_delete_inbox_item', { id });
+  return response.itemId;
+}
+
+export async function emptyInboxTrash(): Promise<number> {
+  const response: { ok: boolean; deletedCount: number } = await invoke('empty_inbox_trash');
+  return response.deletedCount;
+}
+
 export async function openInboxAssetsDir(): Promise<void> {
   await invoke('open_inbox_assets_dir');
 }

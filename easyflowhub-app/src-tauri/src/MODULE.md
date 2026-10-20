@@ -44,7 +44,7 @@ This module must not contain:
 | `launcher.rs` | launcher window owner | Launcher 选区捕获 / 替换、键盘 + 鼠标中键触发注册、显示 / 隐藏 / 置顶 / 拖拽，关闭改隐藏并统一发出 `launcher-hidden` / `launcher-focused` |
 | `app_windows.rs` | manager / note / todo window owner | manager 关闭改隐藏、快速笔记与 todo 卡片窗口创建 / 定位 / 固定、快速笔记窗口批量显隐 |
 | `notes.rs` | notes persistence | SQLite、图片、trash；`ensure_todo_inbox_note` 以事务原子复用或创建待办箱 |
-| `inbox/` | capture persistence facade | 与 `notes.db` 共用数据库；按职责内分 `schema.rs`（表 / 迁移）、`attachments.rs`（附件身份与落盘 / transcript）、`repository.rs`（行访问）、`service.rs`（捕获 / 转换 / 删除用例与事务）、`commands.rs`（薄命令层，委托 service / repository） |
+| `inbox/` | capture persistence facade | 与 `notes.db` 共用数据库；按职责内分 `schema.rs`（表 / 迁移）、`attachments.rs`（附件身份与落盘 / transcript）、`repository.rs`（行访问）、`service.rs`（捕获 / 转换 / 回收站用例与事务）、`commands.rs`（薄命令层，委托 service / repository） |
 | `settings.rs` | settings store | 应用级设置 |
 | `scriptmgr.rs` | script bridge | 调用 `scriptmgr-go` CLI / HTTP |
 | `scriptmgr_server.rs` | sidecar lifecycle owner | 按需 spawn `scriptmgr serve --port 8765`、TCP + HTTP 健康等待、并发去重、应用退出回收子进程 |
@@ -83,7 +83,7 @@ These must remain true after changes:
 - `lib.rs` 只保留 `run()` / 插件装配 / state 注入 / 命令注册；窗口与领域行为必须留在各自 owner 模块（`launcher` / `app_windows` / `inbox`）。命令注册路径须指向命令实际所在模块（如 `inbox::commands::*`）。
 - Inbox 内部分工固定为 schema / attachments / repository / service / commands；命令层保持薄委托，不得各自重复迁移、附件或事务逻辑。
 - Inbox 以 additive schema 扩展 `notes.db`；不得改写现有 notes 表或 `asset:<uuid>` 图片引用格式。附件使用随机文件名，归档 / 转换不删除附件文件。
-- Inbox 永久删除是唯一会删除附件文件的路径：未转换为笔记时删除 `assets/` 存储文件与 `audio/` 下同名原始录音；已转换为笔记（`converted_note_id` 非空）时保留文件，避免笔记正文里的 `asset:` 引用失效。文件删除为 best-effort，不能因单个文件失败回滚已提交的数据库删除。
+- Inbox 删除先设置 `deleted_at` 并进入统一回收站；恢复只清除删除标记并保留归档状态与附件。只有回收站中的永久删除或清空会移除 Inbox 行和附件记录；未转换为笔记时 best-effort 删除 `assets/`、`audio/` 中的存储副本及记录的原始录音路径，已转换为笔记（`converted_note_id` 非空）时保留文件，避免笔记里的 `asset:` 引用失效。
 - `scriptmgr` HTTP sidecar 的生命周期只由 `scriptmgr_server.rs` 拥有：前端每次 HTTP 调用前必须 `ensure_scriptmgr`（并发共享同一次启动，失败后允许重试），不得假设 `127.0.0.1:8765` 已就绪；应用退出必须回收本进程启动的子进程。已存在健康实例（外部启动或旧孤儿）时不得重复 spawn。
 - scriptmgr 健康判定 = TCP 可连 + `GET /api/scripts` 返回 2xx。不得改用 HEAD：Go 1.22 method-specific pattern 对 HEAD 返回 405，会把健康服务误报为离线。
 - 开发者模式（`developer.debug_mode`）只影响日志详细程度与是否落盘，不得改变任何安全边界或引入远程访问。日志缓冲固定 500 行上限，文件单份 2 MB 后轮转为 `app.log.1`；日志内容不得包含凭据。

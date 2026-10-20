@@ -13,5 +13,6 @@ Launcher or Manager context -> `Capture` / `CaptureAttachment` -> Inbox persiste
 ## Conventions & pitfalls
 
 - Capture attachments include text, transcript, links and local assets; persisted `InboxAttachment` remains the native binary-record DTO.
+- `InboxItem.deletedAt` is null for active or archived captures and set only while the capture is in the unified Trash; restore clears it without changing `archivedAt` or attachment identity.
 - Keep `source`, `createdAt` and an explicit nullable `inboxItemId` on each attachment so pending and persisted captures have the same shape.
 - Do not interpret the normalized capture types as proof that a payload is already persisted or that a future transcript has been produced.

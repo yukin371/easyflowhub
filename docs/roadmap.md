@@ -128,7 +128,7 @@
 - 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；2026-10-20 又补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁真实子进程回归和回收站列表的有效条目保留。真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。2026-10-20 阶段C 后快照：前端 52 文件 / 381 项 + tsc、Go 全量 + vet（新增 F11 等待与 schema-handler 一致性回归）、Rust 88 项 + cargo check 通过；CI 门禁（V1-F5）已建立为 architecture-gates + native-windows 两个 PR 门禁。QuickNotePage(657)/TodoCardPage(532) 仍略超 500 行阈值，余量为内联 JSX，可作后续展示层拆分。
 - quick note 的 `Esc` / `Alt+F4` / 工具按钮关闭回归仍需在打包产物中复验。
 - 最新人工验收已暴露并修复一轮图片放大、撤销、manager 图片展示问题，但仍缺修复后的 Windows 二次复验。
-- notes manager 仍缺一次发布前 CRUD / 回收 / 恢复 / 重开窗口一致性回归。
+- notes manager 仍缺一次发布前 CRUD / 回收 / 恢复 / 重开窗口一致性回归；Inbox 图片、录音回收与恢复已有自动化覆盖，打包态复验仍待完成。
 - scripts 仍缺发版级标准样例脚本与记录链路复验。
 - manager/settings 仍缺模块启停、快捷键、自启动的发布前人工验证。
 - relay 仍缺真实上游场景回归与密钥层收口结论。
@@ -202,7 +202,7 @@
 
 - **P0 捕获与理解**：通过 Launcher 调用 Snow Shot 截屏、Inbox 快速笔记、剪贴板 / 选中文本翻译、统一 Launcher 上下文。
 - **P1 检索与资源管理**：指定目录文件搜索、轻量预览、基础文件操作、URL 下载队列。
-- **P2 音频输入**：录音、音频附件、录音后语音转文字，保留 Provider / 本地模型替换空间。
+- **P2 音频输入（延期至 v0.2.x）**：录音与语音转文字已有实现，但不纳入 v0.2.0 核心 RC；待 Windows 麦克风和真实 Provider 验收后再发布。
 - **视觉基线**：冷色明亮毛玻璃工作空间，统一 Manager、Launcher、Quick Note 和浮层的 token；保留关闭模糊后的不透明 fallback。
 
 ### Phase Plan
@@ -214,7 +214,7 @@
 | Phase 2. Understand | `[in_progress]` | 让文本内容可即时理解 | 选中文本 / 剪贴板翻译、Provider adapter、结果回流 | `F2` |
 | Phase 3. Retrieve | `[in_progress]` | 快速找到并处理本地资源 | 指定目录索引、文件搜索、预览和基础操作 | `F3` |
 | Phase 4. Download | `[in_progress]` | 收口资源获取链路 | 下载队列、暂停 / 继续 / 重试、完成后动作 | `F4` |
-| Phase 5. Voice | `[in_progress]` | 将声音纳入 Inbox | Windows 录音、音频附件、录音后语音转文字（Relay Provider + 隐私确认） | `F5` |
+| Phase 5. Voice | `[deferred: v0.2.x]` | 将声音纳入 Inbox | Windows 录音、音频附件、录音后语音转文字（Relay Provider + 隐私确认） | `F5` |
 | Phase 6. Glass Theme | `[in_progress]` | 迁移主要页面并验证可读性 | Manager / Launcher / Quick Note / Settings token 化、明暗主题切换 | `F6` |
 
 ### Active Tracks
@@ -268,8 +268,11 @@
 
 ### Recent Progress
 
+- `2026-10-20` 按发布范围决定将 Voice / 转写延期到 `v0.2.x`，不作为 `v0.2.0` P0/P1 核心 RC 门槛；Launcher 改为窄长四列紧凑面板（`440×860`），快捷键设置补充第三方全局热键可能同时响应的说明。当前本机保存的 Launcher 组合为 `Ctrl+Alt+Space`。
+- `2026-10-20` Notes 工作区调整为默认打开“笔记”，并将“笔记”标签置于“收集箱”之前；语音入口仍可直接打开收集箱。
+- `2026-10-20` 收集箱删除改为进入统一回收站，Inbox 以 additive `deleted_at` 软删除，新增收集箱回收站列表、恢复、永久删除与清空；恢复保留原归档状态和附件，只有永久清理才移除未转换笔记的图片 / 音频副本及录音原件，已转换笔记仍引用的资源予以保留。回收站按设置保留期清理过期收集项。验证：前端全量 52 个测试文件 / 385 项、TypeScript；Rust 全量 91 项、Inbox 聚焦 20 项、`cargo check` 通过。`cargo fmt --check` 因当前 toolchain 未安装 `rustfmt` 未能运行。
 - `2026-10-19` 脚本从「只读目录」升级为可管理工作台：Go 侧新增 roots 固定、源码读写、新建、导入、删除到回收站与回收站恢复/清空共 12 个 HTTP 端点（写入限定在已配置 root、白名单扩展名、2 MB 上限；跨盘移动自动退化为复制 + 删除）；前端新增脚本工作台（源码编辑、手动执行、退出码与输出）、新建 / 导入 / 存储位置对话框。执行记录并入脚本页作为「运行记录」tab 并移除独立侧栏模块，轮询改为窗口隐藏不轮询、有运行中任务 3 秒、空闲 15 秒。回收站统一管理笔记与脚本。设置新增开发者模式：native 有界日志环形缓冲（500 行）+ `logs/app.log`（2 MB 轮转）+ sidecar stderr 捕获，设置页可查看/清空/打开日志目录。验证：前端 44 文件 / 325 项、`tsc`、Rust 76 项、Go 全量测试通过。
-- `2026-10-19` 修复管理中心「脚本 / 扩展 / 中转 / MCP」四个面板同时 `Failed to fetch`：根因是 `scriptmgr serve` 从未被任何一方启动——前端硬编码 `127.0.0.1:8765`、`setBaseUrl` 没有调用方，Rust 侧只有 CLI 桥接。新增 native owner `scriptmgr_server.rs`（按需 spawn、TCP + `GET /api/scripts` 健康等待、并发去重、应用退出回收子进程），前端 `ensureScriptmgr` 在每次 HTTP 调用前确保 sidecar 就绪；健康检查由 HEAD 改为 GET，避免 Go method-specific 路由返回 405 把在线服务误判为离线。同时补齐 Inbox 录音 CRUD（永久删除 + 二次确认；未转笔记时删除附件文件与 `audio/` 同名原始录音，已转笔记时保留文件以免 `asset:` 引用失效）与「打开资源文件夹」入口；设置模块改为侧栏底部固定项并换用 `⚙` 图标；删除未被引用的重复 `components/ScriptsPage.tsx`。验证：前端 41 文件 / 309 项、`tsc`、Rust 73 项、`cargo check` 通过。
+- `2026-10-19` 修复管理中心「脚本 / 扩展 / 中转 / MCP」四个面板同时 `Failed to fetch`：根因是 `scriptmgr serve` 从未被任何一方启动——前端硬编码 `127.0.0.1:8765`、`setBaseUrl` 没有调用方，Rust 侧只有 CLI 桥接。新增 native owner `scriptmgr_server.rs`（按需 spawn、TCP + `GET /api/scripts` 健康等待、并发去重、应用退出回收子进程），前端 `ensureScriptmgr` 在每次 HTTP 调用前确保 sidecar 就绪；健康检查由 HEAD 改为 GET，避免 Go method-specific 路由返回 405 把在线服务误判为离线。同时补齐 Inbox 录音 CRUD（当时为永久删除 + 二次确认；2026-10-20 改为统一回收站）与「打开资源文件夹」入口；设置模块改为侧栏底部固定项并换用 `⚙` 图标；删除未被引用的重复 `components/ScriptsPage.tsx`。验证：前端 41 文件 / 309 项、`tsc`、Rust 73 项、`cargo check` 通过。
 - `2026-10-19` 修复扩展页白屏（连带侧边栏消失）：服务恢复后扩展面板第一次拿到真实数据，`/api/extensions` 在零 manifest 时返回 `extensions: null`（Go 把 nil slice 序列化为 null），面板直接 `.filter` 崩溃并卸载整棵 React 树。修复分两层：`lib/api/scriptmgr` 作为 wire-format 适配层统一把 null 列表归一化为 `[]`（extensions / contributions 各数组 / scripts / tasks / mcp servers / relay snapshot），面板侧再补防御性默认值；同时新增 `PanelErrorBoundary` 包裹动态面板，单个面板异常只显示内联错误与「重试」，侧边栏与其他页面保持可用。验证：前端 42 文件 / 315 项、`tsc` 通过。
 - `2026-10-17` 已完成 Inbox 第一条纵向切片：新增 `notes.db` 中独立 Inbox / attachment 表、受限图片与本地文件捕获、来源 / 上下文 / 时间元数据、归档恢复、链接和附件打开，以及事务性幂等的“整理为笔记”；Notes 面板内以“收集箱 / 笔记”切换呈现，不增加侧栏入口。Launcher 新增一键收集剪贴板内容，并在每次唤起时刷新剪贴板内容。审查后补充图片读取与 Base64 解码前的大小限制、标准 HTTP(S) URL 校验，以及归档页可见的主题化反馈。最终前端 30 个文件 / 186 项测试、生产构建、TypeScript、Rust `cargo check`、Inbox Rust 6 项聚焦单测与 diff 检查通过；原生开发版收集箱页面已确认可加载。Windows 打包态的文件选择、文件拖放、剪贴板图片与 Snow Shot 复制粘贴 smoke 尚未完成；普通文件转笔记目前保留附件名称和已归档 Inbox 原件，笔记内直接打开附件仍待补齐。
 - `2026-10-17` Launcher 交互第二轮：面板改为紧凑的图标工具栏和方块网格，搜索支持直接输入、IME 组合与点击图标展开；窗口每次唤起都会激活并聚焦，原生焦点变化也会把输入焦点送回搜索框；点击透明窗口空白处不再误关闭，关闭按钮、Esc 和重复触发仍可收起。原生窗口收紧到 `564×320`，玻璃面板铺满窗口主体，只留 4px 圆角透明边，移除大面积无功能画布。鼠标中心定位按显示器 DPI 计算，支持多屏负坐标与工作区边界；默认非置顶、拖动不因失焦关闭。Native Windows focus、原生拖动和关闭仍需打包后实机确认。

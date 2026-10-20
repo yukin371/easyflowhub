@@ -178,11 +178,11 @@ export function InboxPanel() {
 
   const handleDelete = async (item: InboxItem) => {
     const label = item.title || item.content || itemKindLabel(item);
-    if (!window.confirm(`删除“${label}”后无法恢复，确定删除？`)) return;
+    if (!window.confirm(`将“${label}”移到回收站？之后可以从回收站恢复。`)) return;
     try {
       await deleteInboxItem(item.id);
       await refresh();
-      setStatus('已删除');
+      setStatus('已移到回收站');
       setError(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));

@@ -6,7 +6,7 @@
 //! - `schema`: table creation and additive migrations
 //! - `attachments`: attachment identity, staged file storage, transcripts
 //! - `repository`: every `inbox_items` / `inbox_attachments` row access
-//! - `service`: capture / conversion / deletion use cases and transactions
+//! - `service`: capture / conversion / trash / recovery / purge use cases and transactions
 //! - `commands`: thin Tauri command wrappers delegating to service/repository
 //!
 //! External native owners (voice capture, transcription) reach Inbox data

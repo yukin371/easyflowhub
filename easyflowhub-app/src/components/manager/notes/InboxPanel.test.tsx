@@ -60,6 +60,7 @@ function fixture(overrides: Partial<InboxItem> = {}): InboxItem {
     context: 'clipboard',
     capturedAt: '2026-10-17T10:00:00.000Z',
     archivedAt: null,
+    deletedAt: null,
     convertedNoteId: null,
     attachments: [],
     ...overrides,
@@ -270,7 +271,7 @@ describe('InboxPanel', () => {
     await waitFor(() => expect(deleteInboxItemMock).toHaveBeenCalledWith('item-1'));
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(listInboxItemsMock).toHaveBeenCalledTimes(2);
-    expect(await screen.findByRole('status')).toHaveTextContent('已删除');
+    expect(await screen.findByRole('status')).toHaveTextContent('已移到回收站');
     confirmSpy.mockRestore();
   });
 
