@@ -2,7 +2,7 @@
 
 > 审查日期：2026-10-19
 > 基线：`d1a95f0` 加本地工作区；包含原有 SettingsPanel、QuickNotePage、useAutoSave 和 smoke 脚本未提交改动
-> 状态：审查完成；阶段A（F01–F05）、阶段B（F06–F14）与阶段C（F11 + 第5节大文件拆分）均已实施并完成自动化回归；2026-10-20 补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁跨进程子进程回归及回收站部分响应，并完成 F11 与四项大文件拆分；剩余阶段D（CI 门禁）
+> 状态：审查完成；阶段A（F01–F05）、阶段B（F06–F14）与阶段C（F11 + 第5节大文件拆分）均已实施并完成自动化回归；2026-10-20 补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁跨进程子进程回归及回收站部分响应，并完成 F11 与四项大文件拆分；阶段D（V1-F5 CI 门禁）亦已建立（架构门禁脚本 + Windows native PR 检查），四个阶段全部完成
 > 范围：`easyflowhub-app/src`、`easyflowhub-app/src-tauri/src`、`scriptmgr-go`、验证链及架构文档
 
 ## 1. 结论
@@ -171,3 +171,10 @@ Rust 保留已有 NoteInput 未使用字段和 incremental lock 清理权限提�
   - native `inbox.rs`（1769）→ `inbox/{schema,attachments,repository,service,commands}`；`lib.rs`（1112→306）收敛为装配根，抽出 `launcher`/`app_windows`/`window_position`。102 个 Tauri 命令名与 `invoke_handler` 集合保持不变。
   - 编辑页面：抽出 `useQuickNoteSession`/`useNotesArchive`/`useTodoGroups`/`useTodoEditSession`，NotesPanel 收敛为 tab 壳，页面只保留窗口交互与渲染；保存版本仍归 `useAutoSave`、todo 写入仍归 `useTodos`、解析仍归 `lib/todoParser`。
 - **验证**：前端 52 文件 / 381 项 + tsc、Go `./...` + vet、Rust 88 项 + `cargo check` 均通过。QuickNotePage(657)/TodoCardPage(532) 仍略超 500 行阈值，余量为内联 JSX，可作后续展示层拆分；真实 Windows 打包态 smoke 仍待人工执行。
+
+## 10. 阶段 D 跟进：持续门禁
+
+- `scripts/check-architecture.mjs`（Node 内置，无第三方依赖）在 PR 上拦截：静态 import 环；`lib` 反向依赖 `features/components/pages/modules`、`features` 反向依赖 `components/pages`；`src/lib/tauri` 之外的原始 `invoke()`（按 `scripts/architecture-baseline.json` 基线只减不增）；实现文件规模债（>500 行只减不增、>800 行硬门禁需拆分或显式豁免）。`--update-baseline` 用于债务合法缩减后重新快照。
+- schema-handler 配对由 Go 测试 `internal/mcp/f11_test.go` 的 `TestStaticSchemasAllHaveRegisteredHandlers` 覆盖（随 `go test` 运行），保证 advertised schema 一定有可调用 handler。
+- `.github/workflows/test.yml` 新增两个 PR 门禁：`architecture-gates`（ubuntu，运行上述 guard）与 `native-windows`（windows-latest，`cargo check` + `cargo test --lib`），补齐审查 §6 指出的缺失 Windows native PR 检查；本地 smoke 仍不能替代 PR gate。
+- 当前基线：`lib/tauri` 外原始 invoke 4 处（TitleBar、QuickNotePage、TodoCardPage×2）；>500 行债务 3 个文件（QuickNotePage 658、lib/api/scriptmgr 596、TodoCardPage 533）；>800 行 0 个。既有债务只减不增。

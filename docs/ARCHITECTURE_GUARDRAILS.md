@@ -126,3 +126,4 @@ Recommended enforcement mechanisms:
 - `go test ./...`
 - PR review 检查是否出现新的 duplicate owner
 - 修改边界或 owner 后同步 `MODULE.md` / `roadmap` / `ADR`
+- 自动门禁：`node scripts/check-architecture.mjs`（import 环 / lib·features 反向依赖 / `lib/tauri` 外原始 invoke / 文件规模债，基线见 `scripts/architecture-baseline.json`）在 CI `architecture-gates` 与 Windows native `native-windows` 两个 PR 门禁中运行；schema-handler 配对由 `go test` 的 `TestStaticSchemasAllHaveRegisteredHandlers` 覆盖

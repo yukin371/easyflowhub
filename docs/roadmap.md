@@ -93,13 +93,13 @@
 #### Track F. Architecture Health
 
 - owner scope: `easyflowhub-app/src`, `easyflowhub-app/src-tauri/src`, `scriptmgr-go/internal`, `.github/workflows`, `docs`
-- 审查基线：[2026-10-19 架构与大文件审查](./plans/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）与阶段B（F06–F14）已实施，阶段A（F01–F05）、阶段B（F06–F14）与阶段C（F11 + 第5节大文件拆分）均已实施；剩余阶段D（V1-F5 CI 门禁）。
+- 审查基线：[2026-10-19 架构与大文件审查](./plans/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）与阶段B（F06–F14）已实施，阶段A（F01–F05）、阶段B（F06–F14）、阶段C（F11 + 第5节大文件拆分）与阶段D（V1-F5 CI 门禁）均已实施，四个阶段全部完成。
 - 当前任务：
   - `V1-F1` `[done]` 盘点规模、依赖、owner 和异常路径；24 个实现文件物理行数超过 500，剔除 Rust 内联测试后约 23 个；TS 静态依赖未发现循环。
   - `V1-F2` `[done]` 优先修复审查 F01–F05：跨进程 sessions 旧快照覆盖、回收站失败误删、Inbox 非事务迁移、自动保存旧响应、todo 旧行号误写，并补故障/并发回归。
   - `V1-F3` `[done]` 收口 sidecar 恢复、模块失败回滚、配置提交、MCP 加载状态、附件生命周期等 owner 边界（F06–F10、F12–F14；F11 留到阶段C 大文件拆分）。
   - `V1-F4` `[done]` 在既有 owner 内按职责拆分 SettingsPanel、mcp/server、native inbox/lib 和编辑页面，保持接口兼容。2026-10-20：编辑页面完成——QuickNotePage → `useQuickNoteSession`，NotesPanel → `notes/NotesArchivePanel` + `useNotesArchive`，TodoPanel/TodoCardPage 共享 `useTodoGroups` + `useTodoEditSession`（写入仍归 useTodos/F05，保存版本仍归 useAutoSave/F04，解析仍归 lib/todoParser）；2026-10-20 完成剩余三项——SettingsPanel → `components/manager/settings/*`（分域 Section + hook，并修复 F08 UI 半边：普通保存不再夹带未提交 Launcher 草稿）；mcp/server.go 拆为 protocol/tools_*/notifications + 收敛 server.go，F11 `get_task_result` 等待改为真实可取消轮询；native inbox.rs → `inbox/{schema,attachments,repository,service,commands}`，lib.rs 收敛为装配根并抽出 launcher/app_windows/window_position。102 个 Tauri 命令与 MCP 工具表面保持兼容。
-  - `V1-F5` `[planned]` 建立 import/typed bridge/文件规模增量门禁，补 Windows native PR 验证，并同步实际通信路径和模块文档。
+  - `V1-F5` `[done]` 建立持续门禁：`scripts/check-architecture.mjs` 拦截 import 环、lib/features 反向依赖、`lib/tauri` 外原始 invoke（按 `scripts/architecture-baseline.json` 基线只减不增）、实现文件规模债（>500 只减不增、>800 硬门禁）；schema-handler 配对由 Go 测试 `TestStaticSchemasAllHaveRegisteredHandlers` 覆盖。`test.yml` 新增 `architecture-gates` 与 `native-windows`（windows-latest cargo check + test）两个 PR 门禁。
 
 ### Release Checkpoints
 
@@ -125,7 +125,7 @@
 
 ### Validation Debt
 
-- 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；2026-10-20 又补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁真实子进程回归和回收站列表的有效条目保留。真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。2026-10-20 阶段C 后快照：前端 52 文件 / 381 项 + tsc、Go 全量 + vet（新增 F11 等待与 schema-handler 一致性回归）、Rust 88 项 + cargo check 通过；CI 门禁（V1-F5）未开始。QuickNotePage(657)/TodoCardPage(532) 仍略超 500 行阈值，余量为内联 JSX，可作后续展示层拆分。
+- 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；2026-10-20 又补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁真实子进程回归和回收站列表的有效条目保留。真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。2026-10-20 阶段C 后快照：前端 52 文件 / 381 项 + tsc、Go 全量 + vet（新增 F11 等待与 schema-handler 一致性回归）、Rust 88 项 + cargo check 通过；CI 门禁（V1-F5）已建立为 architecture-gates + native-windows 两个 PR 门禁。QuickNotePage(657)/TodoCardPage(532) 仍略超 500 行阈值，余量为内联 JSX，可作后续展示层拆分。
 - quick note 的 `Esc` / `Alt+F4` / 工具按钮关闭回归仍需在打包产物中复验。
 - 最新人工验收已暴露并修复一轮图片放大、撤销、manager 图片展示问题，但仍缺修复后的 Windows 二次复验。
 - notes manager 仍缺一次发布前 CRUD / 回收 / 恢复 / 重开窗口一致性回归。
@@ -143,6 +143,8 @@
 5. 在 v1.0.0 发布收口后，优先推进 Action Launcher 的 action contract 和最小全局入口，不先进入复杂 Flow 编辑器或扩展市场。
 
 ### Recent Progress
+
+- `2026-10-20` 已完成阶段 D（V1-F5 持续门禁）：新增 `scripts/check-architecture.mjs`（拦截 import 环、lib/features 反向依赖、`lib/tauri` 外原始 invoke、实现文件规模债，配套 `scripts/architecture-baseline.json` 债务基线只减不增）；schema-handler 配对由 Go 测试覆盖；`test.yml` 新增 `architecture-gates` 与 `native-windows`（windows-latest cargo check + lib test）两个 PR 门禁，补上审查指出缺失的 Windows native PR 检查。至此架构审查四个阶段（A/B/C/D）全部实施。
 
 - `2026-10-20` 已完成阶段 C（F11 + 第5节大文件拆分）：mcp/server.go 拆为 protocol/tools_*/notifications + 收敛 server.go，F11 `get_task_result` 等待改为真实可取消轮询（`taskWaiter`），schema/handler 同源、router 唯一 dispatch 并移除 legacy fallback；SettingsPanel 拆为 `components/manager/settings/*` 并修复 F08 UI 半边（普通保存不夹带未提交 Launcher 草稿）；native inbox.rs 拆为 `inbox/{schema,attachments,repository,service,commands}`，lib.rs 收敛为装配根并抽出 launcher/app_windows/window_position（102 命令不变）；编辑页面抽出 useQuickNoteSession/useNotesArchive/useTodoGroups/useTodoEditSession。验证：前端 52 文件 / 381 项 + tsc、Go `./...` + vet、Rust 88 项 + `cargo check` 通过。
 
