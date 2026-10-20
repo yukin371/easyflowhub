@@ -95,3 +95,49 @@ jobs:
 
       - name: Build
         run: go build -o scriptmgr.exe ./cmd/scriptmgr
+
+  architecture-gates:
+    name: Architecture Gates
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Architecture guard (cycles / layers / invoke baseline / size debt)
+        run: node scripts/check-architecture.mjs
+
+  native-windows:
+    name: Native Tests (Windows)
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: easyflowhub-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: easyflowhub-app/src-tauri
+
+      - name: cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: cargo test (lib)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib

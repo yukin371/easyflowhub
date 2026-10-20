@@ -1,0 +1,14 @@
+{
+  "_note": "Debt ratchet for check-architecture.mjs. rawInvoke: file -> max allowed invoke() outside lib/tauri. sizeDebt: file -> max allowed lines (only-decrease). over800Exempt: files allowed above the hard cap with a reason.",
+  "rawInvoke": {
+    "components/TitleBar.tsx": 1,
+    "pages/QuickNotePage.tsx": 1,
+    "pages/TodoCardPage.tsx": 2
+  },
+  "sizeDebt": {
+    "pages/QuickNotePage.tsx": 658,
+    "lib/api/scriptmgr.ts": 596,
+    "pages/TodoCardPage.tsx": 533
+  },
+  "over800Exempt": {}
+}
