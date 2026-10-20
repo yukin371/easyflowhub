@@ -1,3 +1,42 @@
+use tauri::{Manager, PhysicalPosition};
+
+/// Anchor a logical-sized window at the cursor, on the cursor's monitor.
+///
+/// Uses the Manager window (or any available window) to resolve the monitor
+/// under the cursor, then delegates the DPI conversion and work-area clamping
+/// to `centered_position`. Returns `None` when no anchor window or monitor
+/// can be resolved. Used by both the Launcher and quick-note windows.
+pub(crate) fn cursor_anchored_position(
+    app: &tauri::AppHandle,
+    width: f64,
+    height: f64,
+) -> Option<PhysicalPosition<i32>> {
+    let anchor_window = app
+        .get_webview_window("manager")
+        .or_else(|| app.webview_windows().into_values().next())?;
+
+    let cursor = anchor_window.cursor_position().ok()?;
+    let monitor = anchor_window
+        .monitor_from_point(cursor.x, cursor.y)
+        .ok()
+        .flatten()
+        .or_else(|| anchor_window.primary_monitor().ok().flatten())?;
+
+    let work_area = monitor.work_area();
+    let (x, y) = centered_position(
+        (cursor.x, cursor.y),
+        (width, height),
+        monitor.scale_factor(),
+        (
+            work_area.position.x,
+            work_area.position.y,
+            work_area.size.width,
+            work_area.size.height,
+        ),
+    );
+    Some(PhysicalPosition::new(x, y))
+}
+
 /// Center a logical-sized window on a physical desktop point, then keep it
 /// inside the target monitor's physical work area (which may have a negative origin).
 pub(crate) fn centered_position(

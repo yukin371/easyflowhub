@@ -57,7 +57,8 @@ Every cross-cutting concern must have one canonical owner.
 | Feature module registration | `easyflowhub-app/src/modules` | 新模块通过注册系统进入 manager | `forbidden` |
 | Notes SQLite persistence | `easyflowhub-app/src-tauri/src/notes.rs` | 笔记库 CRUD / trash / image 落盘集中在此 | `forbidden` |
 | App settings persistence | `easyflowhub-app/src-tauri/src/settings.rs` | 设置读写集中于此，不在前端复制持久化协议 | `forbidden` |
-| Window / appearance / widgets | `easyflowhub-app/src-tauri/src/lib.rs`, `appearance.rs`, `widget.rs` | 原生窗口与桌面行为不在 UI 侧复制 | `forbidden` |
+| Window / appearance / widgets | `easyflowhub-app/src-tauri/src/{lib,launcher,app_windows,appearance,widget}.rs` | 原生窗口与桌面行为不在 UI 侧复制；`lib.rs` 只做装配 | `forbidden` |
+| Inbox capture persistence | `easyflowhub-app/src-tauri/src/inbox/`（schema / attachments / repository / service / commands） | 捕获、归档、附件与转笔记只经此模块 | `forbidden` |
 | Script discovery / execution | `scriptmgr-go/internal/api`, `discovery`, `executor`, `runtime` | 扩展脚本业务时优先进入 Go 侧 | `forbidden` |
 | MCP server + dynamic tool routing | `scriptmgr-go/internal/mcp` | schema、router、notification 只在此维护 | `forbidden` |
 | External MCP client wrappers | `scriptmgr-go/internal/mcpcli` | 调用外部 MCP 用 client，不与 server 混用 | `forbidden` |
