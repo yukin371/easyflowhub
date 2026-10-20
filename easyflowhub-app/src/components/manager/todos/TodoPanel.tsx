@@ -1,18 +1,18 @@
 /**
  * TodoPanel - 全局待办事项聚合面板
- * 展示所有笔记中的 checkbox 待办，支持筛选、勾选和跳转
+ * 展示所有笔记中的 checkbox 待办，支持筛选、勾选和跳转。
+ * 加载 / 分组 / 编辑会话消费共享用例（useTodos + useTodoGroups +
+ * useTodoEditSession，Phase C 拆分）；本组件只保留面板视图状态与
+ * Manager 窗口交互（激活刷新、导航、悬浮卡片入口）。
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { createTodoCardWindow } from '../../../lib/tauri/notes';
-import {
-  compareTodoGroupsForDisplay,
-  getTodoStats,
-  sortTodosForDisplay,
-  TODO_INBOX_TITLE,
-} from '../../../lib/todoParser';
+import { getTodoStats, TODO_INBOX_TITLE } from '../../../lib/todoParser';
 import { useTodos } from '../../../hooks/useTodos';
-import type { TodoItem, TodoFilter } from '../../../types/todo';
+import { useTodoGroups } from '../../../hooks/useTodoGroups';
+import { useTodoEditSession } from '../../../hooks/useTodoEditSession';
+import type { TodoFilter, TodoGroup } from '../../../types/todo';
 import { MANAGER_ACTIVATED_EVENT } from '../ManagerPage';
 import { ManagerPanelHeader } from '../shared/ManagerPanelHeader';
 
@@ -25,10 +25,20 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
   // 写入带 revision CAS，多窗口并发时不会按旧行号改错条目。
   const { todos, loading, error, loadTodos, toggleTodo, updateTodoText } = useTodos();
   const [filter, setFilter] = useState<TodoFilter>('pending');
-  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
-  const [todoDraft, setTodoDraft] = useState('');
-  const [savingTodoId, setSavingTodoId] = useState<string | null>(null);
-  const [writeError, setWriteError] = useState<string | null>(null);
+  // 面板保存后总是退出编辑态（与悬浮卡片的差异见 useTodoEditSession 选项）。
+  const editSession = useTodoEditSession({ toggleTodo, updateTodoText });
+  const {
+    todoDraft,
+    setTodoDraft,
+    writeError,
+    clearWriteError,
+    startEdit,
+    cancelEdit,
+    isEditing,
+    isSaving,
+    toggle,
+    saveEdit,
+  } = editSession;
 
   // 窗口激活时自动刷新
   useEffect(() => {
@@ -37,101 +47,16 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
     return () => window.removeEventListener(MANAGER_ACTIVATED_EVENT, handleActivate);
   }, [loadTodos]);
 
-  // 切换 todo 完成状态
-  const handleToggle = useCallback(async (todo: TodoItem) => {
-    setWriteError(null);
-    const result = await toggleTodo(todo);
-    if (!result.ok && result.message) {
-      setWriteError(result.message);
-    }
-  }, [toggleTodo]);
-
-  const handleStartEdit = useCallback((todo: TodoItem) => {
-    setEditingTodoId(todo.id);
-    setTodoDraft(todo.text);
-    setWriteError(null);
-  }, []);
-
-  const handleCancelEdit = useCallback(() => {
-    setEditingTodoId(null);
-    setTodoDraft('');
-    setSavingTodoId(null);
-  }, []);
-
-  const handleSaveEdit = useCallback(async (todo: TodoItem) => {
-    const normalizedText = todoDraft.trim();
-    if (!normalizedText) {
-      handleCancelEdit();
-      return;
-    }
-
-    if (normalizedText === todo.text) {
-      handleCancelEdit();
-      return;
-    }
-
-    try {
-      setSavingTodoId(todo.id);
-      setWriteError(null);
-      const result = await updateTodoText(todo, normalizedText);
-      if (!result.ok && result.message) {
-        setWriteError(result.message);
-      }
-    } finally {
-      handleCancelEdit();
-    }
-  }, [handleCancelEdit, todoDraft, updateTodoText]);
-
-  const filteredTodos = todos.filter((todo) => {
-    if (filter === 'pending') return !todo.checked;
-    if (filter === 'done') return todo.checked;
-    return true;
-  });
-  const groupedTodos = useMemo(() => {
-    const groups = new Map<string, { noteId: string; noteTitle: string; todos: TodoItem[] }>();
-    for (const todo of filteredTodos) {
-      const existing = groups.get(todo.noteId);
-      if (existing) {
-        existing.todos.push(todo);
-        continue;
-      }
-
-      groups.set(todo.noteId, {
-        noteId: todo.noteId,
-        noteTitle: todo.noteTitle,
-        todos: [todo],
-      });
-    }
-
-    return Array.from(groups.values())
-      .map((group) => ({
-        ...group,
-        todos: sortTodosForDisplay(group.todos),
-      }))
-      .sort(compareTodoGroupsForDisplay);
-  }, [filteredTodos]);
-
-  const pendingGroups = useMemo(
+  const filteredTodos = useMemo(
     () =>
-      groupedTodos
-        .map((group) => ({
-          ...group,
-          todos: group.todos.filter((todo) => !todo.checked),
-        }))
-        .filter((group) => group.todos.length > 0),
-    [groupedTodos]
+      todos.filter((todo) => {
+        if (filter === 'pending') return !todo.checked;
+        if (filter === 'done') return todo.checked;
+        return true;
+      }),
+    [filter, todos]
   );
-
-  const completedGroups = useMemo(
-    () =>
-      groupedTodos
-        .map((group) => ({
-          ...group,
-          todos: group.todos.filter((todo) => todo.checked),
-        }))
-        .filter((group) => group.todos.length > 0),
-    [groupedTodos]
-  );
+  const { pendingGroups, completedGroups } = useTodoGroups(filteredTodos);
 
   const stats = getTodoStats(todos);
 
@@ -156,6 +81,126 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
       </div>
     );
   }
+
+  const renderGroupTodos = (group: TodoGroup, completed: boolean) => (
+    <ul className="space-y-2">
+      {group.todos.map((todo) => {
+        const editing = isEditing(todo.id);
+        const saving = isSaving(todo.id);
+
+        return (
+          <li key={todo.id}>
+            <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-panel)]">
+              <button
+                onClick={() => void toggle(todo)}
+                className={
+                  completed
+                    ? 'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-xs text-white transition'
+                    : `mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
+                        todo.checked
+                          ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
+                          : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] hover:border-[color:var(--manager-accent)]'
+                      }`
+                }
+              >
+                {todo.checked || completed ? '✓' : ''}
+              </button>
+              <div className="min-w-0 flex-1">
+                {editing ? (
+                  <input
+                    autoFocus
+                    value={todoDraft}
+                    disabled={saving}
+                    onChange={(event) => setTodoDraft(event.target.value)}
+                    onBlur={() => void saveEdit(todo)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void saveEdit(todo);
+                      }
+
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        cancelEdit();
+                      }
+                    }}
+                    className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-bg-deep)] px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
+                  />
+                ) : (
+                  <p className={`text-sm leading-relaxed ${todo.checked ? 'text-[color:var(--manager-ink-muted)] line-through' : 'text-[color:var(--manager-ink)]'}`}>
+                    {todo.text}
+                  </p>
+                )}
+                {todo.noteTitle.trim() !== TODO_INBOX_TITLE ? (
+                  <button
+                    onClick={() => onNavigateToNote?.(todo.noteId)}
+                    className="mt-1 text-[11px] uppercase tracking-[0.15em] text-[color:var(--manager-ink-subtle)] hover:text-[color:var(--manager-accent)]"
+                  >
+                    打开原笔记
+                  </button>
+                ) : null}
+              </div>
+              {!editing ? (
+                <button
+                  onClick={() => startEdit(todo)}
+                  className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] opacity-0 transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] group-hover:opacity-100"
+                >
+                  编辑
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => void saveEdit(todo)}
+                    className="rounded-full bg-[color:var(--manager-accent)] px-3 py-1 text-xs text-white transition hover:opacity-90"
+                  >
+                    保存
+                  </button>
+                  <button
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={cancelEdit}
+                    className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)]"
+                  >
+                    取消
+                  </button>
+                </div>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  const renderGroupHeader = (group: TodoGroup) => (
+    <div className="mb-3 flex items-center justify-between gap-3 px-1">
+      {group.noteTitle.trim() !== TODO_INBOX_TITLE ? (
+        <button
+          onClick={() => onNavigateToNote?.(group.noteId)}
+          className="min-w-0 text-left"
+        >
+          <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
+            {group.noteTitle}
+          </p>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
+            来源文件
+          </p>
+        </button>
+      ) : (
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
+            {group.noteTitle}
+          </p>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
+            收件箱
+          </p>
+        </div>
+      )}
+      <span className="shrink-0 text-xs text-[color:var(--manager-ink-subtle)]">
+        {group.todos.length} 项
+      </span>
+    </div>
+  );
 
   return (
     <section className="flex h-full flex-col">
@@ -217,7 +262,7 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
         >
           <span className="text-sm text-[color:var(--manager-danger)]">{writeError}</span>
           <button
-            onClick={() => setWriteError(null)}
+            onClick={clearWriteError}
             className="shrink-0 rounded-full border border-[color:var(--manager-danger)]/40 px-3 py-1 text-xs text-[color:var(--manager-danger)] transition hover:bg-[color:var(--manager-danger)]/12"
           >
             知道了
@@ -242,117 +287,8 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
               {(filter === 'done' ? completedGroups : pendingGroups).map((group, groupIndex) => (
                 <section key={group.noteId}>
                   {groupIndex > 0 ? <hr className="mb-6 border-[color:var(--manager-border)]/60" /> : null}
-                  <div className="mb-3 flex items-center justify-between gap-3 px-1">
-                    {group.noteTitle.trim() !== TODO_INBOX_TITLE ? (
-                      <button
-                        onClick={() => onNavigateToNote?.(group.noteId)}
-                        className="min-w-0 text-left"
-                      >
-                        <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
-                          {group.noteTitle}
-                        </p>
-                        <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
-                          来源文件
-                        </p>
-                      </button>
-                    ) : (
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
-                          {group.noteTitle}
-                        </p>
-                        <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
-                          收件箱
-                        </p>
-                      </div>
-                    )}
-                    <span className="shrink-0 text-xs text-[color:var(--manager-ink-subtle)]">
-                      {group.todos.length} 项
-                    </span>
-                  </div>
-
-                  <ul className="space-y-2">
-                    {group.todos.map((todo) => {
-                      const isEditing = editingTodoId === todo.id;
-                      const isSaving = savingTodoId === todo.id;
-
-                      return (
-                        <li key={todo.id}>
-                          <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-panel)]">
-                            <button
-                              onClick={() => void handleToggle(todo)}
-                              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
-                                todo.checked
-                                  ? 'border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-white'
-                                  : 'border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] hover:border-[color:var(--manager-accent)]'
-                              }`}
-                            >
-                              {todo.checked ? '✓' : ''}
-                            </button>
-                            <div className="min-w-0 flex-1">
-                              {isEditing ? (
-                                <input
-                                  autoFocus
-                                  value={todoDraft}
-                                  disabled={isSaving}
-                                  onChange={(event) => setTodoDraft(event.target.value)}
-                                  onBlur={() => void handleSaveEdit(todo)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter') {
-                                      event.preventDefault();
-                                      void handleSaveEdit(todo);
-                                    }
-
-                                    if (event.key === 'Escape') {
-                                      event.preventDefault();
-                                      handleCancelEdit();
-                                    }
-                                  }}
-                                  className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-bg-deep)] px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
-                                />
-                              ) : (
-                                <p className={`text-sm leading-relaxed ${todo.checked ? 'text-[color:var(--manager-ink-muted)] line-through' : 'text-[color:var(--manager-ink)]'}`}>
-                                  {todo.text}
-                                </p>
-                              )}
-                              {todo.noteTitle.trim() !== TODO_INBOX_TITLE ? (
-                                <button
-                                  onClick={() => onNavigateToNote?.(todo.noteId)}
-                                  className="mt-1 text-[11px] uppercase tracking-[0.15em] text-[color:var(--manager-ink-subtle)] hover:text-[color:var(--manager-accent)]"
-                                >
-                                  打开原笔记
-                                </button>
-                              ) : null}
-                            </div>
-                            {!isEditing ? (
-                              <button
-                                onClick={() => handleStartEdit(todo)}
-                                className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] opacity-0 transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] group-hover:opacity-100"
-                              >
-                                编辑
-                              </button>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onMouseDown={(event) => event.preventDefault()}
-                                  onClick={() => void handleSaveEdit(todo)}
-                                  className="rounded-full bg-[color:var(--manager-accent)] px-3 py-1 text-xs text-white transition hover:opacity-90"
-                                >
-                                  保存
-                                </button>
-                                <button
-                                  onMouseDown={(event) => event.preventDefault()}
-                                  onClick={handleCancelEdit}
-                                  className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)]"
-                                >
-                                  取消
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  {renderGroupHeader(group)}
+                  {renderGroupTodos(group, filter === 'done')}
                 </section>
               ))}
             </div>
@@ -365,113 +301,8 @@ export function TodoPanel({ onNavigateToNote }: TodoPanelProps) {
                 </div>
                 {completedGroups.map((group) => (
                   <section key={`done-${group.noteId}`}>
-                    <div className="mb-3 flex items-center justify-between gap-3 px-1">
-                      {group.noteTitle.trim() !== TODO_INBOX_TITLE ? (
-                        <button
-                          onClick={() => onNavigateToNote?.(group.noteId)}
-                          className="min-w-0 text-left"
-                        >
-                          <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
-                            {group.noteTitle}
-                          </p>
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
-                            来源文件
-                          </p>
-                        </button>
-                      ) : (
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-[color:var(--manager-ink-strong)]">
-                            {group.noteTitle}
-                          </p>
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--manager-ink-subtle)]">
-                            收件箱
-                          </p>
-                        </div>
-                      )}
-                      <span className="shrink-0 text-xs text-[color:var(--manager-ink-subtle)]">
-                        {group.todos.length} 项
-                      </span>
-                    </div>
-
-                    <ul className="space-y-2">
-                      {group.todos.map((todo) => {
-                        const isEditing = editingTodoId === todo.id;
-                        const isSaving = savingTodoId === todo.id;
-
-                        return (
-                          <li key={todo.id}>
-                            <div className="group flex w-full items-start gap-3 rounded-[14px] border border-transparent px-4 py-3 transition hover:border-[color:var(--manager-border)] hover:bg-[color:var(--manager-panel)]">
-                              <button
-                                onClick={() => void handleToggle(todo)}
-                                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[color:var(--manager-accent)] bg-[color:var(--manager-accent)] text-xs text-white transition"
-                              >
-                                ✓
-                              </button>
-                              <div className="min-w-0 flex-1">
-                                {isEditing ? (
-                                  <input
-                                    autoFocus
-                                    value={todoDraft}
-                                    disabled={isSaving}
-                                    onChange={(event) => setTodoDraft(event.target.value)}
-                                    onBlur={() => void handleSaveEdit(todo)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === 'Enter') {
-                                        event.preventDefault();
-                                        void handleSaveEdit(todo);
-                                      }
-
-                                      if (event.key === 'Escape') {
-                                        event.preventDefault();
-                                        handleCancelEdit();
-                                      }
-                                    }}
-                                    className="w-full rounded-lg border border-[color:var(--manager-accent)] bg-[color:var(--manager-bg-deep)] px-3 py-2 text-sm text-[color:var(--manager-ink)] outline-none"
-                                  />
-                                ) : (
-                                  <p className="text-sm leading-relaxed text-[color:var(--manager-ink-muted)] line-through">
-                                    {todo.text}
-                                  </p>
-                                )}
-                                {todo.noteTitle.trim() !== TODO_INBOX_TITLE ? (
-                                  <button
-                                    onClick={() => onNavigateToNote?.(todo.noteId)}
-                                    className="mt-1 text-[11px] uppercase tracking-[0.15em] text-[color:var(--manager-ink-subtle)] hover:text-[color:var(--manager-accent)]"
-                                  >
-                                    打开原笔记
-                                  </button>
-                                ) : null}
-                              </div>
-                              {!isEditing ? (
-                                <button
-                                  onClick={() => handleStartEdit(todo)}
-                                  className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] opacity-0 transition hover:border-[color:var(--manager-accent)] hover:text-[color:var(--manager-ink-strong)] group-hover:opacity-100"
-                                >
-                                  编辑
-                                </button>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onMouseDown={(event) => event.preventDefault()}
-                                    onClick={() => void handleSaveEdit(todo)}
-                                    className="rounded-full bg-[color:var(--manager-accent)] px-3 py-1 text-xs text-white transition hover:opacity-90"
-                                  >
-                                    保存
-                                  </button>
-                                  <button
-                                    onMouseDown={(event) => event.preventDefault()}
-                                    onClick={handleCancelEdit}
-                                    className="rounded-full border border-[color:var(--manager-border)] px-3 py-1 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)]"
-                                  >
-                                    取消
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    {renderGroupHeader(group)}
+                    {renderGroupTodos(group, true)}
                   </section>
                 ))}
               </>

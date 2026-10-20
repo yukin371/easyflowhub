@@ -1,3 +1,6 @@
+import type { Note } from '../types/note';
+import { deriveDisplayTitle } from './noteParser';
+
 export function splitTags(tagString: string): string[] {
   return tagString
     .split(/[\s,，]+/)
@@ -25,6 +28,48 @@ export function relativeTimeLabel(iso: string): string {
   if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
   if (diff < day * 7) return `${Math.floor(diff / day)} 天前`;
   return new Date(iso).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+}
+
+/** 同一笔记可能在最近列表中重复出现，按 id 去重（保留先出现的条目）。 */
+export function dedupeNotesById(notes: Note[]): Note[] {
+  const map = new Map<string, Note>();
+  for (const note of notes) {
+    map.set(note.id, note);
+  }
+  return Array.from(map.values());
+}
+
+/** 有正文或标签的笔记才算可“继续编辑”。 */
+export function isNoteContinueCandidate(note: Note): boolean {
+  return Boolean(note.content.trim() || note.tags.trim());
+}
+
+/** 快速笔记切换器里的两行标签：标题 + 首个非标题片段。 */
+export function buildNoteSwitchLabel(note: Note): string {
+  const title = deriveDisplayTitle(note.title, note.content) || '无标题';
+  const snippet = note.content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .find((line) => line !== title);
+
+  return snippet ? `${title} · ${snippet}`.slice(0, 28) : title.slice(0, 28);
+}
+
+/** 切换器的简单过滤：标题 / 正文 / 标签任一命中即可。 */
+export function filterNotesByQuery(notes: Note[], rawQuery: string): Note[] {
+  const query = rawQuery.trim().toLowerCase();
+  const uniqueNotes = dedupeNotesById(notes);
+  if (!query) {
+    return uniqueNotes;
+  }
+
+  return uniqueNotes.filter((item) => {
+    const title = deriveDisplayTitle(item.title, item.content).toLowerCase();
+    const content = item.content.toLowerCase();
+    const tags = item.tags.toLowerCase();
+    return title.includes(query) || content.includes(query) || tags.includes(query);
+  });
 }
 
 export function timelineBucket(iso: string): string {

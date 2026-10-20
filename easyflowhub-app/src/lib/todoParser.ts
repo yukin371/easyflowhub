@@ -4,7 +4,7 @@
  * 完成项可带 @done:ISO-timestamp 标记
  */
 
-import type { TodoItem } from '../types/todo';
+import type { TodoGroup, TodoItem } from '../types/todo';
 import { deriveDisplayTitle } from './noteParser';
 
 /** 匹配 markdown checkbox 行 (支持无序和有序列表符号) */
@@ -232,6 +232,31 @@ export function getTodoStats(todos: TodoItem[]): { total: number; done: number; 
     done,
     pending: todos.length - done,
   };
+}
+
+/** 按笔记聚合待办用于分组展示：组内未完成优先 + 行号排序，组间待办箱优先。 */
+export function groupTodosForDisplay(todos: TodoItem[]): TodoGroup[] {
+  const groups = new Map<string, TodoGroup>();
+  for (const todo of todos) {
+    const existing = groups.get(todo.noteId);
+    if (existing) {
+      existing.todos.push(todo);
+      continue;
+    }
+
+    groups.set(todo.noteId, {
+      noteId: todo.noteId,
+      noteTitle: todo.noteTitle,
+      todos: [todo],
+    });
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      todos: sortTodosForDisplay(group.todos),
+    }))
+    .sort(compareTodoGroupsForDisplay);
 }
 
 export function sortTodosForDisplay(todos: TodoItem[]): TodoItem[] {

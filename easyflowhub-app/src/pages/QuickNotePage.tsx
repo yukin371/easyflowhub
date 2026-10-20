@@ -1,188 +1,75 @@
 /**
  * QuickNotePage - 快速笔记页面
- * 独立管理快速笔记的逻辑和 UI
+ * 只负责窗口特有交互（透明度 / 置顶 / 关闭 / 切换器 / 快捷键）与渲染。
+ * 编辑会话、笔记切换、备份与附件操作归 useQuickNoteSession（Phase C 拆分）。
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { closeAllNoteWindows, createNote, getNote, listNotes, toggleNoteWindowsVisibility } from '../lib/tauri/notes';
-import { deriveDisplayTitle, formatNoteForDisplay, parseNoteContent } from '../lib/noteParser';
-import { buildPersistParams } from '../lib/notePersistence';
-import type { Note } from '../types/note';
+import { closeAllNoteWindows, toggleNoteWindowsVisibility } from '../lib/tauri/notes';
 import { EditorTextarea } from '../components/shared/EditorTextarea';
 import { ImageLightbox } from '../components/shared/ImageLightbox';
 import { BackupRestoreDialog } from '../components/shared/BackupRestoreDialog';
 import { useShortcutEngine } from '../hooks/useShortcutEngine';
-import { useAutoSave } from '../hooks/useAutoSave';
-import { useBackupRestore } from '../hooks/useBackupRestore';
 import { useEditorPreferences } from '../hooks/useEditorPreferences';
-import { useHistory } from '../hooks/useHistory';
-import { useEditorImageInsertion } from '../hooks/useEditorImageInsertion';
+import { useQuickNoteSession } from '../hooks/useQuickNoteSession';
 import { matchesShortcutEvent } from '../types/shortcut';
-import { applyTextareaSelectionUpdate, focusTextareaAtEnd } from '../lib/editorSelection';
+import { focusTextareaAtEnd } from '../lib/editorSelection';
 import { applyMarkdownCompletion } from '../lib/markdownEditing';
 import {
-  appendAttachedImageAssets,
-  extractAttachedImageAssets,
-  resolveAssetFilenameToUrl,
-} from '../lib/imageAssets';
+  buildNoteSwitchLabel,
+  filterNotesByQuery,
+  isNoteContinueCandidate,
+} from '../lib/notesUtils';
 
 const BG_COLOR = 'var(--quick-bg)';
-const AUTOSAVE_DELAY = 900;
-
-function dedupeNotes(notes: Note[]): Note[] {
-  const map = new Map<string, Note>();
-  for (const note of notes) {
-    map.set(note.id, note);
-  }
-  return Array.from(map.values());
-}
-
-function isContinueCandidate(note: Note): boolean {
-  return Boolean(note.content.trim() || note.tags.trim());
-}
-
-function buildSwitchLabel(note: Note): string {
-  const title = deriveDisplayTitle(note.title, note.content) || '无标题';
-  const snippet = note.content
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .find((line) => line !== title);
-
-  return snippet ? `${title} · ${snippet}`.slice(0, 28) : title.slice(0, 28);
-}
 
 export function QuickNotePage() {
-  const [note, setNote] = useState<Note | null>(null);
   const [alwaysOnTop, setAlwaysOnTop] = useState(true);
   const [opacity, setOpacity] = useState(1.0);
-  const [recentNotes, setRecentNotes] = useState<Note[]>([]);
+  const [lastVisibleOpacity, setLastVisibleOpacity] = useState(1);
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
   const [switcherQuery, setSwitcherQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [undoSteps, setUndoSteps] = useState(100);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
-  const [lastVisibleOpacity, setLastVisibleOpacity] = useState(1);
-  const [attachedImages, setAttachedImages] = useState<Array<{ alt: string; filename: string }>>([]);
   const [activeImage, setActiveImage] = useState<{ src: string; alt: string } | null>(null);
 
-  // 使用 useHistory 管理内容，支持撤销/重做
-  const {
-    value: displayContent,
-    setValue: setDisplayContent,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    clear: clearHistory,
-    flush: flushHistory,
-  } = useHistory('', { maxSteps: undoSteps, debounceMs: 400 });
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const switcherInputRef = useRef<HTMLInputElement>(null);
   const toolsButtonRef = useRef<HTMLButtonElement>(null);
   const toolsPanelRef = useRef<HTMLDivElement>(null);
   const lastWheelTime = useRef(0);
   const isClosingRef = useRef(false);
-  const {
-    shortcutConfig,
-    editorSettings,
-  } = useEditorPreferences();
-  const { flushSave, scheduleSave, resetSaveFeedback } = useAutoSave({
-    delayMs: AUTOSAVE_DELAY,
-    onSaved: (updated) => {
-      setNote(updated);
-      setRecentNotes((prev) => {
-        const next = prev.some((item) => item.id === updated.id)
-          ? prev.map((item) => (item.id === updated.id ? updated : item))
-          : [updated, ...prev];
-        return dedupeNotes(next).slice(0, 12);
-      });
-    },
-  });
 
-  const mergedEditorContent = useMemo(
-    () => appendAttachedImageAssets(displayContent, attachedImages),
-    [attachedImages, displayContent]
-  );
-
-  // 快捷便签页同样会写入 localStorage 备份，需要提供恢复入口：
-  // 否则进程被杀后备份只能去管理页编辑器里找回。
+  const { shortcutConfig, editorSettings } = useEditorPreferences();
+  const session = useQuickNoteSession({ maxUndoSteps: editorSettings.undo_steps });
   const {
+    note,
+    recentNotes,
+    displayContent,
+    setDisplayContent,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    textareaRef,
+    attachedImages,
+    resolvedImageLinks,
+    removeAttachedImage,
+    mergedEditorContent,
+    currentDraftTags,
     backupDraft,
-    inspectBackup,
     clearBackupDraft,
     restoreBackupDraft,
     mergeBackupDraft,
-  } = useBackupRestore({
-    onApplyDraft: (draft) => {
-      const parsed = extractAttachedImageAssets(draft.content);
-      setDisplayContent(parsed.textContent, true);
-      setAttachedImages(parsed.images);
-      if (note?.id) {
-        scheduleSave({
-          noteId: note.id,
-          title: draft.title,
-          content: draft.content,
-          tags: draft.tags,
-        });
-      }
-    },
-    onMergeDraft: (draft) => {
-      const mergedContent = [mergedEditorContent, '', '--- 备份内容 ---', draft.content]
-        .filter(Boolean)
-        .join('\n');
-      const parsed = extractAttachedImageAssets(mergedContent);
-      setDisplayContent(parsed.textContent, true);
-      // 合并时当前内容与备份可能引用同一批图片，按文件名去重
-      const uniqueImages = Array.from(
-        new Map(parsed.images.map((image) => [image.filename, image])).values()
-      );
-      setAttachedImages(uniqueImages);
-      if (note?.id) {
-        scheduleSave({
-          noteId: note.id,
-          title: draft.title,
-          content: mergedContent,
-          tags: draft.tags,
-        });
-      }
-    },
-  });
-
-  const currentDraftTags = useMemo(
-    () => parseNoteContent(mergedEditorContent).tags,
-    [mergedEditorContent]
-  );
-
-  const currentPersistParams = useMemo(() => {
-    return buildPersistParams(note?.id ?? null, mergedEditorContent, note?.title ?? '');
-  }, [mergedEditorContent, note]);
-
-  const refreshRecentNotes = useCallback(async (preferredId?: string | null) => {
-    try {
-      const loadedNotes = await listNotes();
-      const sorted = [...loadedNotes].sort((a, b) => {
-        if (a.id === preferredId) {
-          return -1;
-        }
-        if (b.id === preferredId) {
-          return 1;
-        }
-        const aContinue = isContinueCandidate(a);
-        const bContinue = isContinueCandidate(b);
-        if (aContinue !== bContinue) {
-          return aContinue ? -1 : 1;
-        }
-        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-      });
-      setRecentNotes(dedupeNotes(sorted).slice(0, 12));
-    } catch (error) {
-      console.error('Failed to refresh note list:', error);
-    }
-  }, []);
+    imageInsertion,
+    applyShortcutContentChange,
+    switchNote,
+    createAndSwitch,
+    resetSaveFeedback,
+    flushSaveNow,
+    flushPendingSave,
+  } = session;
 
   const toggleGhostMode = useCallback(() => {
     setOpacity((prev) => {
@@ -202,14 +89,11 @@ export function QuickNotePage() {
     }
     isClosingRef.current = true;
 
-    flushHistory(); // 刷新历史记录
     try {
-      if (currentPersistParams) {
-        await Promise.race([
-          flushSave(currentPersistParams),
-          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 350)),
-        ]);
-      }
+      await Promise.race([
+        flushPendingSave(),
+        new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 350)),
+      ]);
 
       try {
         await getCurrentWindow().destroy();
@@ -221,50 +105,7 @@ export function QuickNotePage() {
       console.error('Failed to close window:', error);
       isClosingRef.current = false;
     }
-  }, [currentPersistParams, flushSave, flushHistory]);
-
-  const removeAttachedImage = useCallback((indexToRemove: number) => {
-    setAttachedImages((prev) => prev.filter((_, index) => index !== indexToRemove));
-  }, []);
-
-  // 初始化笔记
-  useEffect(() => {
-    const initialize = async () => {
-      try {
-        await refreshRecentNotes();
-
-        // 从 URL 获取 note_id
-        const urlParams = new URLSearchParams(window.location.search);
-        const noteId = urlParams.get('note_id');
-
-        if (noteId) {
-          const existingNote = await getNote(noteId);
-          if (existingNote) {
-            const parsed = extractAttachedImageAssets(formatNoteForDisplay(existingNote));
-            setNote(existingNote);
-            setDisplayContent(parsed.textContent, true); // skipHistory
-            setAttachedImages(parsed.images);
-            resetSaveFeedback();
-            inspectBackup(existingNote);
-          } else {
-            const newNote = await createNote();
-            setNote(newNote);
-            setDisplayContent('', true);
-            setAttachedImages([]);
-          }
-        } else {
-          const newNote = await createNote();
-          setNote(newNote);
-          setDisplayContent('', true);
-          setAttachedImages([]);
-        }
-      } catch (error) {
-        console.error('Failed to initialize note:', error);
-      }
-    };
-
-    initialize();
-  }, [refreshRecentNotes]);
+  }, [flushPendingSave]);
 
   // 自动聚焦
   useEffect(() => {
@@ -293,10 +134,6 @@ export function QuickNotePage() {
       }
     };
   }, []);
-
-  useEffect(() => {
-    setUndoSteps(editorSettings.undo_steps);
-  }, [editorSettings.undo_steps]);
 
   useEffect(() => {
     if (!isSwitcherOpen) {
@@ -424,14 +261,6 @@ export function QuickNotePage() {
     return () => window.removeEventListener('keydown', handleQuickNoteKeys, { capture: true });
   }, [closeWindow, isSwitcherOpen, shortcutConfig.quickSwitcher, canUndo, canRedo, undo, redo, toggleGhostMode]);
 
-  useEffect(() => {
-    if (!currentPersistParams) {
-      return;
-    }
-
-    scheduleSave(currentPersistParams);
-  }, [currentPersistParams, scheduleSave]);
-
   // 透明度控制
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -460,105 +289,11 @@ export function QuickNotePage() {
     }
   };
 
-  const applyShortcutContentChange = useCallback(
-    (update: { value: string; selectionStart: number; selectionEnd?: number }) => {
-      applyTextareaSelectionUpdate(textareaRef, update, setDisplayContent);
-    },
-    [setDisplayContent]
-  );
-  const imageInsertion = useEditorImageInsertion({
-    value: displayContent,
-    textareaRef,
-    onChange: applyShortcutContentChange,
-    nativeWindowDropEnabled: true,
-    onImageSaved: ({ altText, filename }) => {
-      setAttachedImages((prev) => [...prev, { alt: altText, filename }]);
-    },
-  });
-
-  const handleSwitchNote = useCallback(
-    async (nextNoteId: string) => {
-      if (!nextNoteId || nextNoteId === note?.id) {
-        return;
-      }
-
-      try {
-        flushHistory(); // 刷新历史记录
-        await flushSave(currentPersistParams);
-        const nextNote = await getNote(nextNoteId);
-        if (!nextNote) {
-          return;
-        }
-
-        const parsed = extractAttachedImageAssets(formatNoteForDisplay(nextNote));
-        setNote(nextNote);
-        setDisplayContent(parsed.textContent, true); // skipHistory
-        setAttachedImages(parsed.images);
-        clearHistory(); // 清空历史
-        resetSaveFeedback();
-        inspectBackup(nextNote);
-        await refreshRecentNotes(nextNote.id);
-      } catch (error) {
-        console.error('Failed to switch note:', error);
-      }
-    },
-    [currentPersistParams, flushSave, note?.id, refreshRecentNotes, resetSaveFeedback, setDisplayContent, clearHistory, flushHistory, inspectBackup]
+  const filteredRecentNotes = useMemo(
+    () => filterNotesByQuery(recentNotes, switcherQuery),
+    [recentNotes, switcherQuery]
   );
 
-  const handleCreateAndSwitch = useCallback(async () => {
-    try {
-      flushHistory(); // 刷新历史记录
-      await flushSave(currentPersistParams);
-      const nextNote = await createNote();
-      setNote(nextNote);
-      setDisplayContent('', true); // skipHistory
-      setAttachedImages([]);
-      clearHistory(); // 清空历史
-      resetSaveFeedback();
-      await refreshRecentNotes(nextNote.id);
-    } catch (error) {
-      console.error('Failed to create and switch note:', error);
-    }
-  }, [currentPersistParams, flushSave, refreshRecentNotes, resetSaveFeedback, setDisplayContent, clearHistory, flushHistory]);
-
-  const filteredRecentNotes = useMemo(() => {
-    const query = switcherQuery.trim().toLowerCase();
-    const uniqueRecentNotes = dedupeNotes(recentNotes);
-    if (!query) {
-      return uniqueRecentNotes;
-    }
-
-    return uniqueRecentNotes.filter((item) => {
-      const title = deriveDisplayTitle(item.title, item.content).toLowerCase();
-      const content = item.content.toLowerCase();
-      const tags = item.tags.toLowerCase();
-      return title.includes(query) || content.includes(query) || tags.includes(query);
-    });
-  }, [recentNotes, switcherQuery]);
-
-  const [resolvedImageLinks, setResolvedImageLinks] = useState<Array<{ src: string; alt: string }>>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const resolveImages = async () => {
-      const next = await Promise.all(
-        attachedImages.map(async (image) => ({
-          alt: image.alt,
-          src: await resolveAssetFilenameToUrl(image.filename),
-        }))
-      );
-
-      if (!cancelled) {
-        setResolvedImageLinks(next);
-      }
-    };
-
-    void resolveImages();
-    return () => {
-      cancelled = true;
-    };
-  }, [attachedImages]);
   const isGhostMode = opacity <= 0.01;
   const quickHelpItems = [
     `切换笔记 ${shortcutConfig.quickSwitcher}`,
@@ -574,9 +309,7 @@ export function QuickNotePage() {
     enabled: Boolean(note),
     textareaRef,
     config: shortcutConfig,
-    onSave: async () => {
-      await flushSave(currentPersistParams);
-    },
+    onSave: flushSaveNow,
     onClose: async () => {
       await closeWindow();
     },
@@ -645,12 +378,12 @@ export function QuickNotePage() {
                   setIsSwitcherOpen(false);
                   setSwitcherQuery('');
                   setSelectedIndex(0);
-                  void handleSwitchNote(targetNote.id);
+                  void switchNote(targetNote.id);
                 } else if (selectedIndex === 0) {
                   setIsSwitcherOpen(false);
                   setSwitcherQuery('');
                   setSelectedIndex(0);
-                  void handleCreateAndSwitch();
+                  void createAndSwitch();
                 }
               }
             }}
@@ -672,7 +405,7 @@ export function QuickNotePage() {
                 setIsSwitcherOpen(false);
                 setSwitcherQuery('');
                 setSelectedIndex(0);
-                void handleCreateAndSwitch();
+                void createAndSwitch();
               }}
               style={{
                 border: selectedIndex === 0 ? '1px solid var(--quick-accent)' : '1px solid var(--quick-border)',
@@ -693,7 +426,7 @@ export function QuickNotePage() {
                   setIsSwitcherOpen(false);
                   setSwitcherQuery('');
                   setSelectedIndex(0);
-                  void handleSwitchNote(item.id);
+                  void switchNote(item.id);
                 }}
                 style={{
                   border: selectedIndex === index + 1 ? '1px solid var(--quick-accent)' : item.id === note.id ? '1px solid var(--quick-accent)' : '1px solid var(--quick-border)',
@@ -705,9 +438,9 @@ export function QuickNotePage() {
                   color: 'var(--quick-text)',
                 }}
               >
-                <div style={{ fontSize: 13 }}>{buildSwitchLabel(item)}</div>
+                <div style={{ fontSize: 13 }}>{buildNoteSwitchLabel(item)}</div>
                 <div style={{ marginTop: 4, fontSize: 11, color: 'var(--quick-muted)' }}>
-                  {isContinueCandidate(item) ? '继续编辑' : '空白笔记'}
+                  {isNoteContinueCandidate(item) ? '继续编辑' : '空白笔记'}
                 </div>
               </button>
             ))}
@@ -776,7 +509,7 @@ export function QuickNotePage() {
               { label: '关闭当前', action: () => { setIsToolsOpen(false); void closeWindow(); } },
               { label: '关闭全部', action: () => { setIsToolsOpen(false); void closeAllNoteWindows(); } },
               { label: '最小化/恢复全部', action: () => { setIsToolsOpen(false); void toggleNoteWindowsVisibility(); } },
-              { label: '新建并切换', action: () => { setIsToolsOpen(false); void handleCreateAndSwitch(); } },
+              { label: '新建并切换', action: () => { setIsToolsOpen(false); void createAndSwitch(); } },
             ].map((item) => (
               <button
                 key={item.label}

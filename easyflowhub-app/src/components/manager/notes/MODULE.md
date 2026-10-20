@@ -6,6 +6,13 @@
 
 `components/manager/notes` owns the Notes workspace views: the capture Inbox and the existing searchable Markdown notes archive. It does not own persistence or Launcher action execution.
 
+## Split (Phase C, 2026-10-20)
+
+- `NotesPanel` (in `components/manager`) is only the Inbox / Archive tab shell.
+- `notes/NotesArchivePanel` composes the archive views plus window interactions (activation refresh, `MANAGER_OPEN_NOTE_EVENT`, Delete batch delete); its list + edit-session orchestration lives in `hooks/useNotesArchive`, not in the component.
+- Search token matching (`title:` / `content:` / `tag:`) is the pure helper `lib/noteSearch.matchesSearchQuery`.
+- Save versioning / flush remains owned by `hooks/useAutoSave` (F04); SQLite CRUD stays in native notes via `lib/tauri/notes`. Do not re-inline any of these into the panel.
+
 ## Data Flow
 
 Inbox UI -> typed `lib/tauri/inbox` bridge -> Rust Inbox commands -> additive tables in `notes.db`; image and file bytes remain under app data `assets/`. Converting an Inbox item to a note is a single native transaction and preserves existing `asset:<uuid>` image references.

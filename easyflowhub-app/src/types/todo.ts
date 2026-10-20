@@ -21,3 +21,10 @@ export interface TodoItem {
 }
 
 export type TodoFilter = 'all' | 'pending' | 'done';
+
+/** 按笔记聚合后的待办分组（展示用）。 */
+export interface TodoGroup {
+  noteId: string;
+  noteTitle: string;
+  todos: TodoItem[];
+}
