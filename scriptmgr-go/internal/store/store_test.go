@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -219,6 +220,55 @@ func TestSessionsLockHeldTimeoutsCleanly(t *testing.T) {
 	}
 	if elapsed < sessionsLockWait {
 		t.Fatalf("gave up too early after %v, want ~%v", elapsed, sessionsLockWait)
+	}
+}
+
+// This helper is launched as a separate OS process by the test below. A
+// goroutine-only test cannot prove that the O_EXCL lock coordinates workers
+// that have independent address spaces.
+func TestStoreLockSubprocessHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_STORE_LOCK_HELPER") != "1" {
+		return
+	}
+	stateDir := os.Getenv("STORE_LOCK_STATE_DIR")
+	sessionID := os.Getenv("STORE_LOCK_SESSION_ID")
+	s := New(config.Config{StateDir: stateDir})
+	if err := s.AppendSession(runningSession(sessionID)); err != nil {
+		t.Fatalf("append from subprocess: %v", err)
+	}
+}
+
+func TestSessionsLockCoordinatesAcrossProcesses(t *testing.T) {
+	stateDir := t.TempDir()
+	const workers = 5
+
+	commands := make([]*exec.Cmd, 0, workers)
+	for i := 0; i < workers; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=TestStoreLockSubprocessHelper", "-test.v")
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_STORE_LOCK_HELPER=1",
+			"STORE_LOCK_STATE_DIR="+stateDir,
+			fmt.Sprintf("STORE_LOCK_SESSION_ID=process-%02d", i),
+		)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start subprocess %d: %v", i, err)
+		}
+		commands = append(commands, cmd)
+	}
+
+	for i, cmd := range commands {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("subprocess %d failed: %v", i, err)
+		}
+	}
+
+	s := New(config.Config{StateDir: stateDir})
+	sessions, err := s.LoadSessions()
+	if err != nil {
+		t.Fatalf("load sessions after subprocesses: %v", err)
+	}
+	if len(sessions) != workers {
+		t.Fatalf("expected %d sessions from independent processes, got %d: %+v", workers, len(sessions), sessions)
 	}
 }
 

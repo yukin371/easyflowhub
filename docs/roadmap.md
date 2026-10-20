@@ -125,7 +125,7 @@
 
 ### Validation Debt
 
-- 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；但真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。2026-10-19 阶段B 后快照：前端 46 文件 / 353 项 + tsc、Go 全量 + vet、Rust 85 项 / cargo check 通过。剩余：F11（MCP 大文件协议拆分）随阶段C 处理，大文件拆分（V1-F4）与 CI 门禁（V1-F5）未开始。
+- 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；2026-10-20 又补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁真实子进程回归和回收站列表的有效条目保留。真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。剩余：F11（MCP 大文件协议拆分）随阶段C 处理，大文件拆分（V1-F4）与 CI 门禁（V1-F5）未开始。
 - quick note 的 `Esc` / `Alt+F4` / 工具按钮关闭回归仍需在打包产物中复验。
 - 最新人工验收已暴露并修复一轮图片放大、撤销、manager 图片展示问题，但仍缺修复后的 Windows 二次复验。
 - notes manager 仍缺一次发布前 CRUD / 回收 / 恢复 / 重开窗口一致性回归。
@@ -143,6 +143,8 @@
 5. 在 v1.0.0 发布收口后，优先推进 Action Launcher 的 action contract 和最小全局入口，不先进入复杂 Flow 编辑器或扩展市场。
 
 ### Recent Progress
+
+- `2026-10-20` 已完成阶段 A 跟进收口：native notes 新增 `ensure_todo_inbox_note`，以 SQLite `BEGIN IMMEDIATE` 跨窗口原子复用/创建“待办箱”；前端 `useTodos` 改用 typed bridge，不再组合 `list -> create -> save`。Manager 自动保存导航增加请求序号与当前笔记会话校验，旧异步请求不能回填新笔记。Go store 增加真实 OS 子进程锁回归；回收站 HTTP 列表在存在损坏条目时仍返回有效条目并携带 warning；MCP LRU 使用序号消除同一时间戳下的随机淘汰，WebSocket 客户端计数改为加锁读取。全量前端 47 个测试文件 / 359 项、Rust 88 项、Go `./...`、TypeScript、`cargo check` 和 `go vet` 已通过；真实 Windows smoke 仍待人工执行。
 
 - `2026-10-19` 已完成架构审查阶段B（F06–F14，单一状态 owner）：
   - F06 sidecar 恢复：native `scriptmgr_server.rs` 的 ready 门闩改为先探活再复用，sidecar 被杀/崩溃后下一次 ensure 自动重拉；TS `lib/api/scriptmgr` 在网络层失败时 `invalidateScriptmgr()` 丢弃缓存 URL 重新握手，HTTP 错误响应不失效缓存（避免误判）。

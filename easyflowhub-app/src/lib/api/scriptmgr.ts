@@ -277,6 +277,9 @@ export const rootsApi = {
 export const scriptTrashApi = {
   list: async (): Promise<ScriptTrashEntry[]> => {
     const response = await fetchJSON<ScriptTrashResponse>(`/api/trash/scripts`);
+    if (response.warning) {
+      console.warn('Script trash contains invalid entries:', response.warning);
+    }
     return asArray(response.entries);
   },
 

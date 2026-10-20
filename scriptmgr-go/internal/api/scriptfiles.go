@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -453,7 +454,7 @@ func (a *API) RestoreScriptTrash(entryID string) (model.ScriptTrashEntry, error)
 			return model.ScriptTrashEntry{}, fmt.Errorf("restore metadata: %w", err)
 		}
 	}
-	if err := os.RemoveAll(entryDir); err != nil {
+	if err := removeAllWithRetry(entryDir); err != nil {
 		return model.ScriptTrashEntry{}, err
 	}
 	return entry, nil
@@ -468,7 +469,7 @@ func (a *API) PurgeScriptTrash(entryID string) error {
 	if !fileExists(filepath.Join(entryDir, "entry.json")) {
 		return errors.New("trash entry not found")
 	}
-	return os.RemoveAll(entryDir)
+	return removeAllWithRetry(entryDir)
 }
 
 // EmptyScriptTrash permanently deletes every trashed script and reports how
@@ -478,10 +479,25 @@ func (a *API) EmptyScriptTrash() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := os.RemoveAll(a.scriptTrashRoot()); err != nil {
+	if err := removeAllWithRetry(a.scriptTrashRoot()); err != nil {
 		return 0, err
 	}
 	return len(entries), nil
+}
+
+// Windows can briefly report a directory as non-empty while the filesystem
+// finishes closing a just-moved file. Retry the bounded cleanup so a transient
+// handle does not turn a successful restore/purge into a false failure.
+func removeAllWithRetry(path string) error {
+	const attempts = 5
+	for attempt := 0; attempt < attempts; attempt++ {
+		err := os.RemoveAll(path)
+		if err == nil || runtime.GOOS != "windows" {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+	}
+	return os.RemoveAll(path)
 }
 
 // ---------------------------------------------------------------------------

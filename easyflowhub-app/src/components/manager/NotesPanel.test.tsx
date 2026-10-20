@@ -141,6 +141,14 @@ function createFixtureNote(overrides: Partial<Note> = {}): Note {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 describe('NotesPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -185,6 +193,99 @@ describe('NotesPanel', () => {
     });
     await waitFor(() => {
       expect(screen.getByText('Editing: target-note')).toBeInTheDocument();
+    });
+  });
+
+  it('外部打开两个未在列表中的笔记时，较早响应不能覆盖较新导航', async () => {
+    const older = createFixtureNote({
+      id: 'older-note',
+      title: 'Older note',
+    });
+    const newer = createFixtureNote({
+      id: 'newer-note',
+      title: 'Newer note',
+    });
+    const olderResponse = createDeferred<Note | null>();
+    const newerResponse = createDeferred<Note | null>();
+
+    getNoteMock.mockImplementation((noteId) => {
+      if (noteId === older.id) {
+        return olderResponse.promise;
+      }
+      if (noteId === newer.id) {
+        return newerResponse.promise;
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<NotesPanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
+    await screen.findByText('Existing note');
+
+    window.dispatchEvent(
+      new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+        detail: { noteId: older.id },
+      })
+    );
+    await waitFor(() => {
+      expect(getNoteMock).toHaveBeenCalledWith(older.id);
+    });
+
+    window.dispatchEvent(
+      new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+        detail: { noteId: newer.id },
+      })
+    );
+    await waitFor(() => {
+      expect(getNoteMock).toHaveBeenCalledWith(newer.id);
+    });
+
+    newerResponse.resolve(newer);
+    await screen.findByText(`Editing: ${newer.id}`);
+
+    olderResponse.resolve(older);
+    await waitFor(() => {
+      expect(screen.getByText(`Editing: ${newer.id}`)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(`Editing: ${older.id}`)).not.toBeInTheDocument();
+  });
+
+  it('关闭编辑器时取消仍在加载的外部导航', async () => {
+    const pending = createDeferred<Note | null>();
+    const incoming = createFixtureNote({
+      id: 'pending-note',
+      title: 'Pending note',
+    });
+
+    render(<NotesPanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
+    await screen.findByText('Existing note');
+
+    window.dispatchEvent(
+      new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+        detail: { noteId: 'note-1' },
+      })
+    );
+    await screen.findByText('Editing: note-1');
+
+    getNoteMock.mockImplementationOnce(() => pending.promise);
+    window.dispatchEvent(
+      new CustomEvent(MANAGER_OPEN_NOTE_EVENT, {
+        detail: { noteId: incoming.id },
+      })
+    );
+    await waitFor(() => {
+      expect(getNoteMock).toHaveBeenCalledWith(incoming.id);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Editing: note-1')).not.toBeInTheDocument();
+    });
+
+    pending.resolve(incoming);
+    await waitFor(() => {
+      expect(screen.queryByText(`Editing: ${incoming.id}`)).not.toBeInTheDocument();
     });
   });
 

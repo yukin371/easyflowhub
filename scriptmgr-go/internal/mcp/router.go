@@ -33,11 +33,12 @@ type CategoryInfo struct {
 
 // LoadedCategory represents a category that has been loaded with its scripts
 type LoadedCategory struct {
-	Name       string
-	Scripts    []model.ScriptRecord
-	LoadedAt   time.Time
-	LastUsedAt time.Time
-	ToolNames  []string
+	Name        string
+	Scripts     []model.ScriptRecord
+	LoadedAt    time.Time
+	LastUsedAt  time.Time
+	LastUsedSeq uint64
+	ToolNames   []string
 }
 
 // ToolHandler is a function that handles a tool call
@@ -54,7 +55,7 @@ type ToolRouter struct {
 	config RouterConfig
 
 	// Static tools (always available)
-	staticTools   map[string]ToolWithSchema
+	staticTools    map[string]ToolWithSchema
 	staticHandlers map[string]ToolHandler
 
 	// Dynamic tools (loaded by category)
@@ -62,6 +63,7 @@ type ToolRouter struct {
 	toolToCategory   map[string]string // toolName -> categoryName
 	dynamicSchemas   map[string]ToolWithSchema
 	dynamicHandlers  map[string]ToolHandler
+	lastUsedSeq      uint64
 }
 
 // NewToolRouter creates a new tool router
@@ -146,13 +148,15 @@ func (r *ToolRouter) HandleTool(toolName string, req Request) (Response, bool) {
 
 	// Check dynamic handlers
 	if handler, ok := r.dynamicHandlers[toolName]; ok {
-		// Update last used time for the category
-		if categoryName, ok := r.toolToCategory[toolName]; ok {
-			if cat, ok := r.loadedCategories[categoryName]; ok {
-				cat.LastUsedAt = time.Now()
-			}
-		}
+		categoryName := r.toolToCategory[toolName]
 		r.mu.RUnlock()
+		// The lookup can run under a read lock; the usage update must use the
+		// write lock because it mutates shared LRU state.
+		r.mu.Lock()
+		if cat, ok := r.loadedCategories[categoryName]; ok {
+			r.touchCategoryLocked(cat)
+		}
+		r.mu.Unlock()
 		return handler(req), true
 	}
 
@@ -232,10 +236,10 @@ func (r *ToolRouter) LoadCategory(categoryName string) (*LoadCategoryResult, err
 
 	// Check if already loaded
 	if existing, ok := r.loadedCategories[categoryName]; ok {
-		existing.LastUsedAt = time.Now()
+		r.touchCategoryLocked(existing)
 		return &LoadCategoryResult{
-			Category:    categoryName,
-			ScriptCount: len(existing.Scripts),
+			Category:      categoryName,
+			ScriptCount:   len(existing.Scripts),
 			AlreadyLoaded: true,
 		}, nil
 	}
@@ -249,6 +253,7 @@ func (r *ToolRouter) LoadCategory(categoryName string) (*LoadCategoryResult, err
 	// Register tools for each script
 	toolNames := make([]string, 0, len(categoryScripts))
 	now := time.Now()
+	r.lastUsedSeq++
 
 	for _, script := range categoryScripts {
 		toolName := sanitizeToolName(script.ID)
@@ -263,19 +268,20 @@ func (r *ToolRouter) LoadCategory(categoryName string) (*LoadCategoryResult, err
 
 	// Store the loaded category
 	r.loadedCategories[categoryName] = &LoadedCategory{
-		Name:       categoryName,
-		Scripts:    categoryScripts,
-		LoadedAt:   now,
-		LastUsedAt: now,
-		ToolNames:  toolNames,
+		Name:        categoryName,
+		Scripts:     categoryScripts,
+		LoadedAt:    now,
+		LastUsedAt:  now,
+		LastUsedSeq: r.lastUsedSeq,
+		ToolNames:   toolNames,
 	}
 
 	return &LoadCategoryResult{
-		Category:       categoryName,
-		ScriptCount:    len(categoryScripts),
-		AlreadyLoaded:  false,
+		Category:          categoryName,
+		ScriptCount:       len(categoryScripts),
+		AlreadyLoaded:     false,
 		EvictedCategories: evicted,
-		TotalTools:     len(r.staticTools) + len(r.dynamicSchemas),
+		TotalTools:        len(r.staticTools) + len(r.dynamicSchemas),
 	}, nil
 }
 
@@ -359,7 +365,8 @@ func (r *ToolRouter) evictLRULocked() []string {
 	// Find the oldest category by LastUsedAt
 	var oldest *LoadedCategory
 	for _, cat := range r.loadedCategories {
-		if oldest == nil || cat.LastUsedAt.Before(oldest.LastUsedAt) {
+		if oldest == nil || cat.LastUsedSeq < oldest.LastUsedSeq ||
+			(cat.LastUsedSeq == oldest.LastUsedSeq && cat.Name < oldest.Name) {
 			oldest = cat
 		}
 	}
@@ -379,6 +386,12 @@ func (r *ToolRouter) evictLRULocked() []string {
 	delete(r.loadedCategories, oldest.Name)
 
 	return []string{oldest.Name}
+}
+
+func (r *ToolRouter) touchCategoryLocked(category *LoadedCategory) {
+	r.lastUsedSeq++
+	category.LastUsedSeq = r.lastUsedSeq
+	category.LastUsedAt = time.Now()
 }
 
 // createScriptHandler creates a handler function for a script tool

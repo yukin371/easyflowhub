@@ -2,7 +2,7 @@
 
 > status: active
 > owner: EasyFlowHub desktop runtime maintainers
-> last_verified: 2026-10-19
+> last_verified: 2026-10-20
 > verified_against: working tree (scriptmgr sidecar lifecycle + inbox delete)
 
 ## 1. Responsibility
@@ -41,7 +41,7 @@ This module must not contain:
 |---|---|---|
 | `main.rs` | binary entry | 委托到 `lib.rs::run()` |
 | `lib.rs` | runtime shell | 插件、命令、窗口、快捷键、托盘入口 |
-| `notes.rs` | notes persistence | SQLite、图片、trash |
+| `notes.rs` | notes persistence | SQLite、图片、trash；`ensure_todo_inbox_note` 以事务原子复用或创建待办箱 |
 | `inbox.rs` | capture persistence | 与 `notes.db` 共用数据库；文本 / 链接 / 图片 / 文件捕获、归档、附件打开及幂等转换为笔记 |
 | `settings.rs` | settings store | 应用级设置 |
 | `scriptmgr.rs` | script bridge | 调用 `scriptmgr-go` CLI / HTTP |
@@ -84,6 +84,7 @@ These must remain true after changes:
 - scriptmgr 健康判定 = TCP 可连 + `GET /api/scripts` 返回 2xx。不得改用 HEAD：Go 1.22 method-specific pattern 对 HEAD 返回 405，会把健康服务误报为离线。
 - 开发者模式（`developer.debug_mode`）只影响日志详细程度与是否落盘，不得改变任何安全边界或引入远程访问。日志缓冲固定 500 行上限，文件单份 2 MB 后轮转为 `app.log.1`；日志内容不得包含凭据。
 - Inbox 转换笔记必须在同一 SQLite 事务中创建 note 并持久化 `converted_note_id`，重复执行返回原笔记，不能产生副本。
+- 待办箱由 `ensure_todo_inbox_note` 单一 native owner 管理；使用 SQLite `BEGIN IMMEDIATE` 检查并创建，按 `TRIM(title) = '待办箱'` 复用 active note，跨 WebView 不得通过前端 `list -> create -> save` 组合创建。
 - manager 窗口关闭时默认隐藏，不应直接退出应用
 - quick note / todo card 标签命名必须保持唯一性
 - Windows 特有行为（autostart、桌面固定、快捷键）变动后必须回归验证

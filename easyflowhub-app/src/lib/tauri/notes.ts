@@ -67,6 +67,15 @@ export async function createNote(): Promise<Note> {
   return response.note;
 }
 
+/**
+ * Return the active todo inbox, creating it atomically when it does not exist.
+ * The native command serializes the check-and-insert across windows.
+ */
+export async function ensureTodoInboxNote(): Promise<Note> {
+  const response: SaveNoteResponse = await invoke('ensure_todo_inbox_note');
+  return response.note;
+}
+
 // ============================================================================
 // Delete Note (permanent)
 // ============================================================================

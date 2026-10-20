@@ -39,18 +39,18 @@ type ScriptParameter struct {
 }
 
 type RunResult struct {
-	ScriptID   string   `json:"script_id"`
-	ScriptName string   `json:"script_name"`
-	Command    []string `json:"command"`
-	ExitCode   int      `json:"exit_code"`
-	Status     string   `json:"status"`
-	Succeeded  bool     `json:"succeeded"`
-	Output     string   `json:"output,omitempty"`
+	ScriptID   string        `json:"script_id"`
+	ScriptName string        `json:"script_name"`
+	Command    []string      `json:"command"`
+	ExitCode   int           `json:"exit_code"`
+	Status     string        `json:"status"`
+	Succeeded  bool          `json:"succeeded"`
+	Output     string        `json:"output,omitempty"`
 	OutputMeta *OutputResult `json:"output_meta,omitempty"`
-	WorkingDir string   `json:"working_dir"`
-	StartedAt  string   `json:"started_at"`
-	FinishedAt string   `json:"finished_at"`
-	DurationMs int64    `json:"duration_ms"`
+	WorkingDir string        `json:"working_dir"`
+	StartedAt  string        `json:"started_at"`
+	FinishedAt string        `json:"finished_at"`
+	DurationMs int64         `json:"duration_ms"`
 }
 
 type SessionRecord struct {
@@ -194,6 +194,7 @@ type ScriptTrashResponse struct {
 	OK          bool               `json:"ok"`
 	Count       int                `json:"count"`
 	Entries     []ScriptTrashEntry `json:"entries"`
+	Warning     string             `json:"warning,omitempty"`
 	GeneratedAt string             `json:"generated_at"`
 }
 

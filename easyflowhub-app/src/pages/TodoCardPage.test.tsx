@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TodoCardPage } from './TodoCardPage';
-import { createNote, getNote, listNotes, saveNote } from '../lib/tauri/notes';
+import { ensureTodoInboxNote, getNote, listNotes, saveNote } from '../lib/tauri/notes';
 import { getSettings } from '../lib/tauri/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { emitTo } from '@tauri-apps/api/event';
@@ -13,7 +13,7 @@ import { TODO_INBOX_TITLE } from '../lib/todoParser';
 const closeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/tauri/notes', () => ({
-  createNote: vi.fn(),
+  ensureTodoInboxNote: vi.fn(),
   getNote: vi.fn(),
   listNotes: vi.fn(),
   saveNote: vi.fn(),
@@ -44,7 +44,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 const listNotesMock = vi.mocked(listNotes);
 const getNoteMock = vi.mocked(getNote);
 const saveNoteMock = vi.mocked(saveNote);
-const createNoteMock = vi.mocked(createNote);
+const ensureTodoInboxNoteMock = vi.mocked(ensureTodoInboxNote);
 const getSettingsMock = vi.mocked(getSettings);
 const invokeMock = vi.mocked(invoke);
 const emitToMock = vi.mocked(emitTo);
@@ -70,8 +70,8 @@ describe('TodoCardPage', () => {
     listNotesMock.mockResolvedValue([createFixtureNote()]);
     getNoteMock.mockResolvedValue(createFixtureNote());
     saveNoteMock.mockResolvedValue(createFixtureNote());
-    createNoteMock.mockResolvedValue(
-      createFixtureNote({ id: 'new-note', title: '', content: '' })
+    ensureTodoInboxNoteMock.mockResolvedValue(
+      createFixtureNote({ id: 'new-note', title: TODO_INBOX_TITLE, content: '' }),
     );
     getSettingsMock.mockResolvedValue({
       quick_note: { width: 400, height: 300 },
@@ -141,17 +141,16 @@ describe('TodoCardPage', () => {
     getNoteMock.mockResolvedValue(
       createFixtureNote({ id: 'new-note', title: TODO_INBOX_TITLE, content: '' })
     );
-    saveNoteMock
-      .mockResolvedValueOnce(
-        createFixtureNote({ id: 'new-note', title: TODO_INBOX_TITLE, content: '' })
-      )
-      .mockResolvedValueOnce(
-        createFixtureNote({
-          id: 'new-note',
-          title: TODO_INBOX_TITLE,
-          content: '- [ ] Write release note',
-        })
-      );
+    ensureTodoInboxNoteMock.mockResolvedValue(
+      createFixtureNote({ id: 'new-note', title: TODO_INBOX_TITLE, content: '' }),
+    );
+    saveNoteMock.mockResolvedValue(
+      createFixtureNote({
+        id: 'new-note',
+        title: TODO_INBOX_TITLE,
+        content: '- [ ] Write release note',
+      }),
+    );
 
     render(<TodoCardPage />);
 
@@ -161,18 +160,10 @@ describe('TodoCardPage', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(createNoteMock).toHaveBeenCalledTimes(1);
+      expect(ensureTodoInboxNoteMock).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(saveNoteMock).toHaveBeenNthCalledWith(1, {
-        id: 'new-note',
-        title: TODO_INBOX_TITLE,
-        content: '',
-        tags: '',
-      });
-    });
-    await waitFor(() => {
-      expect(saveNoteMock).toHaveBeenNthCalledWith(2, {
+      expect(saveNoteMock).toHaveBeenCalledWith({
         id: 'new-note',
         title: TODO_INBOX_TITLE,
         content: '- [ ] Write release note',

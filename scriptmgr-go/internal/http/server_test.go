@@ -32,6 +32,7 @@ type MockAPI struct {
 	LogErr           error
 	CancelSessionRes model.SessionRecord
 	CancelErr        error
+	TrashEntries     []model.ScriptTrashEntry
 }
 
 func (m *MockAPI) ListScripts(search string) ([]model.ScriptRecord, []string, error) {
@@ -112,7 +113,7 @@ func (m *MockAPI) DeleteScript(scriptID string) (model.ScriptTrashEntry, error) 
 }
 
 func (m *MockAPI) ListScriptTrash() ([]model.ScriptTrashEntry, error) {
-	return []model.ScriptTrashEntry{}, m.Err
+	return m.TrashEntries, m.Err
 }
 
 func (m *MockAPI) RestoreScriptTrash(entryID string) (model.ScriptTrashEntry, error) {
@@ -166,6 +167,31 @@ func TestHandleListScripts(t *testing.T) {
 	scripts, ok := resp["scripts"].([]any)
 	if !ok || len(scripts) == 0 {
 		t.Errorf("expected scripts array with items, got %v", resp["scripts"])
+	}
+}
+
+func TestHandleListScriptTrashKeepsValidEntriesWhenOneIsCorrupt(t *testing.T) {
+	mock := &MockAPI{
+		TrashEntries: []model.ScriptTrashEntry{{ID: "valid-entry", Name: "keep.py"}},
+		Err:          errors.New("trash contains invalid entries: broken: malformed manifest"),
+	}
+	srv := NewServer(mock)
+	req := httptest.NewRequest("GET", "/api/trash/scripts", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected partial trash response status 200, got %d", rec.Code)
+	}
+	var resp model.ScriptTrashResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if !resp.OK || len(resp.Entries) != 1 || resp.Entries[0].ID != "valid-entry" {
+		t.Fatalf("valid entries were not preserved: %+v", resp)
+	}
+	if resp.Warning == "" {
+		t.Fatal("expected corruption warning in partial response")
 	}
 }
 

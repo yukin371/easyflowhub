@@ -10,7 +10,7 @@ vi.mock('../lib/tauri/notes', () => ({
   listNotes: vi.fn(),
   getNote: vi.fn(),
   saveNote: vi.fn(),
-  createNote: vi.fn(),
+  ensureTodoInboxNote: vi.fn(),
 }));
 
 vi.mock('../lib/tauri/settings', () => ({
@@ -177,6 +177,7 @@ describe('useTodos (F05)', () => {
   it('creates a todo through the inbox note with CAS', async () => {
     const inbox = createNoteFixture({ id: 'inbox-1', title: '待办箱', content: '' });
     vi.mocked(notesApi.listNotes).mockResolvedValue([inbox]);
+    vi.mocked(notesApi.ensureTodoInboxNote).mockResolvedValue(inbox);
     vi.mocked(notesApi.getNote).mockResolvedValue(inbox);
     vi.mocked(notesApi.saveNote).mockResolvedValue(inbox);
 
@@ -196,21 +197,12 @@ describe('useTodos (F05)', () => {
     );
   });
 
-  it('serializes same-context inbox initialization', async () => {
-    let inbox: Note | null = null;
-    const created = createNoteFixture({ id: 'inbox-1', title: '', content: '' });
-    vi.mocked(notesApi.listNotes).mockImplementation(async () => (inbox ? [inbox] : []));
-    vi.mocked(notesApi.createNote).mockResolvedValue(created);
-    vi.mocked(notesApi.getNote).mockImplementation(async () => inbox);
-    vi.mocked(notesApi.saveNote).mockImplementation(async (input) => {
-      inbox = {
-        ...(inbox ?? created),
-        title: input.title ?? inbox?.title ?? '',
-        content: input.content ?? inbox?.content ?? '',
-        tags: input.tags ?? inbox?.tags ?? '',
-      };
-      return inbox;
-    });
+  it('delegates concurrent inbox initialization to the native atomic command', async () => {
+    const inbox = createNoteFixture({ id: 'inbox-1', title: '待办箱', content: '' });
+    vi.mocked(notesApi.listNotes).mockResolvedValue([inbox]);
+    vi.mocked(notesApi.ensureTodoInboxNote).mockResolvedValue(inbox);
+    vi.mocked(notesApi.getNote).mockResolvedValue(inbox);
+    vi.mocked(notesApi.saveNote).mockResolvedValue(inbox);
 
     const { result } = renderHook(() => useTodos());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -222,9 +214,10 @@ describe('useTodos (F05)', () => {
       ]);
     });
 
-    expect(notesApi.createNote).toHaveBeenCalledTimes(1);
-    const finalInbox = inbox as Note | null;
-    expect(finalInbox?.content).toContain('first');
-    expect(finalInbox?.content).toContain('second');
+    expect(notesApi.ensureTodoInboxNote).toHaveBeenCalledTimes(2);
+    expect(notesApi.saveNote).toHaveBeenCalledTimes(2);
+    expect(notesApi.saveNote).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'inbox-1', expected_updated_at: '2026-10-19T00:00:00.000Z' }),
+    );
   });
 });

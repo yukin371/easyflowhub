@@ -177,14 +177,18 @@ func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListScriptTrash(w http.ResponseWriter, r *http.Request) {
 	entries, err := s.api.ListScriptTrash()
+	// ListScriptTrash deliberately returns valid entries alongside corruption
+	// diagnostics. Keep the response usable so one damaged staging directory
+	// cannot hide the scripts that remain restorable.
+	warning := ""
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		warning = err.Error()
 	}
 	s.writeJSON(w, http.StatusOK, model.ScriptTrashResponse{
 		OK:          true,
 		Count:       len(entries),
 		Entries:     entries,
+		Warning:     warning,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 }

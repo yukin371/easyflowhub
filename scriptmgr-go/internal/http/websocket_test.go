@@ -342,7 +342,7 @@ func TestWebSocketClientDisconnect(t *testing.T) {
 	// Allow registration
 	time.Sleep(50 * time.Millisecond)
 
-	initialClients := len(hub.clients)
+	initialClients := hub.ClientCount()
 
 	// Close connection
 	ws.Close()
@@ -351,7 +351,7 @@ func TestWebSocketClientDisconnect(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify client was removed
-	finalClients := len(hub.clients)
+	finalClients := hub.ClientCount()
 	if finalClients >= initialClients {
 		t.Errorf("Expected fewer clients after disconnect, initial=%d, final=%d", initialClients, finalClients)
 	}

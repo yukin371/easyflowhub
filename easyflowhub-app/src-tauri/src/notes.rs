@@ -1,8 +1,9 @@
 use chrono::Utc;
-use rusqlite::{Connection, Result as SqliteResult};
+use rusqlite::{Connection, OptionalExtension, Result as SqliteResult, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::Manager;
 use uuid::Uuid;
 
@@ -163,6 +164,8 @@ pub(crate) fn init_db(conn: &Connection) -> SqliteResult<()> {
 pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     let conn = Connection::open(&path).map_err(|e| format!("Failed to open database: {}", e))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("Failed to configure database lock timeout: {}", e))?;
     init_db(&conn).map_err(|e| format!("Failed to initialize database: {}", e))?;
     Ok(conn)
 }
@@ -396,18 +399,22 @@ fn get_note_helper(conn: &Connection, id: &str) -> Result<Note, String> {
         .map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
     stmt.query_row([id], |row| {
-        Ok(Note {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            content: row.get(2)?,
-            tags: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-            is_pinned: row.get::<_, i32>(6)? != 0,
-            deleted_at: row.get(7)?,
-        })
+        note_from_row(row)
     })
     .map_err(|e| format!("Failed to get note: {}", e))
+}
+
+fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
+    Ok(Note {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        content: row.get(2)?,
+        tags: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+        is_pinned: row.get::<_, i32>(6)? != 0,
+        deleted_at: row.get(7)?,
+    })
 }
 
 /// Delete a note by ID
@@ -582,6 +589,57 @@ pub fn create_note(app: tauri::AppHandle) -> Result<SaveNoteResponse, String> {
     };
 
     let _ = app;
+    Ok(SaveNoteResponse { ok: true, note })
+}
+
+/// Return the active todo inbox, creating it atomically when it does not exist.
+///
+/// The transaction takes SQLite's immediate write lock before checking the
+/// title, so two manager windows cannot both observe an empty inbox and create
+/// duplicate notes. Existing content and metadata are returned unchanged.
+#[tauri::command]
+pub fn ensure_todo_inbox_note(app: tauri::AppHandle) -> Result<SaveNoteResponse, String> {
+    let mut conn = get_connection(&app)?;
+    ensure_todo_inbox_with_conn(&mut conn)
+}
+
+fn ensure_todo_inbox_with_conn(conn: &mut Connection) -> Result<SaveNoteResponse, String> {
+    const TODO_INBOX_TITLE: &str = "待办箱";
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| format!("Failed to begin todo inbox transaction: {}", e))?;
+
+    let existing = tx
+        .query_row(
+            "SELECT id, title, content, tags, created_at, updated_at, is_pinned, deleted_at
+             FROM notes
+             WHERE deleted_at IS NULL AND TRIM(title) = ?
+             ORDER BY updated_at DESC, id ASC
+             LIMIT 1",
+            [TODO_INBOX_TITLE],
+            note_from_row,
+        )
+        .optional()
+        .map_err(|e| format!("Failed to find todo inbox: {}", e))?;
+
+    if let Some(note) = existing {
+        tx.commit()
+            .map_err(|e| format!("Failed to commit todo inbox lookup: {}", e))?;
+        return Ok(SaveNoteResponse { ok: true, note });
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let id = Uuid::new_v4().to_string();
+    tx.execute(
+        "INSERT INTO notes (id, title, content, tags, created_at, updated_at, is_pinned)
+         VALUES (?, ?, '', '', ?, ?, 0)",
+        rusqlite::params![id, TODO_INBOX_TITLE, now, now],
+    )
+    .map_err(|e| format!("Failed to create todo inbox: {}", e))?;
+
+    let note = get_note_helper(&tx, &id)?;
+    tx.commit()
+        .map_err(|e| format!("Failed to commit todo inbox creation: {}", e))?;
     Ok(SaveNoteResponse { ok: true, note })
 }
 
@@ -887,6 +945,79 @@ mod tests {
         cas.expected_updated_at = Some("2026-10-19T00:00:00Z".to_string());
         let saved = save_note_with_conn(&conn, cas).expect("create with cas field");
         assert_eq!(saved.note.content, "fresh");
+    }
+
+    #[test]
+    fn ensure_todo_inbox_reuses_active_note_without_overwriting_content() {
+        let mut conn = memory_db();
+        let mut inbox = input("inbox-1", "- [ ] keep this");
+        inbox.title = Some("  待办箱  ".to_string());
+        let created = save_note_with_conn(&conn, inbox).expect("create inbox");
+
+        let ensured = ensure_todo_inbox_with_conn(&mut conn).expect("ensure inbox");
+        assert_eq!(ensured.note.id, created.note.id);
+        assert_eq!(ensured.note.title, "  待办箱  ");
+        assert_eq!(ensured.note.content, "- [ ] keep this");
+    }
+
+    #[test]
+    fn ensure_todo_inbox_creates_replacement_for_deleted_note() {
+        let mut conn = memory_db();
+        let mut deleted = input("deleted-inbox", "old");
+        deleted.title = Some("待办箱".to_string());
+        let created = save_note_with_conn(&conn, deleted).expect("create deleted inbox");
+        conn.execute(
+            "UPDATE notes SET deleted_at = ? WHERE id = ?",
+            rusqlite::params![Utc::now().to_rfc3339(), created.note.id],
+        )
+        .expect("soft delete inbox");
+
+        let ensured = ensure_todo_inbox_with_conn(&mut conn).expect("ensure replacement");
+        assert_ne!(ensured.note.id, created.note.id);
+        assert_eq!(ensured.note.title, "待办箱");
+        assert!(ensured.note.content.is_empty());
+    }
+
+    #[test]
+    fn ensure_todo_inbox_is_atomic_across_connections() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!("easyflowhub-notes-{}.db", Uuid::new_v4()));
+        let setup = Connection::open(&path).expect("open setup database");
+        init_db(&setup).expect("setup schema");
+        drop(setup);
+        let shared_path = Arc::new(path.clone());
+
+        let workers = (0..2)
+            .map(|_| {
+                let path = Arc::clone(&shared_path);
+                thread::spawn(move || {
+                    let mut conn = Connection::open(path.as_ref()).expect("open worker database");
+                    conn.busy_timeout(Duration::from_secs(5)).expect("busy timeout");
+                    ensure_todo_inbox_with_conn(&mut conn).expect("ensure inbox");
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().expect("worker completed");
+        }
+
+        let verify = Connection::open(&path).expect("open verify database");
+        let count: i64 = verify
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL AND TRIM(title) = '待办箱'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count inboxes");
+        assert_eq!(count, 1);
+
+        drop(verify);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(path.with_extension("db-journal"));
     }
 }
 

@@ -2,7 +2,7 @@
 
 > 审查日期：2026-10-19
 > 基线：`d1a95f0` 加本地工作区；包含原有 SettingsPanel、QuickNotePage、useAutoSave 和 smoke 脚本未提交改动
-> 状态：审查完成；阶段A（F01–F05）与阶段B（F06–F14，F11 除外）已于 2026-10-19 实施并通过故障注入/并发回归；F11 与第 5 节大文件拆分留待阶段C
+> 状态：审查完成；阶段A（F01–F05）与阶段B（F06–F14，F11 除外）已实施并完成自动化回归；2026-10-20 补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁跨进程子进程回归及回收站部分响应；F11 与第 5 节大文件拆分留待阶段C
 > 范围：`easyflowhub-app/src`、`easyflowhub-app/src-tauri/src`、`scriptmgr-go`、验证链及架构文档
 
 ## 1. 结论
@@ -11,7 +11,7 @@
 
 目前还不能判定已经满足高内聚、低耦合和数据完整性要求。主要问题是编辑会话、任务状态、资源生命周期和配置提交仍有多个写入方；部分大文件把不同生命周期的职责放在一起，异常路径已经暴露数据丢失或误写风险。应先修复 F01–F05，再在既有 owner 内拆分，避免把相同问题分散到更多文件。
 
-本轮只新增审查文档、索引和 roadmap 任务，没有修改实现或接管原有未提交改动。下文的新文件名和接口均是建议，不能当作已经存在的实现。
+本文件保留 2026-10-19 的审查基线与原始证据。后续跟进已在既有 owner 内完成阶段 A/B 修正；文末补充当前实现与验证边界，原审查中的“建议接口”不代表仍未实现。
 
 ## 2. 规模与依赖证据
 
@@ -137,7 +137,7 @@ flowchart TD
 
 持续检查应覆盖：TS 解析后的 import 循环与反向依赖、非 bridge 原始 invoke（先按现有 9 处建带清理任务的基线）、文件规模增量、schema-handler 配对。当前 `.github/workflows/test.yml` 只有前端/Go 作业，缺 Windows native PR 检查；本地 smoke 有 Rust 检查和测试，但不能代替 PR gate。
 
-实施时同步 `ARCHITECTURE_GUARDRAILS.md` 的两条通信路径、对应 `MODULE.md` 和必要 ADR；本轮未改变实际 owner，所以不把提议提前写成模块现状。现有 AGENTS 仍以 v1.0.0 为需求入口，docs/README 与 PROJECT_PROFILE 又把 v0.2.0 作为当前执行线，此口径应在治理任务中统一，本审查不擅自调整版本策略。
+实施时同步 `ARCHITECTURE_GUARDRAILS.md` 的两条通信路径、对应 `MODULE.md` 和必要 ADR；阶段 A/B 跟进仍沿用既有 owner，没有引入平行实现。现有 AGENTS 仍以 v1.0.0 为需求入口，docs/README 与 PROJECT_PROFILE 又把 v0.2.0 作为当前执行线，此口径应在治理任务中统一，本审查不擅自调整版本策略。
 
 ## 7. 本轮验证与限制
 
@@ -152,3 +152,13 @@ flowchart TD
 | 针对异常的内存验证 | module toggle 失败回滚、sidecar 就绪缓存、todo 旧行号、autosave 旧响应、Inbox migration 故障注入证据见上文 |
 
 Rust 保留已有 NoteInput 未使用字段和 incremental lock 清理权限提示。未运行真实 Windows 打包多窗口、麦克风、第三方服务和杀 sidecar 集成 smoke；没有执行完整 race 测试，也未重新打包。这些是审查限制，不能把单测通过解释为已修复上述问题。
+
+## 8. 阶段 A/B 跟进修正
+
+- F01：`internal/store` 的 sessions/history 读改写使用跨进程锁；`executor` 按 session ID 更新并补偿启动失败，新增真实 OS 子进程锁回归。仍需 Windows 打包态多 worker smoke。
+- F02：回收站脚本、metadata 与 manifest 失败路径保留可恢复副本，manifest 原子写入；损坏条目不再静默丢弃，HTTP 列表返回有效条目并带 warning。
+- F03：Inbox 迁移保持事务化实现与现有回滚测试。
+- F04：自动保存按 token 串行化；manager 导航在切换前 flush，旧请求在异步加载、关闭和晚响应路径均不能覆盖新会话。
+- F05：todo 写入继续由 `useTodos` 统一编排，native CAS 保护正文更新；待办箱初始化新增 `ensure_todo_inbox_note`，由 SQLite `BEGIN IMMEDIATE` 在跨窗口下原子复用或创建，前端不再组合 `list -> create -> save`。
+
+本轮定向验证已覆盖前端待办/自动保存/manager 导航、Rust notes 原子待办箱、Go store 跨进程锁、Go 回收站 API 与 HTTP partial response；全量前端 47 个测试文件 / 359 项、Rust 88 项、Go `./...`、TypeScript、`cargo check` 和 `go vet` 均已重跑通过。真实 Windows 多窗口/打包态 smoke 仍是发布前验收项。

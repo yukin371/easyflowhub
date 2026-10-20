@@ -88,6 +88,13 @@ func (h *Hub) BroadcastTaskStatus(taskID, scriptID, status string, exitCode *int
 	h.Broadcast(event)
 }
 
+// ClientCount returns a race-free snapshot for diagnostics and tests.
+func (h *Hub) ClientCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
+}
+
 // Run starts the hub's main loop for handling client registration and broadcasting
 func (h *Hub) Run() {
 	for {

@@ -384,6 +384,7 @@ export interface ScriptTrashResponse {
   ok: boolean;
   count: number;
   entries: ScriptTrashEntry[];
+  warning?: string;
   generated_at: string;
 }
 

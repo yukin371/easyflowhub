@@ -1021,6 +1021,7 @@ pub fn run() {
             notes::save_image,
             notes::save_image_from_path,
             notes::create_note,
+            notes::ensure_todo_inbox_note,
             notes::toggle_pin_note,
             notes::trash_note,
             notes::trash_notes_batch,

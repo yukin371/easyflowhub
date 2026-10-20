@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TodoPanel } from './TodoPanel';
-import { createTodoCardWindow, getNote, listNotes, saveNote } from '../../../lib/tauri/notes';
+import { createTodoCardWindow, ensureTodoInboxNote, getNote, listNotes, saveNote } from '../../../lib/tauri/notes';
 import { getSettings } from '../../../lib/tauri/settings';
 import type { Note } from '../../../types/note';
 
@@ -10,6 +10,7 @@ vi.mock('../../../lib/tauri/notes', () => ({
   listNotes: vi.fn(),
   saveNote: vi.fn(),
   getNote: vi.fn(),
+  ensureTodoInboxNote: vi.fn(),
   createTodoCardWindow: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock('../../../lib/tauri/settings', () => ({
 const listNotesMock = vi.mocked(listNotes);
 const saveNoteMock = vi.mocked(saveNote);
 const getNoteMock = vi.mocked(getNote);
+const ensureTodoInboxNoteMock = vi.mocked(ensureTodoInboxNote);
 const createTodoCardWindowMock = vi.mocked(createTodoCardWindow);
 const getSettingsMock = vi.mocked(getSettings);
 
@@ -43,6 +45,9 @@ describe('TodoPanel', () => {
     listNotesMock.mockResolvedValue([createFixtureNote()]);
     getNoteMock.mockResolvedValue(createFixtureNote());
     saveNoteMock.mockResolvedValue(createFixtureNote());
+    ensureTodoInboxNoteMock.mockResolvedValue(
+      createFixtureNote({ id: 'inbox-1', title: '待办箱', content: '' }),
+    );
     createTodoCardWindowMock.mockResolvedValue('todo-card-1');
     getSettingsMock.mockResolvedValue({
       quick_note: { width: 400, height: 300 },
