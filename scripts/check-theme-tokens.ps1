@@ -22,6 +22,17 @@ $launcherStylesPath = Join-Path $sourceRoot "features\launcher\LauncherPanel.css
 $appearanceHookPath = Join-Path $sourceRoot "hooks\useAppearance.ts"
 $relativeTargets = @(
     "SettingsPanel.tsx",
+    "settings\GeneralSection.tsx",
+    "settings\ModulesSection.tsx",
+    "settings\ShortcutsSection.tsx",
+    "settings\TranslationSection.tsx",
+    "settings\TranscriptionSection.tsx",
+    "settings\DeveloperSection.tsx",
+    "settings\QuickNoteSection.tsx",
+    "settings\TodoSection.tsx",
+    "settings\TrashSection.tsx",
+    "settings\EditorSection.tsx",
+    "settings\NumberSettingInput.tsx",
     "mcp\McpPanel.tsx",
     "tasks\TasksPanel.tsx",
     "notes\StatusBar.tsx",

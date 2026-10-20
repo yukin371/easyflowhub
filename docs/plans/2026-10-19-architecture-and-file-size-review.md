@@ -2,7 +2,7 @@
 
 > 审查日期：2026-10-19
 > 基线：`d1a95f0` 加本地工作区；包含原有 SettingsPanel、QuickNotePage、useAutoSave 和 smoke 脚本未提交改动
-> 状态：审查完成；阶段A（F01–F05）与阶段B（F06–F14，F11 除外）已实施并完成自动化回归；2026-10-20 补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁跨进程子进程回归及回收站部分响应；F11 与第 5 节大文件拆分留待阶段C
+> 状态：审查完成；阶段A（F01–F05）、阶段B（F06–F14）与阶段C（F11 + 第5节大文件拆分）均已实施并完成自动化回归；2026-10-20 补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁跨进程子进程回归及回收站部分响应，并完成 F11 与四项大文件拆分；剩余阶段D（CI 门禁）
 > 范围：`easyflowhub-app/src`、`easyflowhub-app/src-tauri/src`、`scriptmgr-go`、验证链及架构文档
 
 ## 1. 结论
@@ -162,3 +162,12 @@ Rust 保留已有 NoteInput 未使用字段和 incremental lock 清理权限提�
 - F05：todo 写入继续由 `useTodos` 统一编排，native CAS 保护正文更新；待办箱初始化新增 `ensure_todo_inbox_note`，由 SQLite `BEGIN IMMEDIATE` 在跨窗口下原子复用或创建，前端不再组合 `list -> create -> save`。
 
 本轮定向验证已覆盖前端待办/自动保存/manager 导航、Rust notes 原子待办箱、Go store 跨进程锁、Go 回收站 API 与 HTTP partial response；全量前端 47 个测试文件 / 359 项、Rust 88 项、Go `./...`、TypeScript、`cargo check` 和 `go vet` 均已重跑通过。真实 Windows 多窗口/打包态 smoke 仍是发布前验收项。
+
+## 9. 阶段 C 跟进：F11 与大文件拆分
+
+- **F11**：`internal/mcp/server.go`（1364 行）拆为 `protocol.go` / `tools_{scripts,notes,categories,tasks}.go` / `notifications.go` + 收敛后的 `server.go`（装配 + 单一 registry）。`get_task_result(wait=true)` 的等待由只累加计数的空转改为真实、可取消的有界轮询（`taskWaiter`，注入 `sleep` 便于可控时间验证完成/超时/取消）；schema 与 handler 从同一来源派生（`GetToolSchemas()` + `registerStaticTools`），router 是唯一 dispatch owner，移除 legacy switch fallback 与 4 个未实现的 note-repo schema。新增等待完成/超时/取消/取错与 schema-handler 一致性回归。
+- **第5节大文件拆分（保持 owner 与接口兼容）**：
+  - SettingsPanel（1318→213）→ `components/manager/settings/*`（分域 Section + hook）；并修复 F08 的 UI 半边：普通保存不再夹带未提交 Launcher 草稿。
+  - native `inbox.rs`（1769）→ `inbox/{schema,attachments,repository,service,commands}`；`lib.rs`（1112→306）收敛为装配根，抽出 `launcher`/`app_windows`/`window_position`。102 个 Tauri 命令名与 `invoke_handler` 集合保持不变。
+  - 编辑页面：抽出 `useQuickNoteSession`/`useNotesArchive`/`useTodoGroups`/`useTodoEditSession`，NotesPanel 收敛为 tab 壳，页面只保留窗口交互与渲染；保存版本仍归 `useAutoSave`、todo 写入仍归 `useTodos`、解析仍归 `lib/todoParser`。
+- **验证**：前端 52 文件 / 381 项 + tsc、Go `./...` + vet、Rust 88 项 + `cargo check` 均通过。QuickNotePage(657)/TodoCardPage(532) 仍略超 500 行阈值，余量为内联 JSX，可作后续展示层拆分；真实 Windows 打包态 smoke 仍待人工执行。

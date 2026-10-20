@@ -93,12 +93,12 @@
 #### Track F. Architecture Health
 
 - owner scope: `easyflowhub-app/src`, `easyflowhub-app/src-tauri/src`, `scriptmgr-go/internal`, `.github/workflows`, `docs`
-- 审查基线：[2026-10-19 架构与大文件审查](./plans/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）与阶段B（F06–F14）已实施，大文件拆分尚未实施（F11 隶阶段C）。
+- 审查基线：[2026-10-19 架构与大文件审查](./plans/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）与阶段B（F06–F14）已实施，阶段A（F01–F05）、阶段B（F06–F14）与阶段C（F11 + 第5节大文件拆分）均已实施；剩余阶段D（V1-F5 CI 门禁）。
 - 当前任务：
   - `V1-F1` `[done]` 盘点规模、依赖、owner 和异常路径；24 个实现文件物理行数超过 500，剔除 Rust 内联测试后约 23 个；TS 静态依赖未发现循环。
   - `V1-F2` `[done]` 优先修复审查 F01–F05：跨进程 sessions 旧快照覆盖、回收站失败误删、Inbox 非事务迁移、自动保存旧响应、todo 旧行号误写，并补故障/并发回归。
   - `V1-F3` `[done]` 收口 sidecar 恢复、模块失败回滚、配置提交、MCP 加载状态、附件生命周期等 owner 边界（F06–F10、F12–F14；F11 留到阶段C 大文件拆分）。
-  - `V1-F4` `[planned]` 在既有 owner 内按职责拆分 SettingsPanel、mcp/server、native inbox/lib 和编辑页面，保持接口兼容。
+  - `V1-F4` `[done]` 在既有 owner 内按职责拆分 SettingsPanel、mcp/server、native inbox/lib 和编辑页面，保持接口兼容。2026-10-20：编辑页面完成——QuickNotePage → `useQuickNoteSession`，NotesPanel → `notes/NotesArchivePanel` + `useNotesArchive`，TodoPanel/TodoCardPage 共享 `useTodoGroups` + `useTodoEditSession`（写入仍归 useTodos/F05，保存版本仍归 useAutoSave/F04，解析仍归 lib/todoParser）；2026-10-20 完成剩余三项——SettingsPanel → `components/manager/settings/*`（分域 Section + hook，并修复 F08 UI 半边：普通保存不再夹带未提交 Launcher 草稿）；mcp/server.go 拆为 protocol/tools_*/notifications + 收敛 server.go，F11 `get_task_result` 等待改为真实可取消轮询；native inbox.rs → `inbox/{schema,attachments,repository,service,commands}`，lib.rs 收敛为装配根并抽出 launcher/app_windows/window_position。102 个 Tauri 命令与 MCP 工具表面保持兼容。
   - `V1-F5` `[planned]` 建立 import/typed bridge/文件规模增量门禁，补 Windows native PR 验证，并同步实际通信路径和模块文档。
 
 ### Release Checkpoints
@@ -125,7 +125,7 @@
 
 ### Validation Debt
 
-- 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；2026-10-20 又补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁真实子进程回归和回收站列表的有效条目保留。真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。剩余：F11（MCP 大文件协议拆分）随阶段C 处理，大文件拆分（V1-F4）与 CI 门禁（V1-F5）未开始。
+- 架构审查阶段A（F01–F05）与阶段B（F06–F14）均已实施并有故障注入/并发回归覆盖；2026-10-20 又补齐待办箱跨窗口原子创建、自动保存导航竞态、Go 锁真实子进程回归和回收站列表的有效条目保留。真实 Windows 多进程/多窗口打包态 smoke（sidecar 杀进程恢复、MCP load/unload 与 tools/call 一致、录音永久删除命中原件、设置第 N 次写失败回滚、扩展目录无 relay 查询）仍未执行，不能把单测通过当作实机验收。2026-10-20 阶段C 后快照：前端 52 文件 / 381 项 + tsc、Go 全量 + vet（新增 F11 等待与 schema-handler 一致性回归）、Rust 88 项 + cargo check 通过；CI 门禁（V1-F5）未开始。QuickNotePage(657)/TodoCardPage(532) 仍略超 500 行阈值，余量为内联 JSX，可作后续展示层拆分。
 - quick note 的 `Esc` / `Alt+F4` / 工具按钮关闭回归仍需在打包产物中复验。
 - 最新人工验收已暴露并修复一轮图片放大、撤销、manager 图片展示问题，但仍缺修复后的 Windows 二次复验。
 - notes manager 仍缺一次发布前 CRUD / 回收 / 恢复 / 重开窗口一致性回归。
@@ -144,6 +144,8 @@
 
 ### Recent Progress
 
+- `2026-10-20` 已完成阶段 C（F11 + 第5节大文件拆分）：mcp/server.go 拆为 protocol/tools_*/notifications + 收敛 server.go，F11 `get_task_result` 等待改为真实可取消轮询（`taskWaiter`），schema/handler 同源、router 唯一 dispatch 并移除 legacy fallback；SettingsPanel 拆为 `components/manager/settings/*` 并修复 F08 UI 半边（普通保存不夹带未提交 Launcher 草稿）；native inbox.rs 拆为 `inbox/{schema,attachments,repository,service,commands}`，lib.rs 收敛为装配根并抽出 launcher/app_windows/window_position（102 命令不变）；编辑页面抽出 useQuickNoteSession/useNotesArchive/useTodoGroups/useTodoEditSession。验证：前端 52 文件 / 381 项 + tsc、Go `./...` + vet、Rust 88 项 + `cargo check` 通过。
+
 - `2026-10-20` 已完成阶段 A 跟进收口：native notes 新增 `ensure_todo_inbox_note`，以 SQLite `BEGIN IMMEDIATE` 跨窗口原子复用/创建“待办箱”；前端 `useTodos` 改用 typed bridge，不再组合 `list -> create -> save`。Manager 自动保存导航增加请求序号与当前笔记会话校验，旧异步请求不能回填新笔记。Go store 增加真实 OS 子进程锁回归；回收站 HTTP 列表在存在损坏条目时仍返回有效条目并携带 warning；MCP LRU 使用序号消除同一时间戳下的随机淘汰，WebSocket 客户端计数改为加锁读取。全量前端 47 个测试文件 / 359 项、Rust 88 项、Go `./...`、TypeScript、`cargo check` 和 `go vet` 已通过；真实 Windows smoke 仍待人工执行。
 
 - `2026-10-19` 已完成架构审查阶段B（F06–F14，单一状态 owner）：
@@ -157,6 +159,7 @@
   - F14 Voice 终态：新增 `transition_terminal` 单写路径，`saved`/`failed` 互不覆盖，pause/resume 迟到回执不再翻转已终态会话；测试改为直接驱动生产转移函数而非重写状态机。
   验证：前端 46 文件 / 353 项 + tsc、Go 全量 + vet（新增 F12/F09/F13 回归）、Rust 85 项 + cargo check（新增 F08/F10/F14 回归）通过。真实 Windows 打包态 smoke（sidecar 杀进程恢复、MCP load 与 tools/call 一致、录音原件清理）仍待人工执行。F11 留到阶段C 大文件拆分。
 - `2026-10-19` 已完成架构审查阶段A（F01–F05，数据完整性）：F01 `internal/store` 新增跨进程 sessions 锁（O_EXCL 锁文件 + 过期锁回收 + 原子 rename 写），`executor/async.go` 的 Start/RunWorker/Cancel/refreshSessions 全部改为按任务 ID 的锁定单条读改写，`syncTask` 不再吞掉 tasks.db 错误；F02 回收站 manifest/metadata 写失败时回滚脚本到原路径，绝不删除唯一副本；F03 Inbox capture-kind 迁移包进单事务，失败回滚后重启可重试，foreign_keys pragma 失败后恢复；F04 `useAutoSave` 引入 token + 串行 promise 链，旧响应不再清新备份/回填新草稿，flush 等待真实 in-flight；F05 新增 `lib/todoParser.locateTodoLine`（按文本身份重定位、同名多条一律拒绝）、共享 `hooks/useTodos`（加载/保留期/勾选/编辑/新建唯一编排）、native `save_note` 增加 `expected_updated_at` compare-and-swap（opt-in，冲突返回 `note_conflict:`）。新增回归：Go store 并发/过期锁/单条更新 6 项、executor 对账 5 项、Rust CAS 4 项 + Inbox 迁移回滚 1 项、前端 locateTodoLine/useTodos/useAutoSave 19 项。验证：前端 46 文件 / 349 项、tsc、Go 全量 + vet、Rust 81 项 + cargo check 通过。真实 Windows 多进程/多窗口打包态 smoke 仍待人工执行。
+- `2026-10-20` 已按架构审查第 5 节完成 Phase C 首个大文件拆分：`SettingsPanel.tsx`（1318 行）收敛为导航 / 分区组合 / 页面级反馈，各设置域拆到 `components/manager/settings/*Section.tsx` 与 `use<Domain>Settings` hooks（AppSettings 聚合、Launcher 触发、快捷键配置、自启动、开发者日志），对外导出与 `SettingsPanel.test.tsx` 保持兼容。同时关闭 F08 的 UI 侧残留：普通保存不再夹带未提交的 Launcher 草稿，只回写已提交的 `launcher_trigger` 镜像，Launcher 在自己入口提交成功后刷新镜像；新增 `useAppSettings` / `useShortcutsSettings` hook 回归与面板级 F08 回归测试固定该行为。验证：`bunx tsc --noEmit`（本目录无错误）、SettingsPanel + settings hooks 定向 vitest 19 项通过、Manager 主题 token 审计覆盖新增 Section 文件。
 - `2026-10-19` 已完成 Phase 5 第二条切片"录音后语音转文字"（ADR-0008）：native 新增 `transcription.rs` owner，按 `TranscriptionTransport` trait 通过本机 Relay `POST /v1/audio/transcriptions`（multipart）转写，25 MB 大小守卫、180 秒截止、固定中文错误分类；请求在 native 侧执行，音频字节不进入 WebView，密钥与路由仍归 Go Relay。`inbox_attachments.kind` 以 additive schema 增加 `transcript`，transcript 作为文本附件落盘并在重新转写时同事务替换，`convert_inbox_item_to_note` 对 transcript 附件把文本嵌入笔记正文。前端新增 typed bridge、共享 `TranscribeControl`（文件 / 大小 / 时长 / Provider / 模型 + 隐私确认后才发送）、Voice 面板与 Inbox 面板挂载、设置页「转写」段（模型 / 语言）。本轮验证：前端 41 个测试文件 / 299 项、Rust 65 项 library tests、TypeScript、Vite 生产构建、Manager 主题 token 审计、Windows target `cargo check`、Go tests、`git diff --check` 通过（Rust 仅有既有 `NoteInput` 未使用字段 warning）。Windows 打包态麦克风 smoke、真实 Provider 成功转写与重新打开 Manager 后 transcript 恢复仍待人工验收；实时转写、说话人识别、本地模型适配器与自动转写不在本切片。
 - `2026-10-16` 已完成 Action Launcher 最小闭环骨架：独立 Action Registry、脚本动作适配、搜索/最近/收藏、参数输入、执行反馈，以及 Windows `Ctrl+Alt+Space` 全局入口；前端、Rust、Go 验证通过，后续继续补充非脚本动作和真实 Windows 打包验收。
 - `2026-10-16` 已补充 Launcher 触发策略：可选择键盘快捷键、鼠标中键或两者并用；快捷键可重新录入，Windows 前台进程支持排除列表，配置由设置页桥接到 native 层并在保存时重新注册。
