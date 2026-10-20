@@ -207,8 +207,8 @@ func TestServer_ToolsCall_RunScript(t *testing.T) {
 		Roots: []string{"root1", "root2"},
 		Err:   nil,
 		RunScriptRes: map[string]any{
-			"task_id":  "task-123",
-			"status":   "running",
+			"task_id":   "task-123",
+			"status":    "running",
 			"script_id": "test-script-1",
 		},
 	}

@@ -219,65 +219,6 @@ func GetToolSchemas() []ToolWithSchema {
 				"required": []string{"note_id"},
 			},
 		},
-		// Multi-repo management tools
-		{
-			Name:        "list_note_repos",
-			Description: "List all configured notes repositories with their info. Shows which repo is currently active and note counts.",
-			InputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
-			},
-		},
-		{
-			Name:        "add_note_repo",
-			Description: "Add a new notes repository. The repo must be a directory containing markdown notes.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"id": map[string]any{
-						"type":        "string",
-						"description": "Unique identifier for this repo (e.g., 'work', 'personal')",
-					},
-					"name": map[string]any{
-						"type":        "string",
-						"description": "Display name for this repo",
-					},
-					"path": map[string]any{
-						"type":        "string",
-						"description": "Absolute path to the notes directory",
-					},
-				},
-				"required": []string{"id", "name", "path"},
-			},
-		},
-		{
-			Name:        "remove_note_repo",
-			Description: "Remove a notes repository by ID. Cannot remove the last repo.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"id": map[string]any{
-						"type":        "string",
-						"description": "ID of the repo to remove",
-					},
-				},
-				"required": []string{"id"},
-			},
-		},
-		{
-			Name:        "set_current_note_repo",
-			Description: "Switch the active notes repository. All notes operations will use this repo.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"id": map[string]any{
-						"type":        "string",
-						"description": "ID of the repo to activate",
-					},
-				},
-				"required": []string{"id"},
-			},
-		},
 	}
 }
 

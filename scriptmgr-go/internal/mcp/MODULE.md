@@ -32,9 +32,15 @@ This module must not contain:
 
 | Entry point | Role | Notes |
 |---|---|---|
-| `server.go` | protocol surface | MCP server、tool registration、notifications |
-| `router.go` | dynamic tool routing | progressive disclosure、category load / unload |
-| `schema.go` | argument validation | tool schema 与参数校验 |
+| `server.go` | composition + registry wiring | Server 结构、依赖注入（WithAPI/WithNotesAPI）、static tool 注册（schema+handler 单一来源） |
+| `protocol.go` | protocol entry | `initialize` / `tools/list` / `tools/call` 分发，router 是唯一 dispatch owner |
+| `tools_scripts.go` | script tools | `list_scripts` / `run_script` / `search_scripts` |
+| `tools_notes.go` | notes tools | notes repo / sync / list / get |
+| `tools_categories.go` | category tools | `list_categories` / `load_category` / `unload_category` |
+| `tools_tasks.go` | task tools + wait | `get_task_result`（真实可取消轮询等待）/ `read_log` |
+| `notifications.go` | notifications | task completion 广播 |
+| `router.go` | dynamic tool routing | progressive disclosure、category load / unload、schema+handler runtime registry |
+| `schema.go` | schema source + validation | static tool schema 单一来源 `GetToolSchemas()` 与参数校验 |
 | `transport/*` | transport bridge | stdio 等消息传输实现 |
 
 ## 5. Key Dependencies
@@ -61,10 +67,12 @@ These must remain true after changes:
 - tool 参数必须在 handler 前经过 schema 校验
 - 无 transport 时 notification 应 graceful degrade，而不是破坏执行路径
 - 协议层只做路由和适配，不复制脚本业务逻辑
+- static tool 的 schema 与 handler 从同一来源派生：`schema.go:GetToolSchemas()` 提供 schema，`server.go:registerStaticTools` 配对 handler，router 是唯一 runtime registry（F11）；advertised schema 必须有可调用的 handler
+- `get_task_result(wait=true)` 的等待是真实、可取消的有界轮询（`taskWaiter`），不是只累加计数的空转
 
 ## 8. Common Pitfalls
 
-- 新增 tool handler 但忘记同步 schema
+- 新增 tool 时只加了 schema 或只加了 handler（二者必须同时存在，否则工具被 advertise 却无法调用）
 - 在协议层直接补业务逻辑，绕过 `api` / `executor`
 - 忘记考虑 async task 的结果读取与日志读取配套能力
 
