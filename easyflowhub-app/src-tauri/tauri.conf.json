@@ -60,6 +60,11 @@
       "../../scriptmgr-go/scriptmgr.exe": "scriptmgr.exe"
     },
     "targets": ["nsis", "msi"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis/installer-hooks.nsh"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
