@@ -179,7 +179,10 @@ jobs:
             scriptmgr/scriptmgr.exe
           generate_release_notes: true
           draft: false
-          prerelease: true
+          # A version with a hyphen (e.g. 0.3.0-beta.1) is a pre-release and is
+          # hidden from the in-app updater (releases/latest). A plain X.Y.Z is a
+          # formal release and becomes the updater target.
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
