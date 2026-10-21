@@ -57,6 +57,13 @@ describe('DownloadsPanel', () => {
     expect(downloadApi.enqueueDownload).not.toHaveBeenCalled();
   });
 
+  it('shows a desktop service message when the browser preview has no native bridge', async () => {
+    vi.mocked(downloadApi.getDownloadSettings).mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'invoke')"));
+    render(<DownloadsPanel />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('下载服务暂不可用，请在桌面应用中打开 EasyFlowHub。');
+  });
+
   it('enqueues a valid URL and renders it in the queue', async () => {
     render(<DownloadsPanel />);
     await screen.findByText('暂无下载，粘贴 URL 后加入队列。');

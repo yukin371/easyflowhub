@@ -1,6 +1,6 @@
 # Hooks
 
-> Last updated: 2026-10-20
+> Last updated: 2026-10-21
 
 ## Responsibility
 
@@ -12,6 +12,7 @@
 - `useNotesArchive` (Phase C) owns the manager notes-archive list + edit session: list loading, open/close editor with the stale-navigation guard (flush + `invalidateSaveSession` on switch), draft editing with optimistic list updates, backup wiring, and archive CRUD (create / trash / batch trash / pin / rename). `components/manager/notes/NotesArchivePanel` keeps view state (search, tag filter, view mode, multi-select) and window interactions; `NotesPanel` is only the Inbox/Archive tab shell.
 - `useTodoGroups` (Phase C) is the shared todo grouping use case: it memoizes `lib/todoParser.groupTodosForDisplay` and the pending/completed split that `TodoPanel` and `TodoCardPage` previously duplicated. Display ordering stays in the parser; no state, no writes.
 - `useTodoEditSession` (Phase C) is the shared todo toggle/edit session: editing id, draft text, per-todo saving flag, and write-failure surfacing. Writes still delegate to `useTodos` (F05). `keepEditOpenOnFailure` expresses the panel/card difference (manager panel always exits edit; floating card keeps the draft for in-place retry).
+- `useQuickNoteShortcuts` (v0.2.0 release check) owns the quick-note window's global keydown map — undo / redo, note switcher, always-on-top, Escape and Ctrl+D close, ghost mode and the tools panel — including their precedence. `QuickNotePage` passes callbacks and keeps only state + rendering; window commands go through `lib/tauri/window.ts`.
 
 ## Todo write safety (F05)
 

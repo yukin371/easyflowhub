@@ -251,6 +251,36 @@ describe('LauncherPanel', () => {
     expect(screen.queryByText(/已执行/)).not.toBeInTheDocument();
   });
 
+  it('翻译设置 hint 显示“去设置”并调用导航回调', async () => {
+    const onOpenTranslationSettings = vi.fn().mockResolvedValue(undefined);
+    renderPanel({
+      onExecute: vi.fn().mockResolvedValue({
+        ok: false,
+        status: 'error',
+        message: '请先在设置中填写 Relay 可用的模型名称。',
+        hint: 'translation-settings',
+      }),
+      onOpenTranslationSettings,
+    });
+
+    fireEvent.click(screen.getByRole('option', { name: actions[0].title }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('请先在设置中填写');
+    fireEvent.click(within(alert).getByRole('button', { name: '去设置' }));
+    await waitFor(() => expect(onOpenTranslationSettings).toHaveBeenCalledTimes(1));
+  });
+
+  it('普通执行错误不显示设置跳转按钮', async () => {
+    renderPanel({
+      onExecute: vi.fn().mockResolvedValue({ ok: false, status: 'error', message: 'Relay 尚未启动' }),
+      onOpenTranslationSettings: vi.fn(),
+    });
+
+    fireEvent.click(screen.getByRole('option', { name: actions[0].title }));
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).queryByRole('button', { name: '去设置' })).not.toBeInTheDocument();
+  });
+
   it('执行器返回 cancelled 时给出简洁反馈', async () => {
     renderPanel({ onExecute: vi.fn().mockResolvedValue({ ok: false, status: 'cancelled', error: 'AbortError' }) });
     fireEvent.click(screen.getByRole('option', { name: actions[0].title }));

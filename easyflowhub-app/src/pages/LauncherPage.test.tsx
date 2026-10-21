@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { emitTo, listen } from '@tauri-apps/api/event';
 import { LauncherPage } from './LauncherPage';
 import { translateText } from '../features/translation';
 import { actionRegistry } from '../features/actions';
@@ -10,7 +10,7 @@ import { DEFAULT_SETTINGS } from '../types/settings';
 import { describeScript, listScripts, runScript } from '../lib/tauri/scriptmgr';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => vi.fn()) }));
+vi.mock('@tauri-apps/api/event', () => ({ emitTo: vi.fn(), listen: vi.fn(async () => vi.fn()) }));
 vi.mock('../lib/tauri/clipboard', () => ({
   readTextWithFallback: vi.fn(async () => navigator.clipboard?.readText?.() ?? ''),
   copyTextWithFallback: vi.fn(async (text: string) => navigator.clipboard?.writeText?.(text)),
@@ -23,6 +23,7 @@ vi.mock('../lib/tauri/scriptmgr', () => ({
 vi.mock('../features/translation', () => ({ translateText: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke);
+const emitToMock = vi.mocked(emitTo);
 
 describe('LauncherPage native window interactions', () => {
   beforeEach(() => {
@@ -33,6 +34,7 @@ describe('LauncherPage native window interactions', () => {
     vi.mocked(runScript).mockReset();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: vi.fn(async () => ''), writeText: vi.fn(async () => undefined) } });
     invokeMock.mockReset();
+    emitToMock.mockReset().mockResolvedValue(undefined);
     vi.mocked(listen).mockClear();
     invokeMock.mockImplementation(async (command) => {
       if (command === 'get_launcher_always_on_top') return false;
@@ -211,6 +213,27 @@ describe('LauncherPage native window interactions', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('设置 → 翻译');
     expect(translateText).not.toHaveBeenCalled();
     expect(invokeMock.mock.calls.some(([command]) => command === 'capture_inbox_item')).toBe(false);
+  });
+
+  it('未配置模型可点击“去设置”打开 Manager 的翻译设置分区', async () => {
+    vi.mocked(navigator.clipboard.readText).mockResolvedValue('hello');
+    invokeMock.mockImplementation(async (command) => {
+      if (command === 'get_launcher_always_on_top') return false;
+      if (command === 'get_settings') return { ok: true, settings: DEFAULT_SETTINGS };
+      return undefined;
+    });
+
+    render(<LauncherPage />);
+    fireEvent.click(await screen.findByRole('option', { name: '翻译文本' }));
+    const alert = await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: '去设置' }));
+
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('hide_launcher_window'));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('show_manager_window'));
+    expect(emitToMock).toHaveBeenCalledWith('manager', 'easyflowhub:navigate-to-settings', {
+      section: 'translation',
+    });
+    expect(alert).toHaveTextContent('设置 → 翻译');
   });
 
   it('翻译失败显示错误，可重试且不会自动写入收集箱', async () => {

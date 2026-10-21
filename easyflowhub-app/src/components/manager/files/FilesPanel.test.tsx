@@ -109,6 +109,13 @@ describe('FilesPanel', () => {
     expect(await screen.findByPlaceholderText('输入名称或路径，自动搜索')).toBeEnabled();
   });
 
+  it('shows a desktop service message when the browser preview has no native bridge', async () => {
+    statusMock.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'invoke')"));
+    render(<FilesPanel />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('文件服务暂不可用，请在桌面应用中打开 EasyFlowHub。');
+  });
+
   it('searches and previews a result, passing the result generation to path actions', async () => {
     statusMock.mockResolvedValue(rootedStatus);
     recentMock.mockResolvedValue(response);

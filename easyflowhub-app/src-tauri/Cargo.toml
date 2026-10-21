@@ -1,6 +1,6 @@
 [package]
 name = "easyflowhub"
-version = "0.1.1"
+version = "0.2.0"
 description = "Desktop productivity hub - Notes, Todos, Scripts & more"
 authors = ["yukin"]
 edition = "2021"

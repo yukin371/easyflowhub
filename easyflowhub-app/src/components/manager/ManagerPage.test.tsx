@@ -9,6 +9,11 @@ import {
   MANAGER_OPEN_EXTENSION_EVENT,
   type ManagerExtensionNavigationDetail,
 } from './shared/extensionNavigation';
+import {
+  MANAGER_NAVIGATE_TO_SETTINGS_EVENT,
+  MANAGER_OPEN_SETTINGS_SECTION_EVENT,
+  type ManagerSettingsNavigationDetail,
+} from '../../lib/tauri/manager';
 import { ManagerPage } from './ManagerPage';
 
 vi.mock('../../lib/api/scriptmgr', () => ({
@@ -21,10 +26,21 @@ vi.mock('../../modules/runtime', () => ({
   useEnabledModules: vi.fn(),
 }));
 
+const windowState = vi.hoisted(() => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  return {
+    listeners,
+    listen: vi.fn(async (event: string, handler: (event: unknown) => void) => {
+      listeners.set(event, handler);
+      return () => listeners.delete(event);
+    }),
+  };
+});
+
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: vi.fn(() => ({
     onFocusChanged: vi.fn(async () => () => {}),
-    listen: vi.fn(async () => () => {}),
+    listen: windowState.listen,
   })),
 }));
 
@@ -75,6 +91,7 @@ const contributionsResponse: ExtensionContributionsResponse = {
 
 describe('ManagerPage', () => {
   beforeEach(() => {
+    windowState.listeners.clear();
     useEnabledModulesMock.mockReturnValue(enabledModules);
     contributionsMock.mockResolvedValue(contributionsResponse);
   });
@@ -106,6 +123,33 @@ describe('ManagerPage', () => {
     });
 
     window.removeEventListener(MANAGER_OPEN_EXTENSION_EVENT, detailHandler);
+  });
+
+  it('收到跨窗口设置导航后切换 Manager 并转发翻译分区', async () => {
+    const settingsModule: FeatureModule = {
+      id: 'settings',
+      name: '设置',
+      icon: '⚙',
+      caption: 'Settings',
+      defaultEnabled: true,
+      component: () => <div>Settings panel</div>,
+    };
+    useEnabledModulesMock.mockReturnValue([...enabledModules, settingsModule]);
+    const detailHandler = vi.fn<(event: Event) => void>();
+    window.addEventListener(MANAGER_OPEN_SETTINGS_SECTION_EVENT, detailHandler);
+
+    render(<ManagerPage />);
+    await waitFor(() => expect(windowState.listeners.has(MANAGER_NAVIGATE_TO_SETTINGS_EVENT)).toBe(true));
+    windowState.listeners.get(MANAGER_NAVIGATE_TO_SETTINGS_EVENT)?.({
+      payload: { section: 'translation' },
+    } satisfies { payload: ManagerSettingsNavigationDetail });
+
+    expect(await screen.findByText('Settings panel')).toBeInTheDocument();
+    await waitFor(() => expect(detailHandler).toHaveBeenCalledTimes(1));
+    const [event] = detailHandler.mock.calls[0] ?? [];
+    expect((event as CustomEvent<ManagerSettingsNavigationDetail>).detail).toEqual({ section: 'translation' });
+
+    window.removeEventListener(MANAGER_OPEN_SETTINGS_SECTION_EVENT, detailHandler);
   });
 
   it('面板渲染异常时保留侧边栏并给出可恢复的错误提示', async () => {

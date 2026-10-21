@@ -13,7 +13,7 @@
 - Primary users: `个人效率用户优先；开发者和本仓库维护者作为高级集成用户`
 - Product layers: `Hub + Launcher + Manager`
 - Capability layers: `Capture（捕获） + Act（执行） + Flow（编排）`
-- Current phase: `0.1.1 包线上的 v0.2.0 功能实现与自动化验证；Windows 打包态人工 smoke 待回填；v1.x 保留长期发布治理线`
+- Current phase: `v0.2.0 已于 2026-10-21 发布；Windows 打包态人工 smoke 项作为 v0.2.x follow-up 回填；v1.x 保留长期发布治理线`
 
 ### 产品方向
 
@@ -29,7 +29,7 @@ EasyFlowHub 的产品主入口不是一组彼此独立的笔记、待办和脚�
 - **Act**：执行脚本、打开应用或链接、处理文本和文件，并把结果写回剪贴板、文件、笔记或通知。
 - **Flow**：将多个动作串成可复用流程，逐步加入参数传递、条件、重试、取消和输出路由。
 
-- **v0.2.0**：在当前 `0.1.1` 包版本线上推进截屏、翻译、Inbox 捕获、文件检索、资源下载、录音和录音后转写，并以 Windows-first 的毛玻璃工作空间统一体验。
+- **v0.2.0（已发布）**：截屏、翻译、Inbox 捕获、文件检索、资源下载、录音和录音后转写已进入 `0.2.0` 包，并以 Windows-first 的毛玻璃工作空间统一体验；Voice / 转写仍按 `v0.2.x` 收口。
 - v1.0.0 文档仍作为既有发布治理基线，负责 quick note、notes manager、todo、scripts、settings 和 Windows 行为的稳定闭环；v1.1.0 作为较长期的 Action Launcher 与高级集成路线保留。
 
 ## 2. Stack

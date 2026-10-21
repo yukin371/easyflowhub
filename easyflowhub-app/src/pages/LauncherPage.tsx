@@ -6,6 +6,7 @@ import { getSettings } from '../lib/tauri/settings';
 import { captureInboxItem } from '../lib/tauri/inbox';
 import { copyTextWithFallback, readTextWithFallback } from '../lib/tauri/clipboard';
 import { describeScript, listScripts, runScript } from '../lib/tauri/scriptmgr';
+import { openManagerSettings } from '../lib/tauri/manager';
 import {
   getConfiguredSnowShotPath,
   launchSnowShot,
@@ -215,11 +216,23 @@ export function LauncherPage() {
       try {
         settings = await getSettings();
       } catch {
-        throw new Error('无法读取翻译设置，请在桌面应用的设置中配置目标语言和模型。');
+        return {
+          ok: false,
+          status: 'error',
+          message: '无法读取翻译设置，请在桌面应用的设置中配置目标语言和模型。',
+          hint: 'translation-settings' as const,
+        };
       }
       if (invocationContext.signal?.aborted) return cancelled();
       const config = settings.translation;
-      if (!config?.model?.trim()) throw new Error('请先在设置 → 翻译中填写 Relay 可用的模型名称。');
+      if (!config?.model?.trim()) {
+        return {
+          ok: false,
+          status: 'error',
+          message: '请先在设置 → 翻译中填写 Relay 可用的模型名称。',
+          hint: 'translation-settings' as const,
+        };
+      }
       const result = await translateText({
         text, targetLanguage: config.target_language, model: config.model.trim(), signal: invocationContext.signal,
       });
@@ -322,6 +335,11 @@ export function LauncherPage() {
     await replaceSelectedText(output.text);
   }, []);
 
+  const openTranslationSettings = useCallback(async () => {
+    await hideLauncherWindow();
+    await openManagerSettings('translation');
+  }, []);
+
   const toggleFavorite = useCallback((launcherAction: LauncherAction) => {
     actionRegistry.toggleFavorite(launcherAction.id);
     setActions(actionRegistry.getAll());
@@ -379,6 +397,7 @@ export function LauncherPage() {
       alwaysOnTop={alwaysOnTop}
       onToggleAlwaysOnTop={toggleAlwaysOnTop}
       onStartDragging={startDragging}
+      onOpenTranslationSettings={openTranslationSettings}
     />
   );
 }

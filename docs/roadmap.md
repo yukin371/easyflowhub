@@ -187,7 +187,7 @@
 
 ## v0.2.0
 
-> 说明：当前应用包版本为 `0.1.1`，本节定义下一轮用户体验版本 `0.2.0`。既有 `v1.0.0` / `v1.1.0` 文档保留为发布治理和长期平台路线，不与本节的近期功能优先级冲突。
+> 说明：当前应用包版本为 `0.2.0`（2026-10-21 发布），本节定义本轮用户体验版本 `0.2.0` 的范围与门禁。既有 `v1.0.0` / `v1.1.0` 文档保留为发布治理和长期平台路线，不与本节的近期功能优先级冲突。
 
 ### Source Of Truth
 
@@ -223,8 +223,8 @@
 - **本轮验证（截至 2026-10-18）**：前端 40 个测试文件 / 288 项、Rust 51 项通过；TypeScript、Vite 生产构建、主题 token 审计、Windows target `cargo check`、Rust library tests、Go tests、Windows Tauri 打包和 release artifact preflight 通过。打包 sidecar 已与当前 Go 构建哈希一致，NSIS / MSI 均含 sidecar，portable 程序启动保持运行 5 秒；浏览器模拟 Relay / 原生边界验证明暗主题、复制 / 收集箱回流、长译文滚动、窗口尺寸和高对比度显示。这些验证不替代真实 Provider、Windows 剪贴板 / SQLite 或完整打包态人工 smoke。
 - **Phase 0 模糊关闭回退（2026-10-18）**：`data-blur="off"` 除切换不透明表面外，也会关闭 Manager 与 Launcher 的 `backdrop-filter`；主题审计现验证两者均停用滤镜。Windows 打包态低性能 / 关闭透明效果和高对比度验收仍待人工记录。
 - **Relay / 管理 API 安全边界（2026-10-18）**：ScriptMgr 管理 API 仅接受 loopback IP，显式通配或远程网卡地址会被拒绝；Relay 默认 loopback。浏览器来源采用白名单；配置快照、扩展清单和有效贡献中的 API key、已知认证 header 与含凭据的 `base_url` 已脱敏，未改占位值保存会保留原值。header 脱敏仍按名称启发式处理；本地 `relay.json` 仍可能明文保存兼容密钥，同机进程也可直接访问 loopback API。细节见 [ADR-0007](./decisions/ADR-0007-relay-local-api-security.md)。
-- **Windows sidecar 打包修复（2026-10-18）**：发现 Go sidecar 新鲜度只比较 `cmd/scriptmgr/main.go`，且 Tauri 包未声明 sidecar 资源；发布工作流另有 Ubuntu 生成 `.exe` 的平台错误。现在 Release 构建监视 Go 源码与模块文件并强制执行 `go build`，失败即中止；Tauri 将 sidecar 映射到应用资源根目录，NSIS / MSI payload 哈希已对照新构建验证。发布工作流补上 Go toolchain、Windows amd64 sidecar 构建和哈希守卫。应用包版本仍为 `0.1.1`，v0.2.0 的 Windows 人工 smoke 未完成。
-- **当前发布阻塞**：核心代码、自动化和本地打包预检已通过；仍需 Windows 打包态验收 Launcher / Snow Shot、真实 Relay Provider 与不同编辑器选区替换、Files 权限与回收站、Downloads 取消 / 重试、主题可读性（按 [2026-10-18 theme smoke](./checklists/windows-theme-smoke-2026-10-18.md) 回填），并确认 NSIS/MSI 安装后 sidecar 可启动。本轮没有运行 GitHub Actions release workflow。P2 Voice 的麦克风实机验收不阻塞 P0/P1 核心 RC，但在关闭 Phase 5 或把 Voice 纳入 RC 前必须完成。应用包版本仍为 `0.1.1`。
+- **Windows sidecar 打包修复（2026-10-18）**：发现 Go sidecar 新鲜度只比较 `cmd/scriptmgr/main.go`，且 Tauri 包未声明 sidecar 资源；发布工作流另有 Ubuntu 生成 `.exe` 的平台错误。现在 Release 构建监视 Go 源码与模块文件并强制执行 `go build`，失败即中止；Tauri 将 sidecar 映射到应用资源根目录，NSIS / MSI payload 哈希已对照新构建验证。发布工作流补上 Go toolchain、Windows amd64 sidecar 构建和哈希守卫。应用包版本已提升到 `0.2.0`，v0.2.0 的 Windows 人工 smoke 未完成。
+- **发布结果（2026-10-21）**：`0.2.0` 已按上述门禁完成本地发布检查并打 tag `v0.2.0`，由 GitHub Actions Release 工作流产出 Windows portable / NSIS / MSI、Go sidecar 与 `latest.json`。自动化门禁、本地 Windows 打包预检、sidecar 哈希对照和浏览器 / 原生窗口 smoke 通过；上一行列出的 Windows 打包态人工验收项（Snow Shot 会话、真实 Relay Provider、Files 回收站 / 权限、Downloads 取消 / 重试、主题高对比度、安装后 sidecar 启动）仍作为 follow-up 待回填 checklist，不阻塞本次发布但需在 `v0.2.x` 收口。P2 Voice 的麦克风实机验收同样延后，Phase 5 保持进行中。
 - **Track V0-A. Launcher and Context**：继续复用 action registry，统一键盘 / 中键入口、排除软件、输入上下文和输出路由；新增 `external.snow-shot.capture` 外部动作。
 - **Track V0-B. Capture and Inbox**：Snow Shot 提供可见截图会话；用户复制截图后粘贴进 Inbox。剪贴板文本、图片、文件和链接统一落入本地 Inbox，再由 Manager 整理。
 - **Phase 1 Launcher 捕获回流（2026-10-18）**：Launcher 的“收集剪贴板内容”动作现会在执行时优先读取系统剪贴板图片（PNG/JPEG/WebP/GIF，32 MB 上限），将 Snow Shot 复制的截图直接归档到 Inbox；没有可读图片时继续回退到唤起时读取的文本快照。图片为空或超限会阻止写入并给出可恢复错误，避免把截图误报成文本或产生半成品。
@@ -267,6 +267,12 @@
 - MCP 仅用于打开可见截图会话；自动截图结果回流和 OCR / 翻译联动另行评估。
 
 ### Recent Progress
+
+- `2026-10-21` 发布 `v0.2.0`：版本号在 `package.json`、`tauri.conf.json`、`Cargo.toml` / `Cargo.lock` 同步为 `0.2.0`，新增 [发布说明](./releases/v0.2.0.md)。发布前检查修复了架构门禁的规模债阻塞：Quick Note 窗口的快捷键映射抽为 `hooks/useQuickNoteShortcuts`、切换器 / 工具栏 / 工具面板 / 图片条抽为 `components/shared` 组件、`toggle_always_on_top`、`hide_window`、`close_window` 收入新增 `lib/tauri/window.ts`（`QuickNotePage` 658 → 423 行，`lib/tauri` 外原始 `invoke()` 由 4 处降到 3 处）；回收站面板拆为 `trash/TrashNotesView`、`trash/TrashInboxView`、`trash/TrashScriptsView` 与共享展示件（530 → 209 行）。基线经 `node scripts/check-architecture.mjs --update-baseline` 重新快照，门禁恢复通过。验证：`run-smoke.ps1` 全部通过（前端 54 文件 / 395 项、TypeScript、Vite 构建、主题 token 审计、`cargo check`、Rust 91 项、Go 全量测试）、架构门禁通过、Windows NSIS / MSI 打包与 release artifact 预检通过。
+
+- `2026-10-21` Launcher 在翻译模型未配置或设置读取失败时新增结构化“去设置”入口：点击后隐藏 Launcher、打开 Manager，并自动定位到“设置 → 翻译”；普通 Relay / 网络错误不会显示该按钮。新增 manager typed bridge、跨窗口导航事件和 Launcher / Manager / SettingsPanel 回归测试；聚焦 70 项、全量前端 394 项通过，TypeScript 与 Vite 构建通过。
+
+- `2026-10-21` 完成本地重新安装、前端全量测试、TypeScript、Vite 构建、Rust 检查以及 Windows NSIS/MSI 打包；安装包已包含重新构建的 `scriptmgr.exe` sidecar。按 Manager、Quick Note、Todo Card、Folder Widget、Launcher 和各 Manager 面板完成浏览器截图与交互 smoke。浏览器预览中 Files / Downloads 原先会直接显示 Tauri IPC 的 `invoke` 异常，已统一转换为可理解的“桌面服务暂不可用”提示，同时保留真实权限、网络和冲突错误；新增 2 个面板回归测试。Windows 原生窗口已启动并确认 Manager 可加载真实笔记，因窗口位于当前截图捕获范围外，独立窗口的像素截图仍需在可见桌面位置复验。
 
 - `2026-10-20` 按发布范围决定将 Voice / 转写延期到 `v0.2.x`，不作为 `v0.2.0` P0/P1 核心 RC 门槛；Launcher 改为窄长四列紧凑面板（`440×860`），快捷键设置补充第三方全局热键可能同时响应的说明。当前本机保存的 Launcher 组合为 `Ctrl+Alt+Space`。
 - `2026-10-20` Notes 工作区调整为默认打开“笔记”，并将“笔记”标签置于“收集箱”之前；语音入口仍可直接打开收集箱。

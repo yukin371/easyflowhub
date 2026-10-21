@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { copyTextToClipboard } from '../../../lib/tauri/clipboard';
+import { formatNativeError } from '../../../lib/tauri/errors';
 import './FilesPanel.css';
 import {
   clearFileIndex,
@@ -21,12 +22,10 @@ import {
 } from '../../../lib/tauri/fileSearch';
 import type { FileEntry, FilePreview, FileSearchResponse, FileSearchStatus } from '../../../types/fileSearch';
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object' && 'message' in error) return String(error.message);
-  return '文件操作失败，请检查目录权限和文件状态后重试。';
-}
+const FILE_ERROR_MESSAGES = {
+  unavailable: '文件服务暂不可用，请在桌面应用中打开 EasyFlowHub。',
+  fallback: '文件操作失败，请检查目录权限和文件状态后重试。',
+};
 
 function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -112,7 +111,7 @@ export function FilesPanel() {
       setStatus((current) => current ? { ...current, generation: response.generation } : current);
       setError(undefined);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(formatNativeError(caught, FILE_ERROR_MESSAGES));
       setSearchResponse(null);
       setSelectedPath(null);
     } finally {
@@ -126,7 +125,7 @@ export function FilesPanel() {
       await loadStatus();
       setError(undefined);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(formatNativeError(caught, FILE_ERROR_MESSAGES));
     } finally {
       setIsLoading(false);
     }
@@ -153,7 +152,7 @@ export function FilesPanel() {
     void previewFile(selectedPath, generation).then((next) => {
       if (!cancelled) setPreview(next);
     }).catch((caught: unknown) => {
-      if (!cancelled) setPreviewError(errorMessage(caught));
+      if (!cancelled) setPreviewError(formatNativeError(caught, FILE_ERROR_MESSAGES));
     });
     return () => { cancelled = true; };
   }, [generation, selectedPath, status?.root]);
@@ -167,7 +166,7 @@ export function FilesPanel() {
     try {
       await action();
     } catch (caught) {
-      const message = errorMessage(caught);
+      const message = formatNativeError(caught, FILE_ERROR_MESSAGES);
       setError(message);
       // A native file mutation can succeed while its post-operation scan
       // fails, or the result can become stale while the operation is in
@@ -204,7 +203,7 @@ export function FilesPanel() {
     try {
       await action();
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(formatNativeError(caught, FILE_ERROR_MESSAGES));
     } finally {
       globalBusyLock.current = false;
       setGlobalBusy(false);
@@ -224,7 +223,7 @@ export function FilesPanel() {
         setNotice('目录已设置。点击“刷新”建立文件索引。');
       });
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(formatNativeError(caught, FILE_ERROR_MESSAGES));
     }
   };
 
@@ -322,7 +321,7 @@ export function FilesPanel() {
         setSelectedPath(response.entry.path);
       });
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(formatNativeError(caught, FILE_ERROR_MESSAGES));
     }
   };
 

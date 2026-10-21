@@ -15,6 +15,12 @@ import {
   MANAGER_NAVIGATE_TO_EXTENSION_EVENT,
   type ManagerExtensionNavigationDetail,
 } from './shared/extensionNavigation';
+import {
+  MANAGER_NAVIGATE_TO_SETTINGS_EVENT,
+  MANAGER_OPEN_SETTINGS_SECTION_EVENT,
+  type ManagerSettingsNavigationDetail,
+  type ManagerSettingsSection,
+} from '../../lib/tauri/manager';
 
 export const MANAGER_ACTIVATED_EVENT = 'easyflowhub:manager-activated';
 export const MANAGER_OPEN_NOTE_EVENT = 'easyflowhub:open-note';
@@ -28,6 +34,7 @@ export function ManagerPage() {
   >([]);
   const [pendingExtensionNavigation, setPendingExtensionNavigation] = useState<string | null>(null);
   const [pendingNoteNavigation, setPendingNoteNavigation] = useState<string | null>(null);
+  const [pendingSettingsSection, setPendingSettingsSection] = useState<ManagerSettingsSection | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -69,6 +76,30 @@ export function ManagerPage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupSettingsNavigationListener = async () => {
+      try {
+        const win = getCurrentWindow();
+        unlisten = await win.listen<ManagerSettingsNavigationDetail>(MANAGER_NAVIGATE_TO_SETTINGS_EVENT, (event) => {
+          const section = event.payload?.section;
+          if (!section) {
+            return;
+          }
+
+          setPendingSettingsSection(section);
+          setActivePanel('settings');
+        });
+      } catch (error) {
+        console.error('Failed to setup manager settings navigation listener:', error);
+      }
+    };
+
+    void setupSettingsNavigationListener();
+    return () => unlisten?.();
   }, []);
 
   // 窗口焦点监听
@@ -205,6 +236,23 @@ export function ManagerPage() {
 
     return () => window.clearTimeout(timer);
   }, [activePanel, pendingExtensionNavigation]);
+
+  useEffect(() => {
+    if (activePanel !== 'settings' || !pendingSettingsSection) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent<ManagerSettingsNavigationDetail>(MANAGER_OPEN_SETTINGS_SECTION_EVENT, {
+          detail: { section: pendingSettingsSection },
+        })
+      );
+      setPendingSettingsSection(null);
+    }, 16);
+
+    return () => window.clearTimeout(timer);
+  }, [activePanel, pendingSettingsSection]);
 
   const handlePanelChange = useCallback((panelId: string) => {
     setActivePanel(panelId);

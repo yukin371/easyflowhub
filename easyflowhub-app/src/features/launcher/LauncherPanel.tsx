@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { isActionTextOutput, type ActionExecutionContext, type ActionHandlerResult, type ActionTextOutput } from '../actions';
+import { isActionTextOutput, type ActionExecutionContext, type ActionHandlerResult, type ActionExecutionHint, type ActionTextOutput } from '../actions';
 import './LauncherPanel.css';
 
 export interface LauncherContext extends ActionExecutionContext {
@@ -45,6 +45,8 @@ export interface LauncherPanelProps {
   alwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void | Promise<void>;
   onStartDragging?: () => void | Promise<void>;
+  /** Opens Manager and focuses the settings section requested by an action. */
+  onOpenTranslationSettings?: () => void | Promise<void>;
   /** Changes when the native window is shown while this component stays mounted. */
   activationToken?: number;
   /** Changes when the native window becomes focused without resetting search state. */
@@ -81,7 +83,7 @@ function LauncherGlyph({ name }: { name: Glyph }) {
 export function LauncherPanel({
   actions, onExecute, onClose, context, recentActionIds = [], favoriteActionIds = [], error, interactionError,
   contextLabel = '当前上下文', className = '', onToggleFavorite, alwaysOnTop = false,
-  onToggleAlwaysOnTop, onStartDragging, onCopyResult, onSaveResult, onReplaceResult, onCancelExecution, activationToken = 0, focusToken = 0,
+  onToggleAlwaysOnTop, onStartDragging, onOpenTranslationSettings, onCopyResult, onSaveResult, onReplaceResult, onCancelExecution, activationToken = 0, focusToken = 0,
 }: LauncherPanelProps) {
   const searchId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -99,12 +101,14 @@ export function LauncherPanel({
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionCancellable, setExecutionCancellable] = useState(false);
   const [executionError, setExecutionError] = useState<string>();
+  const [executionHint, setExecutionHint] = useState<ActionExecutionHint>();
   const [executionMessage, setExecutionMessage] = useState<string>();
   const [textOutput, setTextOutput] = useState<ActionTextOutput>();
   const [resultTitle, setResultTitle] = useState('');
   const [resultOperation, setResultOperation] = useState<'copy' | 'save' | 'replace'>();
   const [resultSaved, setResultSaved] = useState(false);
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
+  const [settingsNavigationPending, setSettingsNavigationPending] = useState(false);
   const recentSet = useMemo(() => new Set(recentActionIds), [recentActionIds]);
   const favoriteSet = useMemo(() => new Set(favoriteActionIds), [favoriteActionIds]);
 
@@ -141,7 +145,9 @@ export function LauncherPanel({
     setFilter('all');
     setActiveIndex(0);
     setExecutionError(undefined);
+    setExecutionHint(undefined);
     setExecutionMessage(undefined);
+    setSettingsNavigationPending(false);
     setErrorDetailsOpen(false);
     composingRef.current = false;
     focusSearch();
@@ -169,6 +175,7 @@ export function LauncherPanel({
     const generation = ++executionGeneration.current;
     executingRef.current = true;
     setExecutionError(undefined);
+    setExecutionHint(undefined);
     setExecutionMessage(undefined);
     setExecutionCancellable(action.cancellable === true);
     setIsExecuting(true);
@@ -179,6 +186,7 @@ export function LauncherPanel({
         setExecutionMessage('已取消');
       } else if (result && !result.ok) {
         setExecutionError(result.error || result.message || '动作执行失败，请稍后重试');
+        setExecutionHint(result.hint);
       } else if (result && isActionTextOutput(result.output)) {
         setTextOutput(result.output);
         setResultTitle(result.output.title || action.title);
@@ -189,7 +197,10 @@ export function LauncherPanel({
     } catch (caught) {
       if (generation !== executionGeneration.current) return;
       if (caught instanceof Error && caught.name === 'AbortError') setExecutionMessage('已取消');
-      else setExecutionError(caught instanceof Error && caught.message ? caught.message : '动作执行失败，请稍后重试');
+      else {
+        setExecutionHint(undefined);
+        setExecutionError(caught instanceof Error && caught.message ? caught.message : '动作执行失败，请稍后重试');
+      }
     } finally {
       if (generation === executionGeneration.current) {
         executingRef.current = false;
@@ -206,6 +217,7 @@ export function LauncherPanel({
     setIsExecuting(false);
     setExecutionCancellable(false);
     setExecutionError(undefined);
+    setExecutionHint(undefined);
     setExecutionMessage('已取消');
     onCancelExecution();
   };
@@ -217,6 +229,7 @@ export function LauncherPanel({
     operatingRef.current = false;
     setIsExecuting(false);
     setExecutionCancellable(false);
+    setExecutionHint(undefined);
     setResultOperation(undefined);
     onClose();
   };
@@ -228,6 +241,7 @@ export function LauncherPanel({
     operatingRef.current = true;
     setResultOperation(operation);
     setExecutionError(undefined);
+    setExecutionHint(undefined);
     setExecutionMessage(undefined);
     try {
       await callback(textOutput);
@@ -325,6 +339,9 @@ export function LauncherPanel({
 
   const activeId = visibleActions[activeIndex] ? `launcher-action-${visibleActions[activeIndex].id}` : undefined;
   const displayError = interactionError || executionError || (errorDetailsOpen ? error : undefined);
+  const canOpenTranslationSettings = executionHint === 'translation-settings'
+    && Boolean(onOpenTranslationSettings)
+    && displayError === executionError;
   const hasContext = Boolean(context && Object.values(context).some(Boolean));
   let actionOffset = 0;
 
@@ -391,7 +408,27 @@ export function LauncherPanel({
             onClick={() => { setQuery(''); setSearchOpen(false); setActiveIndex(0); focusSearch(); }}><LauncherGlyph name="close" /></button>
         </div> : null}
 
-        {displayError ? <div className="launcher-feedback launcher-feedback--error" role="alert"><LauncherGlyph name="warning" />{displayError}</div> : null}
+        {displayError ? <div className="launcher-feedback launcher-feedback--error" role="alert">
+          <LauncherGlyph name="warning" />
+          <span className="launcher-feedback-message">{displayError}</span>
+          {canOpenTranslationSettings ? <button
+            type="button"
+            className="launcher-feedback-action"
+            disabled={settingsNavigationPending}
+            onClick={() => void (async () => {
+              if (!onOpenTranslationSettings || settingsNavigationPending) return;
+              setSettingsNavigationPending(true);
+              try {
+                await onOpenTranslationSettings();
+              } catch (caught) {
+                setExecutionHint(undefined);
+                setExecutionError(caught instanceof Error && caught.message ? caught.message : '无法打开翻译设置，请稍后重试。');
+              } finally {
+                setSettingsNavigationPending(false);
+              }
+            })()}
+          >去设置</button> : null}
+        </div> : null}
         {executionMessage && !displayError ? <div className="launcher-feedback launcher-feedback--success" role="status">✓ {executionMessage}</div> : null}
 
         {textOutput ? <div className="launcher-output" ref={outputRef} tabIndex={0} role="region" aria-label={resultTitle}>

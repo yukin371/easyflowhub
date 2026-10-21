@@ -139,6 +139,9 @@ export interface ActionExecutionContext extends ActionContextSnapshot {
 export type ActionExecutionStatus = 'success' | 'error' | 'cancelled' | 'unavailable';
 export type ActionExecutionState = 'running' | ActionExecutionStatus;
 
+/** Typed follow-up affordances surfaced by the Launcher after an action fails. */
+export type ActionExecutionHint = 'translation-settings';
+
 /** Portable text result that Launcher can copy or collect without knowing the executor. */
 export interface ActionTextOutput {
   kind: 'text';
@@ -195,6 +198,7 @@ export interface ActionHandlerResult {
   message?: string;
   error?: string;
   retryable?: boolean;
+  hint?: ActionExecutionHint;
 }
 
 /** Normalized result returned by ActionRegistry.execute. */

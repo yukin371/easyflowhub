@@ -40,6 +40,10 @@ function useWindowType(): WindowType {
         setWindowType('launcher');
         return;
       }
+      if (forcedWindow === 'todo-card') {
+        setWindowType('todo-card');
+        return;
+      }
 
       try {
         const win = await getCurrentWindow();

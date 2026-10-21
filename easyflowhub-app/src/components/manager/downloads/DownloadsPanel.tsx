@@ -16,6 +16,7 @@ import {
 } from '../../../lib/tauri/download';
 import { captureInboxItem } from '../../../lib/tauri/inbox';
 import { copyTextToClipboard } from '../../../lib/tauri/clipboard';
+import { formatNativeError } from '../../../lib/tauri/errors';
 import type { DownloadConflictPolicy, DownloadSettings, DownloadStatus, DownloadState } from '../../../types/download';
 
 const STATUS_LABEL: Record<DownloadState, string> = {
@@ -27,12 +28,10 @@ const STATUS_LABEL: Record<DownloadState, string> = {
   cancelled: '已取消',
 };
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object' && 'message' in error) return String(error.message);
-  return '下载操作失败，请检查网络、目录权限和文件状态后重试。';
-}
+const DOWNLOAD_ERROR_MESSAGES = {
+  unavailable: '下载服务暂不可用，请在桌面应用中打开 EasyFlowHub。',
+  fallback: '下载操作失败，请检查网络、目录权限和文件状态后重试。',
+};
 
 function formatBytes(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '未知大小';
@@ -75,7 +74,7 @@ export function DownloadsPanel() {
       // Manual refresh and the polling loop share this path.  Surface a
       // native queue error in the panel instead of leaving an unhandled
       // promise rejection in the window console.
-      setError(errorMessage(caught));
+      setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES));
     }
   }, []);
 
@@ -85,7 +84,7 @@ export function DownloadsPanel() {
       if (disposed) return;
       setSettings(nextSettings);
       setItems(nextItems);
-    }).catch((caught) => { if (!disposed) setError(errorMessage(caught)); })
+    }).catch((caught) => { if (!disposed) setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); })
       .finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
   }, []);
@@ -103,7 +102,7 @@ export function DownloadsPanel() {
       const next = await updateDownloadSettings({ ...settings, ...patch });
       setSettings(next);
       setNotice('下载设置已保存。');
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
   };
 
   const chooseDirectory = async () => {
@@ -111,7 +110,7 @@ export function DownloadsPanel() {
       const selected = await open({ directory: true, multiple: false, title: '选择下载目录' });
       if (!selected || Array.isArray(selected)) return;
       await updateSetting({ targetDir: selected });
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
   };
 
   const submit = async () => {
@@ -120,7 +119,7 @@ export function DownloadsPanel() {
     try {
       const parsed = new URL(trimmedUrl);
       if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('仅支持 http 和 https URL。');
-    } catch (caught) { setError(errorMessage(caught)); return; }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); return; }
     if (settings.conflictPolicy === 'overwrite' && !window.confirm('覆盖策略会替换同名文件，确定继续吗？')) return;
     setError(undefined); setNotice(undefined);
     try {
@@ -132,7 +131,7 @@ export function DownloadsPanel() {
       });
       setItems((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setUrl(''); setFileName(''); setNotice('已加入下载队列。');
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
   };
 
   const runStatusAction = async (id: string, action: (id: string) => Promise<DownloadStatus>) => {
@@ -141,7 +140,7 @@ export function DownloadsPanel() {
     try {
       const next = await action(id);
       setItems((current) => current.map((item) => item.id === id ? next : item));
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
     finally { setBusy((current) => { const next = new Set(current); next.delete(id); return next; }); }
   };
 
@@ -149,7 +148,7 @@ export function DownloadsPanel() {
     if (busy.has(id)) return;
     setBusy((current) => new Set(current).add(id)); setError(undefined); setNotice(undefined);
     try { await action(id); setNotice('操作已完成。'); }
-    catch (caught) { setError(errorMessage(caught)); }
+    catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
     finally { setBusy((current) => { const next = new Set(current); next.delete(id); return next; }); }
   };
 
@@ -158,7 +157,7 @@ export function DownloadsPanel() {
       const path = await copyDownloadPath(id);
       await copyTextToClipboard(path);
       setNotice('路径已复制。');
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
   };
 
   const captureDownload = async (id: string) => {
@@ -168,7 +167,7 @@ export function DownloadsPanel() {
       const path = await copyDownloadPath(id);
       await captureInboxItem({ filePaths: [path], source: 'download', context: 'download' });
       setNotice('已加入收集箱。');
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) { setError(formatNativeError(caught, DOWNLOAD_ERROR_MESSAGES)); }
     finally { setBusy((current) => { const next = new Set(current); next.delete(id); return next; }); }
   };
 

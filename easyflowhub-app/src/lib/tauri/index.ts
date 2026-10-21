@@ -14,3 +14,5 @@ export * from './clipboard';
 export * from './voice';
 export * from './transcription';
 export * from './logging';
+export * from './manager';
+export * from './window';

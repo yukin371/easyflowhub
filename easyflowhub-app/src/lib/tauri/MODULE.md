@@ -2,8 +2,8 @@
 
 > status: active
 > owner: EasyFlowHub frontend maintainers
-> last_verified: 2026-10-19
-> verified_against: working tree (inbox delete + resource folder bridge)
+> last_verified: 2026-10-21
+> verified_against: working tree (window bridge + 0.2.0 release check)
 
 ## 1. Responsibility
 
@@ -36,11 +36,14 @@ This module must not contain:
 | `scriptmgr.ts` | script runtime bridge | 列表、详情、执行、MCP API |
 | `settings.ts` / `appearance.ts` / `widget.ts` | native feature bridge | 设置、窗口外观、桌面小组件 |
 | `launcher.ts` | launcher bridge | 全局入口配置、前台排除、拖动/隐藏/置顶、唤起 / 聚焦 / 隐藏事件、Snow Shot 截图会话调用与安装页 |
+| `manager.ts` | manager window bridge | 显示 / 聚焦管理中心并向指定设置分区发送跨窗口导航事件 |
+| `window.ts` | window bridge | 当前窗口的置顶切换、隐藏与销毁（Quick Note / Launcher 之外的通用窗口命令） |
 | `fileSearch.ts` | file search bridge | 受控单根目录索引、搜索 / 预览 / 最近文件，以及带 generation 校验的文件操作 |
 | `clipboard.ts` | clipboard bridge | 通过 native shell 读写系统文本剪贴板；路径复制使用严格 native 写入，Launcher 上下文和结果复制使用 native-first 浏览器回退 |
 | `voice.ts` | voice capture bridge | 录音会话生命周期、状态轮询、打开录音与麦克风隐私设置 |
 | `transcription.ts` | transcription bridge | 按 Inbox item 转写音频附件与读取已有转写文本；音频字节与 Provider 请求都在 native 侧 |
 | `logging.ts` | diagnostics bridge | 读取 / 清空内存日志、切换开发者模式、打开日志目录 |
+| `errors.ts` | error formatting | 识别浏览器预览缺少 Tauri IPC 的错误，并保留真实 native 错误 |
 
 ## 5. Key Dependencies
 
@@ -76,6 +79,7 @@ These must remain true after changes:
 - 在组件中临时写新 `invoke()`，后续导致同类命令散落
 - 返回值 shape 变化但未同步更新 `src/types`
 - 路径复制不能在组件中直接依赖 `navigator.clipboard`；统一调用 `clipboard.ts`，以覆盖 Windows 打包态 secure-context 和剪贴板占用错误。Launcher 读取上下文和复制动作也必须通过该 bridge，浏览器回退只用于开发预览。
+- 面板需要把原生命令异常展示给用户时，使用 `errors.ts` 的 `formatNativeError`；仅将浏览器预览中的 IPC 缺失转换为“桌面服务暂不可用”，权限、网络、冲突等真实 native 错误必须保留。
 
 ## 9. Reuse Rules
 

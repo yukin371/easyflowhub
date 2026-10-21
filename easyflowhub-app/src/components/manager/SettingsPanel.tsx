@@ -18,6 +18,10 @@ import { QuickNoteSection } from './settings/QuickNoteSection';
 import { TodoSection } from './settings/TodoSection';
 import { TrashSection } from './settings/TrashSection';
 import { EditorSection } from './settings/EditorSection';
+import {
+  MANAGER_OPEN_SETTINGS_SECTION_EVENT,
+  type ManagerSettingsNavigationDetail,
+} from '../../lib/tauri/manager';
 
 type SettingsSection = 'general' | 'modules' | 'shortcuts' | 'translation' | 'transcription' | 'developer' | 'quickNote' | 'todo' | 'trash' | 'editor';
 
@@ -65,15 +69,26 @@ export function SettingsPanel() {
   }, [reloadAll]);
 
   // 滚动到指定区块
-  const scrollToSection = (section: SettingsSection) => {
+  const scrollToSection = useCallback((section: SettingsSection) => {
     const el = sectionRefs.current[section];
     if (el && scrollContainerRef.current) {
       const container = scrollContainerRef.current;
       const offsetTop = el.offsetTop - container.offsetTop - 16;
-      container.scrollTo({ top: offsetTop, behavior: 'smooth' });
+      container.scrollTo?.({ top: offsetTop, behavior: 'smooth' });
     }
     setActiveSection(section);
-  };
+  }, []);
+
+  useEffect(() => {
+    const handleSettingsNavigation = (event: Event) => {
+      const detail = (event as CustomEvent<ManagerSettingsNavigationDetail>).detail;
+      if (!detail?.section || !sectionRefs.current[detail.section]) return;
+      scrollToSection(detail.section);
+    };
+
+    window.addEventListener(MANAGER_OPEN_SETTINGS_SECTION_EVENT, handleSettingsNavigation as EventListener);
+    return () => window.removeEventListener(MANAGER_OPEN_SETTINGS_SECTION_EVENT, handleSettingsNavigation as EventListener);
+  }, [scrollToSection]);
 
   // 监听滚动更新当前区块
   useEffect(() => {
@@ -109,14 +124,16 @@ export function SettingsPanel() {
           {NAV_ITEMS.map((item) => (
             <button
               key={item.key}
+              type="button"
               onClick={() => scrollToSection(item.key)}
+              aria-current={activeSection === item.key ? 'true' : undefined}
               className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition ${
                 activeSection === item.key
                   ? 'bg-[color:var(--manager-accent-soft)] text-[color:var(--manager-ink-strong)]'
                   : 'text-[color:var(--manager-ink-soft)] hover:bg-[color:var(--manager-panel-strong)] hover:text-[color:var(--manager-ink-strong)]'
               }`}
             >
-              <span className="text-base">{item.icon}</span>
+              <span className="text-base" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
             </button>
           ))}

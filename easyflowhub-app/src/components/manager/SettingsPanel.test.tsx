@@ -7,6 +7,7 @@ import { moduleRegistry, useToggleableModules } from '../../modules/runtime';
 import { isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import type { AppSettings } from '../../types/settings';
 import type { FeatureModule } from '../../modules/runtime';
+import { MANAGER_OPEN_SETTINGS_SECTION_EVENT } from '../../lib/tauri/manager';
 
 vi.mock('../../lib/tauri/settings', () => ({
   getSettings: vi.fn(),
@@ -90,6 +91,20 @@ describe('SettingsPanel', () => {
     expect(useToggleableModulesMock).toHaveBeenCalled();
     expect(screen.getByText('脚本')).toBeInTheDocument();
     expect(screen.getByText('Scripts')).toBeInTheDocument();
+  });
+
+  it('响应 Manager 的设置导航事件并选中翻译分区', async () => {
+    render(<SettingsPanel />);
+
+    const translationNav = (await screen.findAllByRole('button')).find((button) => button.textContent?.includes('翻译'));
+    expect(translationNav).toBeDefined();
+    expect(translationNav).not.toHaveAttribute('aria-current', 'true');
+
+    window.dispatchEvent(new CustomEvent(MANAGER_OPEN_SETTINGS_SECTION_EVENT, {
+      detail: { section: 'translation' },
+    }));
+
+    await waitFor(() => expect(translationNav).toHaveAttribute('aria-current', 'true'));
   });
 
   it('点击模块开关时继续通过 moduleRegistry.toggleModule 切换状态', async () => {
