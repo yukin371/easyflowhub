@@ -139,16 +139,24 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
 
-          # Move NSIS installer to app root
+          # Move NSIS installer + its updater signature to app root
           NSIS=$(find app -path '*/nsis/*.exe' -type f | head -1)
           if [ -n "$NSIS" ]; then
             mv "$NSIS" "app/EasyFlowHub_${VERSION}_x64-setup.exe"
           fi
+          NSIS_SIG=$(find app -path '*/nsis/*.exe.sig' -type f | head -1)
+          if [ -n "$NSIS_SIG" ]; then
+            mv "$NSIS_SIG" "app/EasyFlowHub_${VERSION}_x64-setup.exe.sig"
+          fi
 
-          # Move MSI to app root
+          # Move MSI + its updater signature to app root
           MSI=$(find app -path '*/msi/*.msi' -type f | head -1)
           if [ -n "$MSI" ]; then
             mv "$MSI" "app/EasyFlowHub_${VERSION}_x64_en-US.msi"
+          fi
+          MSI_SIG=$(find app -path '*/msi/*.msi.sig' -type f | head -1)
+          if [ -n "$MSI_SIG" ]; then
+            mv "$MSI_SIG" "app/EasyFlowHub_${VERSION}_x64_en-US.msi.sig"
           fi
 
           # Rename portable exe
@@ -164,7 +172,9 @@ jobs:
         with:
           files: |
             app/EasyFlowHub_*_x64-setup.exe
+            app/EasyFlowHub_*_x64-setup.exe.sig
             app/EasyFlowHub_*_x64_en-US.msi
+            app/EasyFlowHub_*_x64_en-US.msi.sig
             app/EasyFlowHub_*_portable.exe
             scriptmgr/scriptmgr.exe
           generate_release_notes: true
@@ -177,28 +187,37 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
 
-          # Use NSIS installer as update asset
-          SETUP_FILE=$(find app -name '*x64-setup.exe' -type f | head -1)
-          if [ -z "$SETUP_FILE" ]; then
-            echo "No setup .exe found"
+          # Tauri v2 updater manifest. The Windows asset is the NSIS installer,
+          # verified with the .sig that createUpdaterArtifacts produced.
+          SETUP_FILE="app/EasyFlowHub_${VERSION}_x64-setup.exe"
+          SIG_FILE="${SETUP_FILE}.sig"
+          if [ ! -f "$SETUP_FILE" ] || [ ! -f "$SIG_FILE" ]; then
+            echo "Missing setup .exe or its .sig"
             ls -la app/
             exit 1
           fi
 
-          ASSET=$(basename "$SETUP_FILE")
-          SHA256=$(sha256sum "$SETUP_FILE" | cut -d' ' -f1)
+          SIGNATURE=$(cat "$SIG_FILE")
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$SETUP_FILE")"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           cat << EOF > latest.json
           {
             "version": "$VERSION",
-            "date": "$(date +%Y-%m-%d)",
-            "body": "See release notes",
-            "path": "$ASSET",
-            "sha256": "$SHA256"
+            "notes": "See release notes",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$SIGNATURE",
+                "url": "$URL"
+              }
+            }
           }
           EOF
 
           cat latest.json
+          # Fail fast if the manifest is not well-formed JSON.
+          python3 -m json.tool latest.json > /dev/null
 
       - name: Upload latest.json
         run: gh release upload ${{ github.ref_name }} latest.json --clobber

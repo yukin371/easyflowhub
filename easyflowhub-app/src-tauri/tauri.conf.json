@@ -56,6 +56,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "resources": {
       "../../scriptmgr-go/scriptmgr.exe": "scriptmgr.exe"
     },
@@ -75,7 +76,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxRTJGNkE0NUREMTA5NzIKUldSeUNkRmRwUGJpSVdrUE92MW9ZZWthcUhGTmwreTVPbHhoQ0hhTjVuRFRjWHNCRUQrVkRlTEMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY4QTIxOTdENUU5Njc4RTYKUldUbWVKWmVmUm1pK0Z6QzlLTFNPYW1LSUx0ajJEaElodU9Cak9BOXFjd2J2MkQ1ZkEzam5NZTEK",
       "endpoints": [
         "https://github.com/yukin371/easyflowhub/releases/latest/download/latest.json"
       ],
