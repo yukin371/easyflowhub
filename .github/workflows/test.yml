@@ -131,6 +131,28 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: scriptmgr-go/go.mod
+
+      # tauri.conf.json bundles ../../scriptmgr-go/scriptmgr.exe as a resource,
+      # so the build script rejects `cargo check` while that file is missing.
+      # The Tauri build runs build.rs which produces it; a bare check must not.
+      - name: Build scriptmgr sidecar
+        shell: pwsh
+        run: |
+          $scriptmgrDir = Resolve-Path "..\scriptmgr-go"
+          Push-Location $scriptmgrDir
+          try {
+            $env:CGO_ENABLED = "0"
+            go build -ldflags="-s -w" -o scriptmgr.exe ./cmd/scriptmgr
+            if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
+          }
+          finally {
+            Pop-Location
+          }
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
