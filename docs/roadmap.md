@@ -271,6 +271,11 @@
 
 ### Recent Progress
 
+- `2026-10-21` 新增「关于与更新」设置段（版本显示 + 检查更新）、「实验性功能（预览）」分区，并更换应用图标为方案 2（玻璃流转）。
+  - **版本与更新**：`AboutSection` 显示当前版本（`getVersion`），「检查更新」拉取 GitHub `releases/latest` 做 semver 比对，区分已是最新 / 发现新版本（带下载）/ 当前更高（内测或本地构建）/ 检查失败；比对逻辑抽为 `lib/updateCheck.ts` 纯函数。
+  - **实验性功能**：`FeatureModule` 新增 `experimental` 标记；`files` / `downloads` / `voice` 改为实验 + 默认关闭，只在实验分区出现；顶部有「开发中功能」警告，启用模块带「实验」角标。翻译非模块，用 `lib/experimental`（localStorage）+ `hooks/useTranslationExperimental`（Tauri 事件跨窗口同步）独立门控，关闭时 Launcher 不注册翻译动作、设置不渲染翻译段与导航。
+  - **图标**：采用方案 2（叠层毛玻璃 + 流向箭头），`design/icons/generate.py` 从 1024 基准图 LANCZOS 缩放生成全套 PNG / 多帧 ICO（16-256）/ ICNS（16-512），替换 `src-tauri/icons/`。
+  - 验证：TypeScript、前端 56 文件 / 413 项、主题 token 审计、架构门禁通过。
 - `2026-10-21` 修复 Windows 升级安装失败（`Error opening file for writing: ...\scriptmgr.exe`）：常驻 Go sidecar 在主窗口关闭到托盘后仍存活并锁住自身 `.exe`，NSIS 无法覆盖。新增 NSIS `installerHooks` 的 `NSIS_HOOK_PREINSTALL`，安装前先 `taskkill` 主程序再杀 sidecar 并短暂等待释放文件句柄；用一把仍被 sidecar 锁住的 `scriptmgr.exe`（PID 27688）实测新安装包退出码 0 并成功替换文件。
 - `2026-10-21` 发布 `v0.2.0`：版本号在 `package.json`、`tauri.conf.json`、`Cargo.toml` / `Cargo.lock` 同步为 `0.2.0`，新增 [发布说明](./releases/v0.2.0.md)。发布前检查修复了架构门禁的规模债阻塞：Quick Note 窗口的快捷键映射抽为 `hooks/useQuickNoteShortcuts`、切换器 / 工具栏 / 工具面板 / 图片条抽为 `components/shared` 组件、`toggle_always_on_top`、`hide_window`、`close_window` 收入新增 `lib/tauri/window.ts`（`QuickNotePage` 658 → 423 行，`lib/tauri` 外原始 `invoke()` 由 4 处降到 3 处）；回收站面板拆为 `trash/TrashNotesView`、`trash/TrashInboxView`、`trash/TrashScriptsView` 与共享展示件（530 → 209 行）。基线经 `node scripts/check-architecture.mjs --update-baseline` 重新快照，门禁恢复通过。验证：`run-smoke.ps1` 全部通过（前端 54 文件 / 395 项、TypeScript、Vite 构建、主题 token 审计、`cargo check`、Rust 91 项、Go 全量测试）、架构门禁通过、Windows NSIS / MSI 打包与 release artifact 预检通过。
 

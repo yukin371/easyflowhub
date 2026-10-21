@@ -2,7 +2,7 @@
 
 > status: active
 > owner: EasyFlowHub frontend maintainers
-> last_verified: 2026-10-19
+> last_verified: 2026-10-21
 
 ## 职责
 
@@ -27,6 +27,7 @@
 - `moduleRegistry` 负责模块启停和配置读写；UI 不应复制订阅或配置初始化逻辑。
 - builtin module 仅描述元数据和面板组件绑定，不承载业务状态。
 - `isCore` 模块不可在设置页关闭；当前核心模块为 `notes` 与 `settings`。
+- **实验性（预览）模块**：`FeatureModule.experimental = true` 的模块默认关闭，只在设置的「实验性功能」分区出现，不出现在普通「功能模块」分区；启用后侧边栏带「实验」标记。当前实验模块：`files`、`downloads`、`voice`。用 `getExperimentalModules()` / `useExperimentalModules()` 取实验列表，用 `getStandardToggleableModules()` / `useStandardToggleableModules()` 取普通可切换列表。翻译不是模块（是 Launcher 动作 + 设置段），其开关由 `lib/experimental` + `hooks/useTranslationExperimental` 独立门控，见该模块文档。
 - `settings` 在侧边栏固定在底部（`ManagerSidebar` 单独渲染，不进 Workspace 滚动列表），图标为 `⚙`；新增模块不得抢占该位置，也不要改回列表项。
 - 执行记录不再是独立模块：`tasks` 已从 builtin 列表移除，作为「脚本」页的运行记录 tab 呈现。旧 `modules.json` 中的 `tasks` 条目会被 registry 忽略，不需要迁移。
 - **依赖方向**：面板组件必须从 `modules/runtime`（只含 types / registry / hooks）导入模块系统，不能从 `modules` 桶导入——后者会带出 `builtin`（绑定面板组件），形成 `components -> modules -> builtin -> components` 的循环。`modules/index.ts` 仅作为应用装配入口（`main.tsx` / `init.ts`）使用。

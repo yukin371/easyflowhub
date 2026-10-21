@@ -8,6 +8,7 @@ import { translateText } from '../features/translation';
 import { actionRegistry } from '../features/actions';
 import { DEFAULT_SETTINGS } from '../types/settings';
 import { describeScript, listScripts, runScript } from '../lib/tauri/scriptmgr';
+import { TRANSLATION_EXPERIMENTAL_KEY } from '../lib/experimental';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ emitTo: vi.fn(), listen: vi.fn(async () => vi.fn()) }));
@@ -28,6 +29,8 @@ const emitToMock = vi.mocked(emitTo);
 describe('LauncherPage native window interactions', () => {
   beforeEach(() => {
     actionRegistry.clear();
+    // 翻译是实验性功能，默认关闭；这些翻译用例需显式开启以注册翻译动作。
+    localStorage.setItem(TRANSLATION_EXPERIMENTAL_KEY, 'true');
     vi.mocked(translateText).mockReset();
     vi.mocked(listScripts).mockReset().mockResolvedValue([]);
     vi.mocked(describeScript).mockReset();
@@ -305,6 +308,16 @@ describe('LauncherPage native window interactions', () => {
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('capture_inbox_item', {
       input: { title: '文本脚本', content: 'script output', source: 'launcher', context: 'action-result' },
     }));
+  });
+
+  it('翻译实验开关关闭时不注册翻译动作', async () => {
+    localStorage.removeItem(TRANSLATION_EXPERIMENTAL_KEY);
+    render(<LauncherPage />);
+
+    // 等待动作列表加载完成后，确认翻译动作不在其中。
+    await screen.findByRole('combobox', { name: '搜索动作、脚本或工具' });
+    expect(screen.queryByText('翻译文本')).not.toBeInTheDocument();
+    expect(actionRegistry.getAll().some((a) => a.id === 'builtin.translation.translate-text')).toBe(false);
   });
 });
 

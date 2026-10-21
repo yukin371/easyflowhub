@@ -7,7 +7,8 @@ export const downloadsModule = defineBuiltinModule(
     name: '下载',
     icon: '下',
     caption: 'Downloads',
-    defaultEnabled: true,
+    defaultEnabled: false,
+    experimental: true,
   },
   DownloadsPanel
 );

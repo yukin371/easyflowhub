@@ -1,0 +1,4 @@
+# Regenerable raster previews of the icon concepts.
+# The SVG sources and generate.py are the source of truth; run generate.py to
+# rebuild the app icons, and render previews on demand with a headless browser.
+preview/

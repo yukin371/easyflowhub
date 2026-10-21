@@ -1,9 +1,10 @@
 import { SettingsSectionCard } from '../shared/SettingsSectionCard';
-import { moduleRegistry, useToggleableModules } from '../../../modules/runtime';
+import { moduleRegistry, useStandardToggleableModules } from '../../../modules/runtime';
 
-/** 功能模块设置：复用 module registry，不在面板内自建启停状态。 */
+/** 功能模块设置：复用 module registry，不在面板内自建启停状态。
+ * 实验性模块不在此出现，只在「实验性功能」分区管理。 */
 export function ModulesSection() {
-  const toggleableModules = useToggleableModules();
+  const toggleableModules = useStandardToggleableModules();
 
   // 切换模块启用状态
   const handleToggleModule = async (moduleId: string, enabled: boolean) => {

@@ -7,6 +7,7 @@ import { captureInboxItem } from '../lib/tauri/inbox';
 import { copyTextWithFallback, readTextWithFallback } from '../lib/tauri/clipboard';
 import { describeScript, listScripts, runScript } from '../lib/tauri/scriptmgr';
 import { openManagerSettings } from '../lib/tauri/manager';
+import { useTranslationExperimental } from '../hooks/useTranslationExperimental';
 import {
   getConfiguredSnowShotPath,
   launchSnowShot,
@@ -73,6 +74,8 @@ export function LauncherPage() {
   const [actions, setActions] = useState<Action[]>([]);
   const [error, setError] = useState<string>();
   const [context, setContext] = useState<LauncherContext>();
+  // 翻译是实验性功能：只有开启时才注册翻译动作。
+  const { enabled: translationEnabled } = useTranslationExperimental();
   // The launcher is a transient action surface. It only becomes a pinned
   // desktop surface after the user explicitly enables the pin control.
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
@@ -268,7 +271,12 @@ export function LauncherPage() {
       // participate in search, favorites, and the recent action index.
       actionRegistry.register(SNOW_SHOT_ACTION, executeAction);
       actionRegistry.register(CAPTURE_CLIPBOARD_ACTION, executeAction);
-      actionRegistry.register(TRANSLATE_TEXT_ACTION, executeAction);
+      // 翻译是实验性功能：开关关闭时不注册动作，并移除可能已注册的旧条目。
+      if (translationEnabled) {
+        actionRegistry.register(TRANSLATE_TEXT_ACTION, executeAction);
+      } else {
+        actionRegistry.unregister(TRANSLATE_TEXT_ACTION.id);
+      }
       const scripts = await listScripts();
       scripts.forEach((script) => {
         const action = scriptSummaryToAction(script);
@@ -288,7 +296,7 @@ export function LauncherPage() {
       );
       setActions(actionRegistry.getAll());
     }
-  }, [executeAction]);
+  }, [executeAction, translationEnabled]);
 
   useEffect(() => {
     void reload();

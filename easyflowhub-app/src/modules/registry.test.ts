@@ -19,6 +19,14 @@ function module(id: string, defaultEnabled: boolean): FeatureModule {
   };
 }
 
+function experimentalModule(id: string): FeatureModule {
+  return { ...module(id, false), experimental: true };
+}
+
+function coreModule(id: string): FeatureModule {
+  return { ...module(id, true), isCore: true };
+}
+
 describe('ModuleRegistry.toggleModule rollback (F07)', () => {
   let registry: ModuleRegistry;
 
@@ -72,5 +80,38 @@ describe('ModuleRegistry.toggleModule rollback (F07)', () => {
     expect(listener).toHaveBeenCalledTimes(2);
 
     unsubscribe();
+  });
+});
+
+describe('ModuleRegistry experimental filtering', () => {
+  let registry: ModuleRegistry;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    registry = new ModuleRegistry();
+    registry.registerModules([
+      coreModule('notes'),           // core
+      module('scripts', true),        // standard toggleable
+      experimentalModule('files'),    // experimental
+      experimentalModule('downloads'),// experimental
+    ]);
+  });
+
+  it('separates experimental modules from the standard toggleable list', () => {
+    expect(registry.getStandardToggleableModules().map((m) => m.id)).toEqual(['scripts']);
+    expect(registry.getExperimentalModules().map((m) => m.id)).toEqual(['files', 'downloads']);
+  });
+
+  it('keeps core modules out of both the standard and experimental lists', () => {
+    const ids = [
+      ...registry.getStandardToggleableModules(),
+      ...registry.getExperimentalModules(),
+    ].map((m) => m.id);
+    expect(ids).not.toContain('notes');
+  });
+
+  it('defaults experimental modules to disabled', () => {
+    expect(registry.isEnabled('files')).toBe(false);
+    expect(registry.isEnabled('downloads')).toBe(false);
   });
 });

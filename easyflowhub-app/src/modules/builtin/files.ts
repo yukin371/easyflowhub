@@ -10,7 +10,8 @@ export const filesModule = defineBuiltinModule(
     name: '文件',
     icon: '档',
     caption: 'Files',
-    defaultEnabled: true,
+    defaultEnabled: false,
+    experimental: true,
   },
   FilesPanel
 );

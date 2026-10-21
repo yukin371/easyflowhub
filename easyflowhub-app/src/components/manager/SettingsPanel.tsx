@@ -9,7 +9,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppSettings } from './settings/useAppSettings';
 import { useShortcutsSettings } from './settings/useShortcutsSettings';
 import { GeneralSection } from './settings/GeneralSection';
+import { AboutSection } from './settings/AboutSection';
 import { ModulesSection } from './settings/ModulesSection';
+import { ExperimentalSection } from './settings/ExperimentalSection';
 import { ShortcutsSection } from './settings/ShortcutsSection';
 import { TranslationSection } from './settings/TranslationSection';
 import { TranscriptionSection } from './settings/TranscriptionSection';
@@ -18,16 +20,19 @@ import { QuickNoteSection } from './settings/QuickNoteSection';
 import { TodoSection } from './settings/TodoSection';
 import { TrashSection } from './settings/TrashSection';
 import { EditorSection } from './settings/EditorSection';
+import { useTranslationExperimental } from '../../hooks/useTranslationExperimental';
 import {
   MANAGER_OPEN_SETTINGS_SECTION_EVENT,
   type ManagerSettingsNavigationDetail,
 } from '../../lib/tauri/manager';
 
-type SettingsSection = 'general' | 'modules' | 'shortcuts' | 'translation' | 'transcription' | 'developer' | 'quickNote' | 'todo' | 'trash' | 'editor';
+type SettingsSection = 'general' | 'about' | 'modules' | 'experimental' | 'shortcuts' | 'translation' | 'transcription' | 'developer' | 'quickNote' | 'todo' | 'trash' | 'editor';
 
 const NAV_ITEMS: { key: SettingsSection; label: string; icon: string }[] = [
   { key: 'general', label: '通用', icon: '⚙' },
+  { key: 'about', label: '关于与更新', icon: 'ℹ' },
   { key: 'modules', label: '功能模块', icon: '🧩' },
+  { key: 'experimental', label: '实验性功能', icon: '⚗' },
   { key: 'shortcuts', label: '快捷键', icon: '⌨' },
   { key: 'translation', label: '翻译', icon: '文' },
   { key: 'transcription', label: '转写', icon: '🎙' },
@@ -44,11 +49,15 @@ export function SettingsPanel() {
   const app = useAppSettings();
   // Launcher 提交成功后刷新普通设置聚合的 launcher_trigger 镜像（F08）。
   const shortcuts = useShortcutsSettings({ onLauncherCommitted: app.syncLauncherTrigger });
+  // 翻译是实验性功能：开关关闭时不渲染翻译设置段。
+  const translation = useTranslationExperimental();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<SettingsSection, HTMLDivElement | null>>({
     general: null,
+    about: null,
     modules: null,
+    experimental: null,
     shortcuts: null,
     translation: null,
     transcription: null,
@@ -121,7 +130,7 @@ export function SettingsPanel() {
       {/* 侧边栏导航 */}
       <nav className="w-48 shrink-0 border-r border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] p-4">
         <div className="space-y-1">
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.filter((item) => item.key !== 'translation' || translation.enabled).map((item) => (
             <button
               key={item.key}
               type="button"
@@ -179,12 +188,28 @@ export function SettingsPanel() {
             <GeneralSection />
           </div>
 
+          {/* 关于与更新 */}
+          <div
+            ref={(el) => { sectionRefs.current.about = el; }}
+            className="mb-8"
+          >
+            <AboutSection />
+          </div>
+
           {/* 功能模块设置 */}
           <div
             ref={(el) => { sectionRefs.current.modules = el; }}
             className="mb-8"
           >
             <ModulesSection />
+          </div>
+
+          {/* 实验性功能 */}
+          <div
+            ref={(el) => { sectionRefs.current.experimental = el; }}
+            className="mb-8"
+          >
+            <ExperimentalSection />
           </div>
 
           {/* 快捷键设置（含 Launcher 触发与 Snow Shot 路径） */}
@@ -195,13 +220,15 @@ export function SettingsPanel() {
             <ShortcutsSection domain={shortcuts} />
           </div>
 
-          {/* 翻译设置 */}
-          <div
-            ref={(el) => { sectionRefs.current.translation = el; }}
-            className="mb-8"
-          >
-            <TranslationSection app={app} />
-          </div>
+          {/* 翻译设置（实验性功能，开关关闭时不渲染） */}
+          {translation.enabled ? (
+            <div
+              ref={(el) => { sectionRefs.current.translation = el; }}
+              className="mb-8"
+            >
+              <TranslationSection app={app} />
+            </div>
+          ) : null}
 
           {/* 转写设置 */}
           <div

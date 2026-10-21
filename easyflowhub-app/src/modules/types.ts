@@ -28,6 +28,13 @@ export interface FeatureModule {
   /** 是否为核心模块（核心模块不可关闭） */
   isCore?: boolean;
 
+  /**
+   * 是否为实验性（预览）功能。
+   * 实验模块默认关闭，只在设置的「实验性功能」分区出现，不在普通「功能模块」
+   * 分区出现；启用后侧边栏会带「实验」标记。
+   */
+  experimental?: boolean;
+
   /** 面板组件 */
   component: ComponentType;
 

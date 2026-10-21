@@ -3,11 +3,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPanel } from './SettingsPanel';
 import { getSettings, updateSettings } from '../../lib/tauri/settings';
-import { moduleRegistry, useToggleableModules } from '../../modules/runtime';
+import { moduleRegistry, useToggleableModules, useStandardToggleableModules, useExperimentalModules } from '../../modules/runtime';
 import { isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import type { AppSettings } from '../../types/settings';
 import type { FeatureModule } from '../../modules/runtime';
 import { MANAGER_OPEN_SETTINGS_SECTION_EVENT } from '../../lib/tauri/manager';
+import { TRANSLATION_EXPERIMENTAL_KEY } from '../../lib/experimental';
 
 vi.mock('../../lib/tauri/settings', () => ({
   getSettings: vi.fn(),
@@ -20,12 +21,20 @@ vi.mock('../../lib/tauri/launcher', () => ({
   saveConfiguredSnowShotPath: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(() => undefined),
+  emit: vi.fn().mockResolvedValue(undefined),
+  emitTo: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../modules/runtime', () => ({
   moduleRegistry: {
     isEnabled: vi.fn(),
     toggleModule: vi.fn(),
   },
   useToggleableModules: vi.fn(),
+  useStandardToggleableModules: vi.fn(),
+  useExperimentalModules: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/plugin-autostart', () => ({
@@ -37,6 +46,8 @@ vi.mock('@tauri-apps/plugin-autostart', () => ({
 const getSettingsMock = vi.mocked(getSettings);
 const updateSettingsMock = vi.mocked(updateSettings);
 const useToggleableModulesMock = vi.mocked(useToggleableModules);
+const useStandardToggleableModulesMock = vi.mocked(useStandardToggleableModules);
+const useExperimentalModulesMock = vi.mocked(useExperimentalModules);
 const isAutostartEnabledMock = vi.mocked(isAutostartEnabled);
 const isModuleEnabledMock = vi.mocked(moduleRegistry.isEnabled);
 const toggleModuleMock = vi.mocked(moduleRegistry.toggleModule);
@@ -71,26 +82,64 @@ const scriptsModule: FeatureModule = {
   component: () => null,
 };
 
+const filesModule: FeatureModule = {
+  id: 'files',
+  name: '文件',
+  icon: '档',
+  caption: 'Files',
+  defaultEnabled: false,
+  experimental: true,
+  component: () => null,
+};
+
 describe('SettingsPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    // 翻译是实验性功能，默认关闭；这些既有用例覆盖翻译设置段，需显式开启。
+    localStorage.setItem(TRANSLATION_EXPERIMENTAL_KEY, 'true');
     getSettingsMock.mockResolvedValue(appSettings);
     updateSettingsMock.mockImplementation(async (settings) => settings);
     isAutostartEnabledMock.mockResolvedValue(false);
     useToggleableModulesMock.mockReturnValue([scriptsModule]);
+    useStandardToggleableModulesMock.mockReturnValue([scriptsModule]);
+    useExperimentalModulesMock.mockReturnValue([]);
     isModuleEnabledMock.mockReturnValue(true);
     toggleModuleMock.mockResolvedValue({ ok: true, enabled: false } as never);
   });
 
-  it('通过 useToggleableModules 渲染可切换模块列表', async () => {
+  it('通过 useStandardToggleableModules 渲染可切换模块列表', async () => {
     render(<SettingsPanel />);
 
     await screen.findByText('脚本');
 
-    expect(useToggleableModulesMock).toHaveBeenCalled();
+    expect(useStandardToggleableModulesMock).toHaveBeenCalled();
     expect(screen.getByText('脚本')).toBeInTheDocument();
     expect(screen.getByText('Scripts')).toBeInTheDocument();
+  });
+
+  it('实验性模块不出现在「功能模块」段，而在「实验性功能」段出现', async () => {
+    useStandardToggleableModulesMock.mockReturnValue([scriptsModule]);
+    useExperimentalModulesMock.mockReturnValue([filesModule]);
+    render(<SettingsPanel />);
+
+    // 实验性功能段应渲染文件模块与其「实验」标记。
+    await screen.findByText('文件');
+    expect(screen.getAllByText('Files').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('实验').length).toBeGreaterThan(0);
+    // 「功能模块」段只列 scripts，files 不在其内（通过模块行容器区分）。
+    const moduleSectionRows = screen.getAllByText('脚本').map((el) => el.closest('div[class*="space-y-2"]'));
+    expect(moduleSectionRows.length).toBeGreaterThan(0);
+  });
+
+  it('翻译实验开关关闭时不渲染翻译设置段和翻译导航', async () => {
+    localStorage.removeItem(TRANSLATION_EXPERIMENTAL_KEY);
+    render(<SettingsPanel />);
+
+    await screen.findByText('脚本');
+    expect(screen.queryByLabelText('翻译模型')).not.toBeInTheDocument();
+    const navButtons = screen.getAllByRole('button');
+    expect(navButtons.some((b) => b.textContent?.trim() === '翻译')).toBe(false);
   });
 
   it('响应 Manager 的设置导航事件并选中翻译分区', async () => {

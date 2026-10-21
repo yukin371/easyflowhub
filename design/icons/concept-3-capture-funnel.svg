@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="EasyFlowHub capture funnel icon">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dfe9f8"/>
+      <stop offset="1" stop-color="#bacfea"/>
+    </linearGradient>
+    <linearGradient id="funnel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9bbcea"/>
+      <stop offset="1" stop-color="#5178ab"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dfeafb"/>
+    </linearGradient>
+    <filter id="soft3" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#2b3d55" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg3)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#ffffff" stroke-opacity="0.6" stroke-width="2"/>
+
+  <!-- scattered inputs at top -->
+  <g fill="#7ba0d0" opacity="0.85">
+    <circle cx="176" cy="150" r="13"/>
+    <circle cx="256" cy="132" r="13"/>
+    <circle cx="336" cy="150" r="13"/>
+  </g>
+
+  <!-- funnel body -->
+  <g filter="url(#soft3)">
+    <path d="M132 196 H380 L300 300 V372 L212 412 V300 Z" fill="url(#funnel)" stroke="#ffffff" stroke-opacity="0.65" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+
+  <!-- focused output drop -->
+  <circle cx="256" cy="360" r="34" fill="url(#drop)" stroke="#6f93c4" stroke-width="5" filter="url(#soft3)"/>
+  <path d="M242 360 l10 10 l20 -22" stroke="#5178ab" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

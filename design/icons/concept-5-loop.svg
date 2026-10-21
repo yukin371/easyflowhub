@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="EasyFlowHub continuous loop icon">
+  <defs>
+    <linearGradient id="bg5" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e3ecfa"/>
+      <stop offset="1" stop-color="#bccfea"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9bbcea"/>
+      <stop offset="0.5" stop-color="#5f83b4"/>
+      <stop offset="1" stop-color="#8fb4e6"/>
+    </linearGradient>
+    <filter id="soft5" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#2b3d55" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg5)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#ffffff" stroke-opacity="0.6" stroke-width="2"/>
+
+  <!-- continuous flow loop (capture -> understand -> retrieve -> act) -->
+  <g filter="url(#soft5)">
+    <path d="M176 176
+             C120 176 120 262 176 256
+             C120 250 120 336 176 336
+             C232 336 232 250 256 256
+             C280 262 280 336 336 336
+             C392 336 392 250 336 256
+             C392 262 392 176 336 176
+             C280 176 280 250 256 256
+             C232 250 232 176 176 176 Z"
+          fill="none" stroke="url(#loop)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- directional accents -->
+  <circle cx="176" cy="176" r="16" fill="#ffffff" stroke="#6f93c4" stroke-width="6"/>
+  <circle cx="336" cy="336" r="16" fill="#ffffff" stroke="#6f93c4" stroke-width="6"/>
+</svg>

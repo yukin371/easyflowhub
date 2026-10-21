@@ -64,6 +64,21 @@ class ModuleRegistry {
   }
 
   /**
+   * 获取实验性（预览）模块。
+   * 实验模块不进入普通「功能模块」分区，只在「实验性功能」分区出现。
+   */
+  getExperimentalModules(): FeatureModule[] {
+    return this.getAllModules().filter((m) => m.experimental === true);
+  }
+
+  /**
+   * 获取普通（非实验、非核心）可切换模块。
+   */
+  getStandardToggleableModules(): FeatureModule[] {
+    return this.getAllModules().filter((m) => !m.isCore && !m.experimental);
+  }
+
+  /**
    * 获取核心模块
    */
   getCoreModules(): FeatureModule[] {

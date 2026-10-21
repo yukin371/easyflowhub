@@ -16,4 +16,9 @@ export type {
 } from './types';
 
 export { moduleRegistry, ModuleRegistry } from './registry';
-export { useEnabledModules, useToggleableModules } from './hooks';
+export {
+  useEnabledModules,
+  useToggleableModules,
+  useExperimentalModules,
+  useStandardToggleableModules,
+} from './hooks';
