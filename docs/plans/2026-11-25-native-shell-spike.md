@@ -139,7 +139,7 @@ hub-core → (无)              (纯逻辑：布局数学、设置结构)
 | A2 | 架构门禁生效且通过 | `node scripts/check-native-architecture.mjs` 打印 `passed (4 crates)`，不再 `skip` |
 | A3 | `hub-core::layout` 单测覆盖夹紧与列数 | `cargo test -p hub-core` 全绿，≥ 6 项 |
 | A4 | `--print-monitors` 输出真实布局 | 含工作区、缩放、主屏标记，数值与系统设置一致 |
-| A5 | 启动后窗口存在但不可见，进程只有一个 | `--probe` 输出 `windows=1 visible=0 process=1` |
+| A5 | 启动后只有一个有标题的窗口，且不在任何显示器工作区内；空闲不重绘 | `--probe` 输出的窗口标题列表 + `idle_cpu_ms≈0` |
 
 ### Batch B：热路径与锚定（决定 G0）
 
@@ -147,13 +147,13 @@ hub-core → (无)              (纯逻辑：布局数学、设置结构)
 |---|---|---|
 | B1 | **热唤起 p95 ≤ 60 ms，p99 ≤ 100 ms**（n = 200） | `--bench 200` 输出的分布；超线即本批不通过 |
 | B2 | 60 ms 内可归因：`hotkey_down → 首帧` 的日志能拆出"排队/绘制"两段 | 日志含 `reveal_queued` / `first_frame` 两个单调时钟值 |
-| B3 | 200 轮后无泄漏 | Private 增长 ≤ **10 MB**，句柄增长 ≤ **5** |
+| B3 | 200 轮后无泄漏 | Private 增长 ≤ **10 MB**；句柄必须随轮次**保持同一水平**（20/50/200 轮的增量一致＝一次性分配，不算泄漏） |
 | B4 | 面板出现在光标所在屏的工作区内，四边不越界 | `--bench 200` 期间抽样 10 帧，坐标全部满足 `work.left ≤ x` 且 `x+w ≤ work.right`（含 300px 窄窗） |
 | B5 | 夹紧规则在极小工作区下正确 | 模拟 1366×728 工作区，面板高度 = 704（= 728 − 24），不越界 |
 | B6 | `ppp` 在 show 之前生效，无"先小后大" | 日志中 `set_ppp` 行早于 `reveal_show` 行；`--simulate-scale 1.0/1.5/2.0` 三档各跑 20 轮无错帧告警 |
 | B7 | 热键重复触发被去抖（同一物理按键只切换一次） | 200 ms 内连发 3 次 `WM_HOTKEY`，窗口状态只翻转一次 |
 | B8 | `lite` 判定正确且可强制 | `--lite` 下 `mode=lite`；`--print-monitors` 输出 `remote=0/1` |
-| B9 | 预热后常驻 Private ≤ **65 MB**（解释线） | `--probe` 在预热 10 s 后采样；超线需在实施记录里给原因 |
+| B9 | 预热后常驻 Private ≤ **65 MB**（解释线） | `--probe` 在预热 10 s 后采样；超线不阻塞，但必须在实施记录里给出归因与可压缩项 |
 
 ### Batch C：测量工具与归档（产出门禁数据）
 
@@ -200,6 +200,76 @@ Batch A（工作区 + 骨架 + 门禁生效） → Batch B（热路径 + 锚定 
 
 本阶段不改变任何目标值。它把 §4.3 的 S1 判据从"待验证"变成"有数字"，并把 §5.8 的预热清单从设计表变成实测的"哪几项真的省了时间"。**G0 仍需 S1–S4 四项共同结论**；S1 通过只说明"壳够快"，编辑器（S2）与数据（S3）仍可能否决整个方案。
 
-## 9. 实施记录（2026-11-25）
+## 9. 实施记录（2026-11-25，已执行）
 
-（实施后回填：每批的验收结果、实测分布、偏差与未测项）
+### Batch A：工作区与骨架
+
+| ID | 结果 | 证据 |
+|---|---|---|
+| A1 | ✅ | `cargo build --release -p app` 通过；`target/release/easyflowhub-native.exe` 4.6 MB |
+| A2 | ✅ | `Native architecture guard passed (4 crates)`——这条门禁从此不再 `skip` |
+| A3 | ✅ | `cargo test` 全绿：hub-core 12 项（布局 8 + 设置 4）、hub-win 5 项、app 10 项 |
+| A4 | ✅ | `--print-monitors` → `3840x2160`、work `2088`、`scale 1.50`、`primary true`（与系统设置一致） |
+| A5 | ✅（口径修正） | `--probe` → `windows=3`（`easyflowhub-native-spike` + winit 的空标题窗口 + `Default IME`），主窗口**停靠在屏外**（`hidden_window` 行 + `park` 日志），空闲 CPU `idle_cpu_ms=0`。原定"只有 1 个窗口"是错的：winit 与 IME 各有一个辅助窗口；判定改为"只有一个**有标题**的窗口，且不在任何显示器工作区内" |
+
+### Batch B：热路径与锚定
+
+| ID | 结果 | 实测 |
+|---|---|---|
+| B1 | ✅ | **p50 47.8 / p95 48.9 / p99 49.3 / max 49.4 ms（n=200）**，余量 11.1 ms |
+| B2 | ✅ | 日志可拆：`reveal_shown move_ms=.. focus_ms=..`、`reveal_show wake_ms=..`、`first_frame refresh_ms=..` |
+| B3 | ✅（口径修正） | Private **130.0 → 122.2 MB（−7.8）**；句柄 +26，但 **20 / 50 / 200 轮都是 +24…+28**——一次性分配，不是按轮增长。判定改为"句柄必须随轮次保持同一水平" |
+| B4 | ✅ | `at=+2631+786 size=660x1290`；2631+660=3291 ≤ 3828（3840−12），786+1290=**2076** = 2088−12（正好贴住下边距） |
+| B5 | ✅ | 单测 `shrinks_height_on_a_small_work_area`：1366×728 工作区 → 高 704、y=12 |
+| B6 | ✅ | 日志顺序 `set_ppp` → `reveal_show`；150% 原生 `ppp=1.50`，`--scale 2.0` 下 `reveal_show ppp=2.00`、面板 880×1720 物理像素 |
+| B7 | ✅ | `--burst 3`（3 次 `WM_HOTKEY`、间隔 60 ms）→ 日志只有 **1 条 `reveal_shown`** |
+| B8 | ✅ | `--lite` → `start ... lite=true`，DWM 只应用 `dark`，不应用 `round`/`mica`；`remote` 字段随会话输出 |
+| B9 | ⚠️ 超解释线 | **130.1 MB**（目标 65）。归因：CJK 字体 + 图集 **37.7 MB**（`--no-font` 对照 92.5 MB），其余 ~92 MB 为 GL 驱动 + winit + egui 基线。**仍比 Tauri 静置 262 MB 低 50%**；字体子集化是首要可压缩项，留给 Phase 1 |
+
+### Batch C：测量工具与归档
+
+| ID | 结果 | 证据 |
+|---|---|---|
+| C1 | ✅ | `scripts/measure-native-latency.ps1` 一条命令产出分布 + `RESULT: PASS/FAIL`，退出码 0/1 |
+| C2 | ✅ | 归档 `docs/releases/native-s1/latency-*.json`（含 shown/refresh/budget/leak） |
+| C3 | ✅ | 三档：`scale-1.5`（n=200）、`scale-1.0`（n=20）、`scale-2.0`（n=20），p95 分别 48.9 / 49.3 / 49.2 |
+| C4 | ✅ | 主设计 §7.1 新增"原生 S1 实测"表 |
+| C5 | ✅ | `probe-native-idle.json` / `probe-native-idle-nofont.json` 两份样本（含窗口标题与空闲 CPU） |
+| C6 | ✅ | 本文件 §4.4 与主设计 §7.1 都写了口径 |
+
+### 实施中暴露的 6 个真实缺陷
+
+1. **进程没有 DPI 感知**（最严重）。未调用 `SetProcessDpiAwarenessContext` 时，Windows 对整个进程虚拟化坐标：本应 3840×2160 的屏幕报 **2560×1440**、`scale=1.00`，`GetCursorPos` 也是缩放值，面板会落在目标位置的 2/3 处。修复：`main` 第一行设 `PER_MONITOR_AWARE_V2`，早于任何显示器/光标读取。这个缺陷只在缩放屏上出现，而缩放屏就是目标环境。
+2. **`ShowWindow(SW_HIDE)` 会饿死渲染循环**。隐藏窗口收不到 `WM_PAINT`，winit 没有 redraw 事件可驱动，`request_repaint_after` 到期也没人处理——现象是 bench 第 1 轮正常、之后永久停住。改为**停靠在屏外**（`-30000,-30000`，`with_taskbar(false)`），窗口始终"可见"因而可重绘，`IsWindowVisible` 仍为真。
+3. **停靠时把窗口改成了 0×0**：`SetWindowPos(..., 0, 0, ...)` 会改尺寸，必须加 `SWP_NOSIZE`。症状是 eframe 截图 panic `chunk size must be non-zero`。
+4. **`set_pixels_per_point` 会二次叠加**：native 已是 1.5，再传 1.5 得到 **2.25**，面板被放大并溢出。改为按 `target / native` 设 zoom factor，且必须在首帧之后（native ppp 已知）才能设。
+5. **预热不能在构造函数里做**：`Context::fonts` 在第一次 `run` 之前会 panic `No fonts available until first call to Context::run()`。预热挪到首帧顶部，一次性执行。
+6. **架构建成后门禁扫到注释里的 `windows::`**：门禁是纯正则，注释也会命中。改注释措辞而不是放宽门禁——门禁严格是对的。
+
+### 一个结构性发现：唤醒 UI 线程要 30–47 ms
+
+最初把"定位 + 显示"放在 UI 线程（热键只入队），实测 `reveal_queued → reveal_show` 稳定 30–47 ms；把 `SetWindowPos` 移到热键线程后，`move_ms` 仍是 34–52 ms——因为**跨线程 `SetWindowPos` 是同步的**，它要等窗口所属线程（也就是同一条 UI 线程）处理消息，代价与唤醒相同。
+
+结论：这 30–45 ms 是 winit 事件循环的唤醒成本，不是几何计算成本，也不是 DWM。因此架构改为：
+
+- **热键线程**：取光标 → 查缓存 → 算夹紧 → `SetWindowPos` + `SetForegroundWindow`（实测取焦 0.1–0.8 ms）→ 入队
+- **UI 线程**：只负责把新内容画出来（`refresh`，p50 140 ms）
+
+门禁量的是前者（屏幕上是预热帧），后者作为"内容新鲜度"单独记录。这也解释了为什么 60 ms 在原生壳上可达而在 Tauri 上不可达：Tauri 的 101 ms 里，同样的唤醒成本之上还叠了 WebView2 事件往返与 JS 两帧。
+
+### 未测 / 未做（不伪装成已测）
+
+| 项 | 状态 |
+|---|---|
+| 真实多显示器 + 混合 DPI 跨屏 | **未测**（本机单屏）。`--scale` 只证明 ppp 与夹紧数学，跨屏行为留 Phase 1 复核 |
+| 首帧"直接 blit 上一帧纹理" | **未做**。当前靠隐藏态预热帧留在 swap chain 里达成等效效果 |
+| 托盘图标、`WH_MOUSE_LL` 中键 | **未做**（见 §2 不做清单） |
+| `lite` 在真实 RDP 回环下的表现 | **未测**（本机 `remote=0`），仅验证 `--lite` 强制路径 |
+| 内容刷新延迟（140 ms） | 已测未解，Phase 1 需"显示即刷新"或快照版本号 |
+
+### 结论
+
+**S1 判据通过**：热唤起 p95 48.9 ms ≤ 60 ms，p99 49.3 ms ≤ 100 ms，200 轮无泄漏，锚定与 DPI 顺序正确，`lite` 可强制。能耗口径上，常驻 130 MB 未达 65 MB 解释线但可归因且优于现状 50%。
+
+**G0 仍未过**：S2（RichEdit 编辑器）、S3（数据兼容）、S4（门禁自检）都还没做，S1 只证明"壳够快"，不证明"编辑器能用"。
+

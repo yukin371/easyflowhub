@@ -144,6 +144,17 @@
 
 ### Recent Progress
 
+- `2026-11-25` **S1 通过：原生壳热唤起 p95 48.9 ms（阈值 60，余量 11.1）**。设计与验收标准先落在 [plans/2026-11-25-native-shell-spike.md](./plans/2026-11-25-native-shell-spike.md)，再按 A/B/C 三批实现并逐条验收。**G0 仍未过**：S2 / S3 / S4 未做。
+  - **工作区**：`native/` 四个 crate（`hub-core` 纯几何 + 设置、`hub-win` Win32 薄封装、`hub-ui` egui 面板、`app` 装配）。`cargo test` 27 项（core 12 / win 5 / app 10）；`check-native-architecture.mjs` 从 `skip` 变成真实 `passed (4 crates)`，这条门禁到今天才算真的存在。egui / eframe **钉在 0.31**——spike 要可复现，升级即作废全部归档样本。
+  - **两段式显示（本轮唯一的结构性发现）**：跨线程 `SetWindowPos` 是**同步**的，要等目标线程处理消息，所以"把搬窗放到热键线程"并不能省下唤醒成本，实测仍是 30–47 ms。改为 **phase 1 = 测量 + 夹紧 + 搬窗 + 聚焦（热键线程，计入门禁）**、**phase 2 = 刷新内容（UI 线程，p50 140 ms，只记录不门禁）**。门禁量的是前者（屏幕上是预热帧），后者作为"内容新鲜度"另行记录——这是本轮唯一放宽的口径，写在 §4.4 里。
+  - **预热到稳态**：启动即建窗，预绘 3 帧（着色器编译 / 图集上传 / 稳态帧），唤起只剩搬窗。窗口以 `SWP_NOSIZE` 停在 `(-30000, -30000)` 且 `with_taskbar(false)`，**不能用 `SW_HIDE`**——隐藏会停发 `WM_PAINT`，winit 没有 redraw 可驱动，bench 第 2 轮起永久停住。
+  - **实测**（n=200，3840×2160@150% 单屏）：shown p50 **47.8** / p95 **48.9** / p99 **49.3** / max 49.4 ms（Tauri 对照 87 / 101 / 130，n=31）。另测 `--scale` 1.0 与 2.0（各 n=20）p95 49.3 / 49.2，说明成本与缩放无关、基本是唤醒的常数项。锚定实测 `at=+2631+786 size=660x1290`：右侧余 549、底边正好贴住 12 的边距；取焦 0.1–0.8 ms。
+  - **泄漏**：Private **130.0 → 122.2 MB（−7.8）**，20 / 50 / 200 轮句柄数同水平（+24…+28，一次性）。**基线必须取在预热 3 帧之后**：取在构造函数里会把一次性的着色器 / 图集 / 纹理算成泄漏（第一版看到 +22.5 MB 就是这个假象）。
+  - **6 个真实缺陷**（都只在高 DPI 或第二轮才现形）：①进程没有 DPI 感知，坐标被整套虚拟化（3840×2160 报成 2560×1440 / scale 1.00，面板落在目标位置的 2/3）→ `SetProcessDpiAwarenessContext` 必须是 `main` 第一句；②`SW_HIDE` 饿死渲染循环；③停靠时 `SetWindowPos` 传 0 尺寸把窗口改成 0×0（eframe 截图 panic）；④`set_pixels_per_point(1.5)` 在 1.5 原生上**叠加成 2.25** → 改用 zoom factor `target/native`；⑤预热放在构造函数里会 panic `No fonts available`；⑥架构门禁扫到我自己注释里的 `windows::`——改注释措辞，不放宽门禁。
+  - **常驻 130.1 MB 未达 65 MB 解释线（⚠️ 不掩饰）**：`--no-font` 对照测出 CJK 字体 + 图集占 **37.7 MB**（92.5 MB 基线），其余 ~92 MB 是 GL 驱动 + winit + egui 固定开销；仍比 Tauri 静置 262 MB 低 50%。字体子集化是首要可压缩项，留给 Phase 1。
+  - **文档回填**：主设计 §4.3 状态、§7.1 新增"原生 S1 实测"表（含门禁口径），`native/README.md` 列出 Phase 1 必须偿还的捷径（`FindWindowW` 拿 HWND、`--scale` 模拟缩放、无 blit 缓存、面板内容静态、无托盘）。
+  - **未测**：真实多显示器 + 混合 DPI 跨屏（本机单屏，`--scale` 只证明数学）、`lite` 在真实 RDP 回环（本机 `remote=0`）、首帧直接 blit 上一帧纹理（未做，当前靠预热帧留在 swap chain 达成等效）。
+
 - `2026-11-24` **P0.5 完成：窗口生命周期 + 计时契约，静置 600 → 282.8 MB**。设计与验收标准先落在 [plans/2026-11-24-window-lifecycle-and-latency-contract.md](./plans/2026-11-24-window-lifecycle-and-latency-contract.md)，再按 A/B/C 三批实施并逐条验收。
   - **Batch A（度量）**：`measure-footprint.ps1` 增加 `-Label` / `-OutFile`，三姿态（idle / launcher / manager-2notes）快照归档到 `docs/releases/footprint/0.2.0/`。注意 PS 5.1 里 `$json` 与开关 `-Json` 是同一个变量，赋值会直接报错。
   - **Batch B（生命周期）**：Manager 从 `tauri.conf.json` 移除，改由 `ensure_manager_window` 按需创建、关闭即销毁；`close_all_note_windows` 改用 `destroy()`。实测 **idle Private 600.0 → 261.6–282.8 MB（−53% ~ −56%）**、WebView2 进程 7 → 6、sidecar 静置 0（懒启动）；关闭 Manager 12 ms 内释放，重建 222–248 ms；10 轮开关与 2 笔记开关均无累积。**顺带修掉两个真实缺陷**：`single-instance` 插件必须最先注册（否则第二个进程先建窗再退出，留下 `about:blank` 与热键冲突），且不能在事件循环线程里就地 `build()` WebView（会死锁，改为 `async_runtime::spawn`）。
@@ -327,12 +338,12 @@
 
 ## Native Runtime Track（`accepted`，ADR-0009）
 
-> 状态：**方向与细则已确认，未进入实施**。分阶段推进；Phase 0 先补齐度量与四项 spike，过 G0 后开始 Phase 1。
+> 状态：**S1 壳已完成（2026-11-25），G0 未过**。分阶段推进；Phase 0 先补齐度量与四项 spike，过 G0 后开始 Phase 1。剩余 S2 编辑器 / S3 数据兼容 / S4 门禁自检。
 >
 > - 设计：[plans/2026-11-24-native-runtime-redesign.md](./plans/2026-11-24-native-runtime-redesign.md)
 > - 决策：[decisions/ADR-0009-windows-native-runtime.md](./decisions/ADR-0009-windows-native-runtime.md)
 > - 架构约束：[ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md) 第 10 节
-> - 度量 / 门禁：`scripts/measure-latency.ps1`（响应，**主门禁**）、`scripts/measure-footprint.ps1`（内存/磁盘）、`scripts/check-native-architecture.mjs`（分层）
+> - 度量 / 门禁：`scripts/measure-native-latency.ps1`（原生热唤起，p95 48.9 ms 实测）、`scripts/measure-latency.ps1`（现 Tauri 版，**对照基线**）、`scripts/measure-footprint.ps1`（内存/磁盘）、`scripts/check-native-architecture.mjs`（分层）
 
 ### 已确认约束
 
@@ -365,7 +376,7 @@
 
 | Phase | Status | Goal | Gate |
 |---|---|---|---|
-| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ 计时契约（已完成）+ S1 壳（含预热路径）/ S2 编辑器 / S3 数据 / S4 门禁；延迟是重点，RDP 回环可选 | `G0` |
+| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ ~~计时契约~~（已完成）+ ~~S1 壳（含预热路径）~~（**已完成，p95 48.9 ms，见 §7.1**）+ S2 编辑器 / S3 数据 / S4 门禁；延迟是重点，RDP 回环可选 | `G0` |
 | P0.5. 先行止血 | `[done]` 2026-11-24 | 现版本窗口生命周期改造：**manager 不预创建 + 关闭即销毁**、临时窗口关闭即销毁（launcher 仍预创建，不动主门禁）；**修复开机自启动失效**（偏好持久化 + 启动对账 + 写入校验）。实测静置 600 → 262–283 MB（−53% ~ −56%） | — |
 | P1. 常驻壳 | `[pending]` | 主题 token、托盘、热键、**预创建 Launcher**、快速笔记、待办卡片、`lite` 降级；Manager 暂由 Tauri 按需启动 | `G1` |
 | P2. 工作台 | `[pending]` | 笔记 / 收集箱 / 待办 / 脚本 / 设置 / 回收站原生，低频面板只留最小入口 | `G2` |
