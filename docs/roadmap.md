@@ -152,6 +152,7 @@
   - **泄漏**：Private **130.0 → 122.2 MB（−7.8）**，20 / 50 / 200 轮句柄数同水平（+24…+28，一次性）。**基线必须取在预热 3 帧之后**：取在构造函数里会把一次性的着色器 / 图集 / 纹理算成泄漏（第一版看到 +22.5 MB 就是这个假象）。
   - **6 个真实缺陷**（都只在高 DPI 或第二轮才现形）：①进程没有 DPI 感知，坐标被整套虚拟化（3840×2160 报成 2560×1440 / scale 1.00，面板落在目标位置的 2/3）→ `SetProcessDpiAwarenessContext` 必须是 `main` 第一句；②`SW_HIDE` 饿死渲染循环；③停靠时 `SetWindowPos` 传 0 尺寸把窗口改成 0×0（eframe 截图 panic）；④`set_pixels_per_point(1.5)` 在 1.5 原生上**叠加成 2.25** → 改用 zoom factor `target/native`；⑤预热放在构造函数里会 panic `No fonts available`；⑥架构门禁扫到我自己注释里的 `windows::`——改注释措辞，不放宽门禁。
   - **常驻 130.1 MB 未达 65 MB 解释线（⚠️ 不掩饰）**：`--no-font` 对照测出 CJK 字体 + 图集占 **37.7 MB**（92.5 MB 基线），其余 ~92 MB 是 GL 驱动 + winit + egui 固定开销；仍比 Tauri 静置 262 MB 低 50%。字体子集化是首要可压缩项，留给 Phase 1。
+  - **smoke 一直是红的（顺带发现并修掉）**：`Responsiveness budget` 拿 60 ms 判**现 Tauri 版**（p95 101 ms），从打点落地那天起每轮必然 FAIL——一个注定失败的步骤会把另外九个步骤的信号一起淹掉。改为 `Tauri latency baseline (report)` + `-NoFail`：数字照旧打印 `Verdict: FAIL`，只是不再染红整轮；判决继续在原生壳上，退役前（P4）当回归护栏用（越过 ~130 ms 才算真回归）。同轮补 CI 的 `native-crates` job（`cargo test --workspace` 27 项 + release 构建），此前 CI 完全不碰 `native/`，S1 只在作者机器上编译过。
   - **文档回填**：主设计 §4.3 状态、§7.1 新增"原生 S1 实测"表（含门禁口径），`native/README.md` 列出 Phase 1 必须偿还的捷径（`FindWindowW` 拿 HWND、`--scale` 模拟缩放、无 blit 缓存、面板内容静态、无托盘）。
   - **未测**：真实多显示器 + 混合 DPI 跨屏（本机单屏，`--scale` 只证明数学）、`lite` 在真实 RDP 回环（本机 `remote=0`）、首帧直接 blit 上一帧纹理（未做，当前靠预热帧留在 swap chain 达成等效）。
 

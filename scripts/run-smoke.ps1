@@ -107,11 +107,14 @@ Invoke-Step -Name "Native architecture guard" -WorkingDirectory "." -Action {
     node (Join-Path $scriptRoot "check-native-architecture.mjs")
 }
 
-# Primary gate for the Native Runtime track is responsiveness, not memory.
-# Runs in a child process so a budget failure cannot terminate the smoke run.
-# Prints SKIP (exit 0) until the app emits [timing] hotkey_down / first_frame.
-Invoke-Step -Name "Responsiveness budget" -WorkingDirectory "." -Action {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "measure-latency.ps1")
+# The 60 ms budget is judged on the native shell (measure-native-latency.ps1
+# below). This Tauri build is the control group and currently measures ~101 ms
+# p95, so it runs with -NoFail: it still prints "Verdict: FAIL" against the 60 ms
+# target every run, but it must not paint the whole smoke red for months, or the
+# other nine steps stop meaning anything. Until P4 retires this shell, treat a
+# jump past ~130 ms as a real regression.
+Invoke-Step -Name "Tauri latency baseline (report)" -WorkingDirectory "." -Action {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "measure-latency.ps1") -NoFail
 }
 
 # Same budget, native shell. SKIPs with exit 0 when native/ is not built, so this

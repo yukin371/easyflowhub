@@ -684,7 +684,7 @@ powershell -NoProfile -File scripts\measure-latency.ps1 -ColdStart -ProcessPath 
 2026-11-24 19:04:01.290 [INFO] [timing] first_frame
 ```
 
-在打点落地前脚本输出 SKIP 并返回 0，不会误报通过；已接入 `run-smoke.ps1` 的 `Responsiveness budget` 步骤（子进程调用，失败不会中断其他步骤）。**"SKIP" 不等于"达标"**——RC 发布前必须在**本机**拿到非空分布（本机是标准环境，不是边缘环境；不需要第二台机器）。
+在打点落地前脚本输出 SKIP 并返回 0，不会误报通过；已接入 `run-smoke.ps1`，步骤名为 `Tauri latency baseline (report)`，**带 `-NoFail`**。理由不是"想让它绿"：现版本实测 p95 101 ms，对 60 ms 目标**每次都会打印 `Verdict: FAIL`**，但它只是对照组，判决在原生壳上（见下方 S1 实测表）；让一个注定失败的步骤把整轮 smoke 长期染红，另外九个步骤就没人看了。退役前（P4）把它当回归护栏用：p95 越过 ~130 ms 才算真回归。**"SKIP" 不等于"达标"**——RC 发布前必须在**本机**拿到非空分布（本机是标准环境，不是边缘环境；不需要第二台机器）。
 
 **Tauri 现状基线（2026-11-24 22:17 实测，n = 31 次真实热键唤起）**：
 
