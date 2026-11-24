@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPanel } from './SettingsPanel';
 import { getSettings, updateSettings } from '../../lib/tauri/settings';
 import { moduleRegistry, useToggleableModules, useStandardToggleableModules, useExperimentalModules } from '../../modules/runtime';
-import { isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
+import { getAutostartState } from '../../lib/tauri/autostart';
 import type { AppSettings } from '../../types/settings';
 import type { FeatureModule } from '../../modules/runtime';
 import { MANAGER_OPEN_SETTINGS_SECTION_EVENT } from '../../lib/tauri/manager';
@@ -37,10 +37,9 @@ vi.mock('../../modules/runtime', () => ({
   useExperimentalModules: vi.fn(),
 }));
 
-vi.mock('@tauri-apps/plugin-autostart', () => ({
-  isEnabled: vi.fn(),
-  enable: vi.fn(),
-  disable: vi.fn(),
+vi.mock('../../lib/tauri/autostart', () => ({
+  getAutostartState: vi.fn(),
+  setAutostartState: vi.fn(),
 }));
 
 const getSettingsMock = vi.mocked(getSettings);
@@ -48,7 +47,7 @@ const updateSettingsMock = vi.mocked(updateSettings);
 const useToggleableModulesMock = vi.mocked(useToggleableModules);
 const useStandardToggleableModulesMock = vi.mocked(useStandardToggleableModules);
 const useExperimentalModulesMock = vi.mocked(useExperimentalModules);
-const isAutostartEnabledMock = vi.mocked(isAutostartEnabled);
+const getAutostartStateMock = vi.mocked(getAutostartState);
 const isModuleEnabledMock = vi.mocked(moduleRegistry.isEnabled);
 const toggleModuleMock = vi.mocked(moduleRegistry.toggleModule);
 
@@ -100,7 +99,12 @@ describe('SettingsPanel', () => {
     localStorage.setItem(TRANSLATION_EXPERIMENTAL_KEY, 'true');
     getSettingsMock.mockResolvedValue(appSettings);
     updateSettingsMock.mockImplementation(async (settings) => settings);
-    isAutostartEnabledMock.mockResolvedValue(false);
+    getAutostartStateMock.mockResolvedValue({
+      system_enabled: false,
+      user_enabled: false,
+      repaired: false,
+      available: true,
+    });
     useToggleableModulesMock.mockReturnValue([scriptsModule]);
     useStandardToggleableModulesMock.mockReturnValue([scriptsModule]);
     useExperimentalModulesMock.mockReturnValue([]);

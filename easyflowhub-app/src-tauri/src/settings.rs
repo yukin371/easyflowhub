@@ -39,6 +39,8 @@ impl Default for TrashSettings {
 pub struct EditorSettings {
     pub undo_steps: u32,
     pub cursor_style: String,
+    /// Empty string means "follow the theme" — the editor falls back to
+    /// `--editor-caret` (the active accent) instead of a fixed colour.
     pub cursor_color: String,
     pub cursor_trail: bool,
 }
@@ -48,9 +50,23 @@ impl Default for EditorSettings {
         Self {
             undo_steps: 100,
             cursor_style: "accent".to_string(),
-            cursor_color: "#4f5a43".to_string(),
+            cursor_color: String::new(),
             cursor_trail: true,
         }
+    }
+}
+
+/// The old build hard-coded `#4f5a43` as the caret colour. That value was
+/// written into every existing profile, and on a dark surface it is barely
+/// visible, so it is treated as "unset" rather than as a deliberate choice.
+const LEGACY_CURSOR_COLOR: &str = "#4f5a43";
+
+fn normalize_cursor_color(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case(LEGACY_CURSOR_COLOR) {
+        String::new()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -223,11 +239,53 @@ fn init_settings_table(conn: &Connection) -> SqliteResult<()> {
 }
 
 /// Get or create a database connection
-fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
+pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     let conn = Connection::open(&path).map_err(|e| format!("Failed to open database: {}", e))?;
     init_settings_table(&conn).map_err(|e| format!("Failed to initialize settings table: {}", e))?;
     Ok(conn)
+}
+
+/// Read one raw `settings` row and deserialize it.
+///
+/// Returns `None` when the row is absent, the database cannot be opened, or the
+/// stored JSON no longer matches the type — every one of those means "no usable
+/// preference" to the caller, and none of them may abort startup.
+pub(crate) fn read_setting_json<T: serde::de::DeserializeOwned>(
+    app: &tauri::AppHandle,
+    key: &str,
+) -> Option<T> {
+    let conn = get_connection(app).ok()?;
+    let value: String = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .ok()?;
+    serde_json::from_str(&value).ok()
+}
+
+/// Upsert one raw `settings` row without touching any other domain.
+///
+/// Used by preferences that live outside `AppSettings` (currently autostart) so
+/// that a full `update_settings` write can never clobber them.
+pub(crate) fn write_setting_json<T: Serialize>(
+    app: &tauri::AppHandle,
+    key: &str,
+    value: &T,
+) -> Result<(), String> {
+    let conn = get_connection(app)?;
+    let now = Utc::now().to_rfc3339();
+    let value =
+        serde_json::to_string(value).map_err(|e| format!("Failed to serialize {} settings: {}", key, e))?;
+    conn.execute(
+        r#"
+        INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        "#,
+        rusqlite::params![key, value, now],
+    )
+    .map_err(|e| format!("Failed to save {} settings: {}", key, e))?;
+    Ok(())
 }
 
 /// Return the executable name owning the current foreground window.
@@ -350,7 +408,11 @@ pub fn get_settings(app: tauri::AppHandle) -> Result<GetSettingsResponse, String
         [],
         |row| row.get::<_, String>(0),
     ) {
-        if let Ok(parsed) = serde_json::from_str::<EditorSettings>(&value) {
+        if let Ok(mut parsed) = serde_json::from_str::<EditorSettings>(&value) {
+            // Profiles written by older builds carry the fixed dark-olive
+            // default; surface them as "follow theme" instead of keeping an
+            // unreadable caret on the dark palette.
+            parsed.cursor_color = normalize_cursor_color(&parsed.cursor_color);
             settings.editor = parsed;
         }
     }
@@ -439,7 +501,8 @@ pub fn save_launcher_trigger_settings(
 #[cfg(test)]
 mod tests {
     use super::{
-        update_settings_with_conn, AppSettings, TranscriptionSettings, TranslationSettings,
+        normalize_cursor_color, update_settings_with_conn, AppSettings, EditorSettings,
+        TranscriptionSettings, TranslationSettings,
     };
     use rusqlite::{Connection, Result as SqliteResult};
 
@@ -465,6 +528,27 @@ mod tests {
 
         assert_eq!(settings.translation.target_language, "zh-CN");
         assert!(settings.translation.model.is_empty());
+    }
+
+    #[test]
+    fn editor_defaults_follow_theme_for_the_caret() {
+        // An empty cursor colour means "use the active accent"; a non-empty
+        // default would pin the caret to one palette.
+        assert!(EditorSettings::default().cursor_color.is_empty());
+    }
+
+    #[test]
+    fn legacy_cursor_colour_is_treated_as_follow_theme() {
+        // Profiles saved by older builds contain the hard-coded olive that is
+        // unreadable on the dark palette.
+        assert!(normalize_cursor_color("#4f5a43").is_empty());
+        assert!(normalize_cursor_color(" #4F5A43 ").is_empty());
+    }
+
+    #[test]
+    fn explicit_cursor_colour_is_preserved() {
+        assert_eq!(normalize_cursor_color("#86abdc"), "#86abdc");
+        assert_eq!(normalize_cursor_color("#ff8f96"), "#ff8f96");
     }
 
     #[test]
@@ -593,6 +677,13 @@ fn update_settings_with_conn(
 ) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
 
+    // Normalize before serializing so a stale client passing the legacy
+    // fixed colour cannot put it back into the settings table.
+    let editor = EditorSettings {
+        cursor_color: normalize_cursor_color(&settings.editor.cursor_color),
+        ..settings.editor.clone()
+    };
+
     // Every domain is persisted inside one transaction so a failure part-way
     // through cannot leave the settings table half-updated (F08). Serialize
     // everything up front so a serialization error aborts before any write.
@@ -609,7 +700,7 @@ fn update_settings_with_conn(
         ),
         (
             "editor",
-            serde_json::to_string(&settings.editor)
+            serde_json::to_string(&editor)
                 .map_err(|e| format!("Failed to serialize editor settings: {}", e))?,
         ),
         (

@@ -22,6 +22,7 @@ This module is the canonical owner of:
 - 录音后语音转文字：音频经 native 侧发往本机 Relay，transcript 附件落盘与读取
 - Windows 系统剪贴板文本写入，供文件 / 下载路径动作复用
 - 应用设置持久化
+- 开机自启动：持久化用户意图并与 Windows 启动项对账（启动时自愈被外部删除的启动项）
 - 桌面外观、小组件与 MCP 信息暴露
 - `scriptmgr` HTTP sidecar 进程生命周期：按需启动 `scriptmgr serve`、健康等待与退出回收
 - 开发者模式诊断日志：有界内存环形缓冲、可选文件落盘与 sidecar 输出捕获
@@ -41,14 +42,15 @@ This module must not contain:
 |---|---|---|
 | `main.rs` | binary entry | 委托到 `lib.rs::run()` |
 | `lib.rs` | composition root | 只保留 `run()`、插件装配、state 注入与命令注册；不含窗口或领域行为 |
-| `launcher.rs` | launcher window owner | Launcher 选区捕获 / 替换、键盘 + 鼠标中键触发注册、显示 / 隐藏 / 置顶 / 拖拽，关闭改隐藏并统一发出 `launcher-hidden` / `launcher-focused` |
-| `app_windows.rs` | manager / note / todo window owner | manager 关闭改隐藏、快速笔记与 todo 卡片窗口创建 / 定位 / 固定、快速笔记窗口批量显隐 |
+| `launcher.rs` | launcher window owner | Launcher 选区捕获 / 替换、键盘 + 鼠标中键触发注册、显示 / 隐藏 / 置顶 / 拖拽，关闭改隐藏并统一发出 `launcher-hidden` / `launcher-focused`；热键回调第一行打 `[timing] hotkey_down`（响应门禁契约） |
+| `app_windows.rs` | manager / note / todo window owner | Manager **按需创建 + 关闭即销毁**（不再由 `tauri.conf.json` 预创建）、快速笔记与 todo 卡片窗口创建 / 定位 / 固定、批量显隐；事件循环线程必须走 `request_manager_window`（就地建 WebView 会死锁） |
 | `notes.rs` | notes persistence | SQLite、图片、trash；`ensure_todo_inbox_note` 以事务原子复用或创建待办箱 |
 | `inbox/` | capture persistence facade | 与 `notes.db` 共用数据库；按职责内分 `schema.rs`（表 / 迁移）、`attachments.rs`（附件身份与落盘 / transcript）、`repository.rs`（行访问）、`service.rs`（捕获 / 转换 / 回收站用例与事务）、`commands.rs`（薄命令层，委托 service / repository） |
-| `settings.rs` | settings store | 应用级设置 |
+| `settings.rs` | settings store | 应用级设置；另提供单行 `read_setting_json` / `write_setting_json` 给不在 `AppSettings` 内的偏好复用 |
+| `autostart.rs` | autostart owner | 持久化用户意图（`settings` 表键 `autostart`）+ 读写 Windows 启动项 + 启动时对账自愈；`get_autostart_state` / `set_autostart_state` 两个命令 |
 | `scriptmgr.rs` | script bridge | 调用 `scriptmgr-go` CLI / HTTP |
 | `scriptmgr_server.rs` | sidecar lifecycle owner | 按需 spawn `scriptmgr serve --port 8765`、TCP + HTTP 健康等待、并发去重、应用退出回收子进程 |
-| `logging.rs` | diagnostics owner | 500 行有界内存环形缓冲；`developer.debug_mode` 开启时追加写入 `logs/app.log`（2 MB 轮转）；捕获 sidecar stderr |
+| `logging.rs` | diagnostics owner | 500 行有界内存环形缓冲；`developer.debug_mode` 开启时追加写入 `logs/app.log`（2 MB 轮转）；`log_timing()` 例外——门禁数据无视 debug 开关直接落盘；捕获 sidecar stderr |
 | `appearance.rs` / `widget.rs` / `modules.rs` / `mcp_server.rs` | native feature owners | 外观、桌面小组件、模块配置、MCP 信息 |
 | `external_apps.rs` | external app bridge | Snow Shot 注册表 / 常见路径发现、MCP 状态检查与截图会话调用 |
 | `clipboard.rs` | clipboard owner | Windows 系统文本剪贴板读写；路径复制与 Launcher 上下文/结果动作复用 |
@@ -87,6 +89,8 @@ These must remain true after changes:
 - `scriptmgr` HTTP sidecar 的生命周期只由 `scriptmgr_server.rs` 拥有：前端每次 HTTP 调用前必须 `ensure_scriptmgr`（并发共享同一次启动，失败后允许重试），不得假设 `127.0.0.1:8765` 已就绪；应用退出必须回收本进程启动的子进程。已存在健康实例（外部启动或旧孤儿）时不得重复 spawn。
 - scriptmgr 健康判定 = TCP 可连 + `GET /api/scripts` 返回 2xx。不得改用 HEAD：Go 1.22 method-specific pattern 对 HEAD 返回 405，会把健康服务误报为离线。
 - 开发者模式（`developer.debug_mode`）只影响日志详细程度与是否落盘，不得改变任何安全边界或引入远程访问。日志缓冲固定 500 行上限，文件单份 2 MB 后轮转为 `app.log.1`；日志内容不得包含凭据。
+- 自启动意图独立于 `AppSettings`：`update_settings` 只写它的 8 个域，不得把 `autostart` 键纳入全量写，否则设置面板用旧快照保存会覆盖刚写入的意图。启动项读写必须回读校验：写入成功不等于生效（组策略 / 锁定的注册表项会吞掉写入），失败必须返回错误而不是让 UI 静默显示已切换。
+- 自启动对账只在「意图为开、系统缺失」时补回；意图为关而系统存在时不得自动关闭启动项，可由安装器或用户重新添加，强行关闭会与其操作打架。
 - Inbox 转换笔记必须在同一 SQLite 事务中创建 note 并持久化 `converted_note_id`，重复执行返回原笔记，不能产生副本。
 - 待办箱由 `ensure_todo_inbox_note` 单一 native owner 管理；使用 SQLite `BEGIN IMMEDIATE` 检查并创建，按 `TRIM(title) = '待办箱'` 复用 active note，跨 WebView 不得通过前端 `list -> create -> save` 组合创建。
 - manager 窗口关闭时默认隐藏，不应直接退出应用

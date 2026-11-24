@@ -14,6 +14,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 mod app_windows;
+mod autostart;
 mod clipboard;
 mod download;
 mod external_apps;
@@ -35,9 +36,24 @@ mod file_search;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let launched_from_autostart = std::env::args().any(|arg| arg == "--autostart");
-
     let app = tauri::Builder::default()
+        // 单实例必须是第一个注册的插件：它要在其余插件初始化、以及
+        // tauri.conf.json 的窗口创建之前就完成 argv 转发并退出第二个进程。
+        // 注册晚了第二个进程会留下一个 about:blank 窗口和一整套热键注册。
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // 开机自启触发的第二个实例（上一次的进程尚未退干净、或用户在
+            // 登录瞬间又点了一次图标）不应该把 Manager 抢到前台。
+            if argv.iter().any(|arg| arg == "--autostart") {
+                return;
+            }
+            // 当另一个实例尝试启动时，显示主窗口（不存在则按需创建）。
+            //
+            // 必须排到主线程队列里而不是就地创建：这个回调本身跑在事件循环
+            // 线程上，而 WebView2 的窗口创建需要事件循环继续转动。就地建窗口
+            // 会互相等待——第二个进程卡在握手、第一个进程留下一个 about:blank
+            // 的空白窗口（实测 2026-11-24）。
+            app_windows::request_manager_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
@@ -46,13 +62,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            // 当另一个实例尝试启动时，显示主窗口
-            if let Some(window) = app.get_webview_window("manager") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .args(["--autostart"])
@@ -64,12 +73,16 @@ pub fn run() {
             // 诊断都写入有界内存缓冲（开启调试时同时落盘）。
             crate::logging::init(app.handle());
 
+            // 自启动对账：持久化意图为「开」而系统启动项被外部删除时补回来
+            // （plan §2.4 / G1 门禁）。只读一次注册表，状态一致时不写。
+            let autostart_state = autostart::reconcile(app.handle());
+            if autostart_state.repaired {
+                crate::logging::log("info", "autostart", "启动项已在本次启动中自愈");
+            }
+
             // Launcher 窗口生命周期归 launcher 模块：重置置顶标记、聚焦
             // 事件、关闭改为隐藏。
             launcher::setup_launcher_window(app.handle());
-
-            // Manager 窗口关闭时默认隐藏；autostart 启动时保持隐藏。
-            app_windows::setup_manager_window(app.handle(), launched_from_autostart);
 
             // 创建托盘菜单
             let show_manager = MenuItem::with_id(app, "show_manager", "打开管理中心", true, None::<&str>)
@@ -89,10 +102,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_manager" => {
-                        if let Some(window) = app.get_webview_window("manager") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        app_windows::request_manager_window(app);
                     }
                     "new_note" => {
                         let app_handle = app.clone();
@@ -112,16 +122,18 @@ pub fn run() {
                         ..
                     } = event
                     {
+                        // Tray click toggles: hide a visible Manager, otherwise
+                        // create/reveal it. Creation is on demand (Phase 0.5).
                         let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("manager") {
-                            if let Ok(visible) = window.is_visible() {
-                                if visible {
-                                    let _ = window.hide();
-                                } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
+                        match app.get_webview_window("manager") {
+                            Some(window) if window.is_visible().unwrap_or(false) => {
+                                let _ = window.hide();
                             }
+                            Some(window) => {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                            None => app_windows::request_manager_window(app),
                         }
                     }
                 })
@@ -210,6 +222,7 @@ pub fn run() {
             app_windows::show_manager_window,
             app_windows::hide_manager_window,
             launcher::show_launcher_window,
+            launcher::report_first_frame,
             launcher::hide_launcher_window,
             launcher::start_launcher_dragging,
             launcher::set_launcher_always_on_top,
@@ -258,6 +271,8 @@ pub fn run() {
             settings::get_settings,
             settings::update_settings,
             settings::get_foreground_process_name,
+            autostart::get_autostart_state,
+            autostart::set_autostart_state,
             launcher::replace_selected_text,
             appearance::set_always_on_top,
             appearance::get_window_state,

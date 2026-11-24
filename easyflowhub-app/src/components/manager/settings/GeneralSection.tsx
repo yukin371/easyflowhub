@@ -25,13 +25,22 @@ export function GeneralSection() {
                 开机自启动
               </p>
               <p className="text-xs text-[color:var(--manager-ink-subtle)]">
-                系统启动时自动运行 EasyFlowHub
+                {!autostart.available
+                  ? '当前系统无法读取启动项（可能受组策略限制）'
+                  : autostart.repaired
+                    ? '启动项曾被外部移除，已自动恢复'
+                    : '系统启动时自动运行 EasyFlowHub'}
               </p>
             </div>
           </div>
           <button
+            type="button"
+            role="switch"
+            aria-checked={autostart.enabled}
+            aria-label="开机自启动"
+            disabled={autostart.busy || !autostart.available}
             onClick={() => void autostart.toggle()}
-            className={`relative h-6 w-11 rounded-full transition-colors ${
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
               autostart.enabled
                 ? 'bg-[color:var(--manager-accent)]'
                 : 'bg-[color:var(--manager-border)]'
@@ -44,6 +53,11 @@ export function GeneralSection() {
             />
           </button>
         </div>
+        {autostart.error ? (
+          <p role="alert" className="px-1 text-xs text-[color:var(--manager-danger)]">
+            自启动设置未生效：{autostart.error}
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-[18px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel)] px-4 py-3">
           <div className="flex items-center gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] text-sm text-[color:var(--manager-ink-soft)]">

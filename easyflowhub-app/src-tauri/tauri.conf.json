@@ -12,20 +12,6 @@
   "app": {
     "windows": [
       {
-        "label": "manager",
-        "title": "EasyFlowHub",
-        "width": 1000,
-        "height": 700,
-        "minWidth": 600,
-        "minHeight": 400,
-        "transparent": false,
-        "alwaysOnTop": false,
-        "decorations": true,
-        "visible": false,
-        "skipTaskbar": false,
-        "center": true
-      },
-      {
         "label": "launcher",
         "title": "EasyFlowHub Launcher",
         "width": 440,

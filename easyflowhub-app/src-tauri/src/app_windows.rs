@@ -1,8 +1,21 @@
 //! Manager / quick-note / todo-card window behavior.
 //!
-//! Owns the creation, positioning, visibility toggling and close-to-hide
-//! behavior of the non-Launcher native windows. Launcher behavior lives in
-//! `launcher`; cursor-anchored placement math lives in `window_position`.
+//! Owns the creation, positioning, visibility toggling and close behavior of the
+//! non-Launcher native windows. Launcher behavior lives in `launcher`;
+//! cursor-anchored placement math lives in `window_position`.
+//!
+//! Lifecycle rule (plan `2026-11-24-window-lifecycle-and-latency-contract.md`
+//! Batch B): the Manager window is **created on demand and destroyed on close**.
+//! It is not declared in `tauri.conf.json` any more, because a pre-created
+//! window pays for a whole WebView2 renderer while nobody is using the
+//! workbench — that was the dominant part of the 600 MB idle footprint. The
+//! Launcher keeps its pre-created window: it is the only surface with a
+//! 60 ms hotkey-to-first-frame budget, so lazy creation there would trade the
+//! primary gate for memory (explicitly forbidden in the design, §5.8.1).
+//!
+//! Closing the Manager is therefore plain Tauri close → destroy; there is no
+//! startup `CloseRequested` handler turning it into a hide, because that only
+//! made sense while the window always existed.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -177,13 +190,58 @@ pub async fn toggle_todo_card_pin(app: tauri::AppHandle, label: String, pinned: 
     }
 }
 
+/// Show the Manager window, creating it when it does not exist yet.
+///
+/// Keeping the "create" step here (instead of in `tauri.conf.json`) is what
+/// makes the idle footprint independent of the workbench: nothing is allocated
+/// until the user actually opens it. Window geometry is restored by
+/// `tauri-plugin-window-state`, which applies the saved state on creation.
+pub(crate) fn ensure_manager_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("manager") {
+        return Ok(window);
+    }
+
+    tauri::WebviewWindowBuilder::new(app, "manager", tauri::WebviewUrl::App("/".into()))
+        .title("EasyFlowHub")
+        .inner_size(1000.0, 700.0)
+        .min_inner_size(600.0, 400.0)
+        .center()
+        .build()
+        .map_err(|error| format!("Failed to create manager window: {error}"))
+}
+
+/// Create-if-needed then reveal + focus. Every entry point (tray, hotkey,
+/// single-instance callback, frontend command) goes through this so no path can
+/// hold a stale "window not found" assumption.
+///
+/// Must NOT be called from the event-loop thread: building a WebView blocks the
+/// calling thread until WebView2 finishes, and WebView2 needs that same loop to
+/// make progress — calling it from a `run_on_main_thread` callback deadlocks the
+/// whole app (measured 2026-11-24: the second instance hung, the Manager stayed
+/// an `about:blank` shell). Main-thread callers use [`request_manager_window`].
+pub(crate) fn reveal_manager_window(app: &tauri::AppHandle) {
+    match ensure_manager_window(app) {
+        Ok(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        Err(error) => crate::logging::log("warn", "window", &error),
+    }
+}
+
+/// Event-loop-safe variant for tray / single-instance callbacks: hop off the
+/// main thread first, then create.
+pub(crate) fn request_manager_window(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        reveal_manager_window(&handle);
+    });
+}
+
 /// 显示管理窗口
 #[tauri::command]
 pub async fn show_manager_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("manager") {
-        window.show().map_err(|e: tauri::Error| e.to_string())?;
-        window.set_focus().map_err(|e: tauri::Error| e.to_string())?;
-    }
+    reveal_manager_window(&app);
     Ok(())
 }
 
@@ -202,9 +260,10 @@ pub async fn close_all_note_windows(app: tauri::AppHandle) -> Result<(), String>
     // 获取所有窗口
     let windows = app.webview_windows();
     for (label, window) in windows {
-        // 只关闭以 "quick-note-" 开头的窗口
+        // 只关闭以 "quick-note-" 开头的窗口。`destroy()` 而不是 `close()`：
+        // 关闭走的是同一套语义，且不会被将来某个 CloseRequested handler 拦成隐藏。
         if label.starts_with("quick-note-") {
-            let _ = window.close();
+            let _ = window.destroy();
         }
     }
     Ok(())
@@ -266,25 +325,9 @@ pub(crate) fn toggle_manager_window(app: &tauri::AppHandle) {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+            return;
         }
     }
-}
-
-/// Wire the native Manager window events at startup: an autostart launch keeps
-/// the window hidden, and a close request hides instead of exiting the app.
-pub(crate) fn setup_manager_window(app: &tauri::AppHandle, launched_from_autostart: bool) {
-    // 监听 manager 窗口关闭事件，改为隐藏
-    let Some(window) = app.get_webview_window("manager") else { return; };
-    let window_clone = window.clone();
-    if launched_from_autostart {
-        let _ = window.hide();
-    }
-    window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            // 阻止默认关闭行为
-            api.prevent_close();
-            // 隐藏窗口
-            let _ = window_clone.hide();
-        }
-    });
+    // First press after a close: the window was destroyed, so build it.
+    reveal_manager_window(app);
 }
