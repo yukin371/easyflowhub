@@ -15,6 +15,7 @@ export interface TrashSettings {
 export interface EditorSettings {
   undo_steps: number;
   cursor_style: 'default' | 'accent' | 'focus';
+  /** `''` means "follow the theme" — the editor then uses `--editor-caret`. */
   cursor_color: string;
   cursor_trail: boolean;
 }
@@ -86,7 +87,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editor: {
     undo_steps: 100,
     cursor_style: 'accent',
-    cursor_color: '#4f5a43',
+    cursor_color: '',
     cursor_trail: true,
   },
   todo: {

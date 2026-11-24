@@ -302,7 +302,13 @@ fn save_note_with_conn(conn: &Connection, note: NoteInput) -> Result<SaveNoteRes
         }
     };
 
-    if merged_note.content.trim().is_empty() && merged_note.title.trim().is_empty() {
+    // A brand-new empty note is not persisted: autosave fires shortly after a
+    // note window opens, and an empty shell in the list would be noise. An
+    // *existing* note must still be allowed to become empty — skipping the
+    // write here used to leave the stale text in SQLite, so clearing the
+    // editor only looked like it worked and the old content came back on the
+    // next open.
+    if !exists && merged_note.content.trim().is_empty() && merged_note.title.trim().is_empty() {
         return Ok(SaveNoteResponse {
             ok: true,
             note: merged_note,
@@ -902,6 +908,34 @@ mod tests {
         let updated = save_note_with_conn(&conn, input("n1", "second")).expect("update");
         assert_eq!(updated.note.content, "second");
         assert_ne!(updated.note.updated_at, created.note.updated_at);
+    }
+
+    #[test]
+    fn clearing_an_existing_note_persists_the_empty_content() {
+        // Regression: clearing the editor must reach SQLite. Skipping the
+        // write for empty content made the old text reappear on reopen.
+        let conn = memory_db();
+        let created = save_note_with_conn(&conn, input("n1", "keep me")).expect("create");
+        assert_eq!(created.note.content, "keep me");
+
+        let cleared = save_note_with_conn(&conn, input("n1", "")).expect("clear");
+        assert!(cleared.note.content.is_empty());
+
+        let stored = get_note_helper(&conn, "n1").expect("read back");
+        assert!(stored.content.is_empty(), "stale content resurrected");
+    }
+
+    #[test]
+    fn a_new_empty_note_is_not_persisted() {
+        // Autosave can fire on an untouched new note; it must not leave an
+        // empty shell in the list.
+        let conn = memory_db();
+        let saved = save_note_with_conn(&conn, input("blank", "")).expect("noop save");
+        assert!(saved.note.content.is_empty());
+        assert!(
+            get_note_helper(&conn, "blank").is_err(),
+            "empty note must not reach the notes table"
+        );
     }
 
     #[test]

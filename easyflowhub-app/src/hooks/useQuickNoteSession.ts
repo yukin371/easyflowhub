@@ -39,6 +39,13 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
   const { maxUndoSteps } = options;
 
   const [note, setNote] = useState<Note | null>(null);
+  // Whether the current note already exists in SQLite. Only then may an empty
+  // body be saved — see `buildPersistParams({ allowEmpty })`.
+  //
+  // Kept in a ref rather than state so flipping it cannot add a dependency to
+  // `currentPersistParams`: every extra dependency there schedules another
+  // autosave, and the result of that save flips this flag in the first place.
+  const notePersistedRef = useRef(false);
   const [recentNotes, setRecentNotes] = useState<Note[]>([]);
   const [attachedImages, setAttachedImages] = useState<AttachedImageAsset[]>([]);
   const [resolvedImageLinks, setResolvedImageLinks] = useState<Array<{ src: string; alt: string }>>(
@@ -61,6 +68,8 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
   const { flushSave, scheduleSave, resetSaveFeedback } = useAutoSave({
     delayMs: AUTOSAVE_DELAY,
     onSaved: (updated) => {
+      // From now on the row exists, so clearing the editor must persist ''.
+      notePersistedRef.current = true;
       setNote(updated);
       setRecentNotes((prev) => {
         const next = prev.some((item) => item.id === updated.id)
@@ -126,7 +135,10 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
   );
 
   const currentPersistParams = useMemo(() => {
-    return buildPersistParams(note?.id ?? null, mergedEditorContent, note?.title ?? '');
+    return buildPersistParams(note?.id ?? null, mergedEditorContent, note?.title ?? '', {
+      // An existing note may be cleared to empty; a new one may not.
+      allowEmpty: notePersistedRef.current,
+    });
   }, [mergedEditorContent, note]);
 
   const refreshRecentNotes = useCallback(async (preferredId?: string | null) => {
@@ -170,6 +182,9 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
           const existingNote = await getNote(noteId);
           if (existingNote) {
             const parsed = extractAttachedImageAssets(formatNoteForDisplay(existingNote));
+            // Loaded from SQLite: the row exists, so an empty body is a valid
+            // state that has to be writable.
+            notePersistedRef.current = true;
             setNote(existingNote);
             setDisplayContent(parsed.textContent, true); // skipHistory
             setAttachedImages(parsed.images);
@@ -177,12 +192,14 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
             inspectBackup(existingNote);
           } else {
             const newNote = await createNote();
+            notePersistedRef.current = false;
             setNote(newNote);
             setDisplayContent('', true);
             setAttachedImages([]);
           }
         } else {
           const newNote = await createNote();
+          notePersistedRef.current = false;
           setNote(newNote);
           setDisplayContent('', true);
           setAttachedImages([]);
@@ -235,6 +252,7 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
         }
 
         const parsed = extractAttachedImageAssets(formatNoteForDisplay(nextNote));
+        notePersistedRef.current = true;
         setNote(nextNote);
         setDisplayContent(parsed.textContent, true); // skipHistory
         setAttachedImages(parsed.images);
@@ -254,6 +272,7 @@ export function useQuickNoteSession(options: UseQuickNoteSessionOptions) {
       flushHistory(); // 刷新历史记录
       await flushSave(currentPersistParams);
       const nextNote = await createNote();
+      notePersistedRef.current = false;
       setNote(nextNote);
       setDisplayContent('', true); // skipHistory
       setAttachedImages([]);

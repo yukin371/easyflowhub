@@ -16,6 +16,7 @@ import { NoteSwitcherPanel } from '../components/shared/NoteSwitcherPanel';
 import { QuickNoteToolbar } from '../components/shared/QuickNoteToolbar';
 import { QuickNoteToolsPanel } from '../components/shared/QuickNoteToolsPanel';
 import { QuickNoteImageStrip } from '../components/shared/QuickNoteImageStrip';
+import { MarkdownPreview } from '../components/manager/notes/MarkdownPreview';
 import { useShortcutEngine } from '../hooks/useShortcutEngine';
 import { useEditorPreferences } from '../hooks/useEditorPreferences';
 import { useQuickNoteShortcuts } from '../hooks/useQuickNoteShortcuts';
@@ -35,6 +36,8 @@ export function QuickNotePage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [activeImage, setActiveImage] = useState<{ src: string; alt: string } | null>(null);
+  /** 编辑 / 预览。预览态复用 MarkdownPreview，让图片在正文内联渲染。 */
+  const [previewMode, setPreviewMode] = useState(false);
 
   const switcherInputRef = useRef<HTMLInputElement>(null);
   const toolsButtonRef = useRef<HTMLButtonElement>(null);
@@ -346,6 +349,8 @@ export function QuickNotePage() {
         alwaysOnTop={alwaysOnTop}
         toolsButtonRef={toolsButtonRef}
         onToggleTools={toggleTools}
+        previewMode={previewMode}
+        onTogglePreview={() => setPreviewMode((previous) => !previous)}
         onToggleAlwaysOnTop={() => {
           void toggleAlwaysOnTop();
         }}
@@ -386,7 +391,7 @@ export function QuickNotePage() {
         </div>
       ) : null}
       <div style={{ flex: 1, minHeight: 0, padding: 8, paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {resolvedImageLinks.length > 0 ? (
+        {!previewMode && resolvedImageLinks.length > 0 ? (
           <QuickNoteImageStrip
             images={resolvedImageLinks}
             filenames={attachedImages.map((attachment) => attachment.filename)}
@@ -394,26 +399,40 @@ export function QuickNotePage() {
             onRemove={removeAttachedImage}
           />
         ) : null}
-        <EditorTextarea
-          textareaRef={textareaRef}
-          editorSettings={editorSettings}
-          variant="quick-note"
-          dragActive={imageInsertion.isDragActive}
-          dragHint="拖入图片以插入到快速笔记"
-          aria-label="笔记内容"
-          value={displayContent}
-          onChange={(e) => setDisplayContent(e.target.value)}
-          onKeyDown={(event) => {
-            applyMarkdownCompletion({
-              event,
-              value: displayContent,
-              onChange: setDisplayContent,
-            });
-          }}
-          onPaste={imageInsertion.handlePaste}
-          placeholder=""
-          autoFocus
-        />
+        {previewMode ? (
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              padding: '2px 8px 10px',
+            }}
+            aria-label="笔记预览"
+          >
+            <MarkdownPreview content={displayContent} />
+          </div>
+        ) : (
+          <EditorTextarea
+            textareaRef={textareaRef}
+            editorSettings={editorSettings}
+            variant="quick-note"
+            dragActive={imageInsertion.isDragActive}
+            dragHint="拖入图片以插入到快速笔记"
+            aria-label="笔记内容"
+            value={displayContent}
+            onChange={(e) => setDisplayContent(e.target.value)}
+            onKeyDown={(event) => {
+              applyMarkdownCompletion({
+                event,
+                value: displayContent,
+                onChange: setDisplayContent,
+              });
+            }}
+            onPaste={imageInsertion.handlePaste}
+            placeholder=""
+            autoFocus
+          />
+        )}
       </div>
       {activeImage ? (
         <ImageLightbox src={activeImage.src} alt={activeImage.alt} onClose={() => setActiveImage(null)} />

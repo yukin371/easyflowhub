@@ -23,7 +23,9 @@ const BASE_STYLE: Record<EditorTextareaVariant, CSSProperties> = {
     outline: 'none',
     resize: 'none',
     backgroundColor: 'transparent',
-    color: '#1a1a1a',
+    // Theme token, not a literal: the quick-note window keeps the dark palette
+    // by default, where a hard-coded near-black made the text invisible.
+    color: 'var(--quick-text)',
     fontSize: 14,
     lineHeight: 1.75,
     fontFamily: 'inherit',
@@ -67,7 +69,11 @@ export function EditorTextarea(props: EditorTextareaProps) {
         className={`${caretClassName} ${BASE_CLASS_NAME[variant]} ${className ?? ''}`.trim()}
         style={{
           ...BASE_STYLE[variant],
-          caretColor: editorSettings.cursor_color,
+          // An empty colour means "follow the theme": leaving the inline
+          // property unset lets `.manager-caret` / `.quick-note-caret` drive
+          // `caret-color` from `--editor-caret`, which already tracks the
+          // light/dark accent. A literal value here would win over that rule.
+          caretColor: editorSettings.cursor_color || undefined,
           boxShadow:
             editorSettings.cursor_style === 'focus'
               ? `inset 0 0 0 1px color-mix(in srgb, var(--manager-accent) 10%, transparent), inset 0 0 28px color-mix(in srgb, var(--manager-accent) ${editorSettings.cursor_trail ? 7 : 3}%, transparent)`
