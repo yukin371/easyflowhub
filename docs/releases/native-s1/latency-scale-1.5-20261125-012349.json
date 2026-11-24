@@ -1,0 +1,37 @@
+{
+    "kind":  "native-s1-latency-archive",
+    "label":  "scale-1.5",
+    "cycles":  200,
+    "scale":  0,
+    "timestamp":  "2026-11-25T01:23:49.1193979+08:00",
+    "shown":  {
+                  "min":  31.8,
+                  "p50":  47.8,
+                  "p95":  48.9,
+                  "p99":  49.3,
+                  "max":  49.4
+              },
+    "refresh":  {
+                    "min":  111.8,
+                    "p50":  140.7,
+                    "p95":  142.6,
+                    "p99":  143.0,
+                    "max":  143.7
+                },
+    "budget":  {
+                   "p95_ms":  60,
+                   "p99_ms":  100,
+                   "p95_ok":  true,
+                   "p99_ok":  true
+               },
+    "leak":  {
+                 "kind":  "native-s1-leak",
+                 "cycles":  200,
+                 "start_private_mb":  130.0,
+                 "end_private_mb":  122.2,
+                 "private_delta_mb":  -7.8,
+                 "start_handles":  351,
+                 "end_handles":  377,
+                 "handles_delta":  26
+             }
+}
