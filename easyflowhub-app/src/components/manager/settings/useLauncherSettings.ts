@@ -43,6 +43,18 @@ export function toLauncherTriggerSettings(settings: LauncherSettings): LauncherT
   };
 }
 
+/**
+ * 「自动避开冲突」的候选组合，按被第三方软件占用的概率从低到高排列。
+ * 刻意避开 QQ 截图 / 微信 / 钉钉 / 输入法的常见默认键位。
+ */
+const LAUNCHER_SHORTCUT_CANDIDATES = [
+  'Ctrl+Shift+Space',
+  'Ctrl+Alt+K',
+  'Ctrl+Alt+J',
+  'Ctrl+Shift+F10',
+  'Alt+Shift+Space',
+];
+
 export function useLauncherSettings() {
   const [settings, setSettings] = useState<LauncherSettings>(DEFAULT_LAUNCHER_SETTINGS);
   const [saveState, setSaveState] = useState<'saved' | 'dirty'>('saved');
@@ -51,6 +63,8 @@ export function useLauncherSettings() {
   const [excludedAppInput, setExcludedAppInput] = useState('');
   const [snowShotPath, setSnowShotPath] = useState('');
   const [snowShotPathSaveState, setSnowShotPathSaveState] = useState<'saved' | 'dirty'>('saved');
+  const [autoResolving, setAutoResolving] = useState(false);
+  const [autoResolveNote, setAutoResolveNote] = useState<string>();
 
   useEffect(() => {
     setSettings(loadLauncherSettings());
@@ -132,6 +146,41 @@ export function useLauncherSettings() {
     setError(message);
   };
 
+  /**
+   * 冲突自愈：按「被占用概率从低到高」依次尝试候选组合。
+   *
+   * Windows 的 RegisterHotKey 是先到先得的独占注册，native 侧注册失败会
+   * 直接抛错（`apply_launcher_trigger_settings` 先注册再落盘），因此这里
+   * 不需要额外的探测接口：apply 成功即代表该组合可用，失败就试下一个。
+   * 每次失败都不会影响已生效的旧组合（native 只在新组合注册成功后才替换）。
+   */
+  const autoResolveConflict = async () => {
+    setAutoResolving(true);
+    setAutoResolveNote(undefined);
+    try {
+      for (const candidate of LAUNCHER_SHORTCUT_CANDIDATES) {
+        if (candidate === settings.keyboardShortcut) continue;
+        const next: LauncherSettings = { ...settings, keyboardShortcut: candidate };
+        try {
+          await applyToNative(next);
+        } catch {
+          continue;
+        }
+        setSettings(next);
+        persistToStorage(next);
+        setSaveState('saved');
+        setError(undefined);
+        setAutoResolveNote(`已切换到 ${candidate}`);
+        return candidate;
+      }
+      setSaveState('dirty');
+      setError('候选组合均被占用。请手动录入其他组合，或在占用该组合的软件中解绑。');
+      return null;
+    } finally {
+      setAutoResolving(false);
+    }
+  };
+
   const resetToDefaults = () => setSettings(DEFAULT_LAUNCHER_SETTINGS);
 
   /**
@@ -174,6 +223,9 @@ export function useLauncherSettings() {
     persistToStorage,
     markSaved,
     markFailed,
+    autoResolveConflict,
+    autoResolving,
+    autoResolveNote,
     resetToDefaults,
     syncFromTrigger,
   };

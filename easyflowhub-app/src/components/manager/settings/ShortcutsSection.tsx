@@ -78,7 +78,7 @@ export function ShortcutsSection({ domain }: ShortcutsSectionProps) {
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,180px)_minmax(0,1fr)] lg:items-center">
           <div>
             <p className="text-sm text-[color:var(--manager-ink-soft)]">键盘快捷键</p>
-            <p className="mt-1 text-xs leading-5 text-[color:var(--manager-ink-subtle)]">系统级快捷键。若同一组合也被其他软件（如 QQ 截图）监听，两个程序可能同时响应；请重新录入一个不同组合并保存，或在另一软件中解绑。</p>
+            <p className="mt-1 text-xs leading-5 text-[color:var(--manager-ink-subtle)]">Windows 的系统级快捷键是「先到先得」的独占注册。组合被其他软件占用时保存会直接失败；若对方使用键盘钩子（QQ 截图属于这一类），则两边可能同时响应，系统无法强制独占。可让本应用自动换用一组未被占用的组合，或到占用方软件中解绑。</p>
           </div>
           <div>
             <button
@@ -102,6 +102,23 @@ export function ShortcutsSection({ domain }: ShortcutsSectionProps) {
                 与“{launcherShortcutConflict}”重复，请更换组合。
               </p>
             ) : null}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void launcher.autoResolveConflict();
+                }}
+                disabled={launcher.autoResolving || launcher.settings.activation === 'middleMouse'}
+                className="rounded-[10px] border border-[color:var(--manager-border)] bg-[color:var(--manager-panel-strong)] px-3 py-1.5 text-xs text-[color:var(--manager-ink-soft)] transition hover:border-[color:var(--manager-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {launcher.autoResolving ? '正在检测占用…' : '自动避开冲突'}
+              </button>
+              {launcher.autoResolveNote ? (
+                <span className="text-xs text-[color:var(--manager-success)]" role="status">
+                  {launcher.autoResolveNote}
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
 
