@@ -3,6 +3,14 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
+    // The frontend bundle is embedded by tauri-codegen while `tauri::generate_context!`
+    // expands. Cargo only reruns a build script for paths it was told to watch, and
+    // the generated asset table tracks the *previous* run's file names. A Vite rebuild
+    // rotates the `assets/index-<hash>.js` name, so without this line cargo reuses the
+    // stale asset table and a local release build ships a binary whose page never
+    // finishes loading — the webview renders blank while `setup` still runs.
+    println!("cargo:rerun-if-changed=../dist");
+
     build_scriptmgr();
     tauri_build::build()
 }
