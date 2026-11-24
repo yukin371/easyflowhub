@@ -116,6 +116,9 @@ jobs:
       - name: Architecture guard (cycles / layers / invoke baseline / size debt)
         run: node scripts/check-architecture.mjs
 
+      - name: Native architecture guard (crate layers / symbol leaks / size)
+        run: node scripts/check-native-architecture.mjs
+
   native-windows:
     name: Native Tests (Windows)
     runs-on: windows-latest

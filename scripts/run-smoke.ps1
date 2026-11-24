@@ -100,6 +100,17 @@ Invoke-Step -Name "Manager theme token audit" -WorkingDirectory "." -Action {
     & (Join-Path $scriptRoot "check-theme-tokens.ps1")
 }
 
+Invoke-Step -Name "Native architecture guard" -WorkingDirectory "." -Action {
+    node (Join-Path $scriptRoot "check-native-architecture.mjs")
+}
+
+# Primary gate for the Native Runtime track is responsiveness, not memory.
+# Runs in a child process so a budget failure cannot terminate the smoke run.
+# Prints SKIP (exit 0) until the app emits [timing] hotkey_down / first_frame.
+Invoke-Step -Name "Responsiveness budget" -WorkingDirectory "." -Action {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "measure-latency.ps1")
+}
+
 Invoke-Step -Name "Cargo check" -WorkingDirectory "easyflowhub-app" -Action {
     cargo check --manifest-path src-tauri/Cargo.toml
 }
