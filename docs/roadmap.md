@@ -144,6 +144,26 @@
 
 ### Recent Progress
 
+- `2026-11-24` **P0.5 完成：窗口生命周期 + 计时契约，静置 600 → 282.8 MB**。设计与验收标准先落在 [plans/2026-11-24-window-lifecycle-and-latency-contract.md](./plans/2026-11-24-window-lifecycle-and-latency-contract.md)，再按 A/B/C 三批实施并逐条验收。
+  - **Batch A（度量）**：`measure-footprint.ps1` 增加 `-Label` / `-OutFile`，三姿态（idle / launcher / manager-2notes）快照归档到 `docs/releases/footprint/0.2.0/`。注意 PS 5.1 里 `$json` 与开关 `-Json` 是同一个变量，赋值会直接报错。
+  - **Batch B（生命周期）**：Manager 从 `tauri.conf.json` 移除，改由 `ensure_manager_window` 按需创建、关闭即销毁；`close_all_note_windows` 改用 `destroy()`。实测 **idle Private 600.0 → 261.6–282.8 MB（−53% ~ −56%）**、WebView2 进程 7 → 6、sidecar 静置 0（懒启动）；关闭 Manager 12 ms 内释放，重建 222–248 ms；10 轮开关与 2 笔记开关均无累积。**顺带修掉两个真实缺陷**：`single-instance` 插件必须最先注册（否则第二个进程先建窗再退出，留下 `about:blank` 与热键冲突），且不能在事件循环线程里就地 `build()` WebView（会死锁，改为 `async_runtime::spawn`）。
+  - **Batch C（计时契约）**：热键回调打 `[timing] hotkey_down`（在选区捕获之前，180 ms 上限要计入），Launcher 连续两帧后回调 `report_first_frame`；`log_timing()` 无视 debug 开关落盘。实测 **p50 87 ms / p95 101 ms / p99 130 ms（n=31）**，作为原生壳的对照组写入设计 §7.1；目标仍是 p95 ≤ 60 ms。
+  - 未触发"动因被证伪"分支（降幅 53% ≫ 25% 判定线）。Phase 0 剩余工作是 S1–S4 四个 spike。
+
+- `2026-11-24` **光标跟随主题 + 修掉"清空正文不落库"**。两项都是上一个会话收尾时发现、用户确认要改的。
+  - **光标颜色**：`editor.cursor_color` 的默认值原来是硬编码 `#4f5a43`（深橄榄），暗色面板上对比度极低。改为**空串 = 跟随主题**：CSS 里 `--editor-caret: var(--manager-accent)` 与 `.manager-caret / .quick-note-caret { caret-color: var(--editor-caret) }` 本来就存在，只是被 `EditorTextarea` 的内联 `caretColor` 覆盖了；现在内联只在用户显式选色时输出（`cursor_color || undefined`）。设置面板加「跟随主题色（推荐）」开关，跟随时色板与文本框禁用并显示当前主题 accent（`getComputedStyle` 读 `--manager-accent`，主题切换后重读），不再有指向某个具体颜色的误导。旧档案里的 `#4f5a43` 在读写两侧都归一化为空（`normalize_cursor_color`），本机 DB 已一次性迁移并留备份。
+  - **清空不落库（真 bug，双根因）**：前端 `buildPersistParams` 在「空内容且无标题」时直接返回 `null`，保存请求根本没发出；后端 `save_note_with_conn` 在同样的条件下提前 return，即使收到请求也不写 UPDATE。两处都在防「自动保存把空壳笔记塞进列表」，但都没区分**新建**与**已有**。修法一致：新建空笔记仍跳过（不产生空壳），已有笔记清空必须落库。前端由 `useQuickNoteSession` 的 `notePersistedRef` 决定是否传 `allowEmpty`（`getNote` 命中或首次保存成功置真，新建笔记置假），后端把守卫收紧成 `!exists && …`。
+  - **实测**（release 构建 + WebView2 CDP）：`get_settings` 返回 `cursor_color = ""`；快速笔记 `textarea` 的 computed `caret-color = rgb(134, 171, 220)` 即 `--manager-accent`，内联属性为 `none`；写入 10 字符后落库、清空后该行 content 变为 `""`（修复前会一直保留旧文本）。截图确认暗色下正文清晰、工具栏四段互不遮挡。
+  - **验证**：Rust `cargo test --lib` 96 项（新增 5：守卫归一化、默认跟随主题、清空落库、新建空笔记不落库）、前端 57 文件 / 418 项（新增 `lib/notePersistence.test.ts` 5 项）、`tsc --noEmit` 通过；release exe 已部署到安装目录（旧版备份 `easyflowhub.exe.bak-20261124-2227`）。
+- `2026-11-24` **Phase 0.5 首批止血：自启动四步修复落地 + 两个快速笔记缺陷**。用户报告"设置里的自启动开关不知何时被关掉了"，与 §2.4 的诊断一致（状态只存在于注册表，被外部清除后无法自愈、UI 静默 OFF）。新增 native `autostart.rs`：`settings` 表键 `autostart = {"enabled":bool}` 保存意图（**不放进 `AppSettings`**，避免设置面板全量保存用旧快照覆盖），`reconcile()` 在启动时补回被删的启动项，`apply()` 写入后回读校验并回滚半切换状态，`get/set_autostart_state` 取代前端对插件直调；`single_instance` 回调忽略 `--autostart`，开机不再抢弹 Manager。对账边界：意图为关而系统存在时**不自动关闭**（可能被安装器/用户重新添加）。实测（dev 构建 + WebView2 CDP）：删掉 `HKCU\...\Run\EasyFlowHub` 后重启自动补回，`StartupApproved` 写回 `02`；`set` 关→开链路正确。同轮修两个快速笔记 UI 缺陷：`EditorTextarea` 的 `quick-note` 变体把正文颜色硬编码成 `#1a1a1a`，暗色主题下正文不可见 → 改用 `var(--quick-text)`（实测 computed `rgb(220,230,244)`）；`QuickNoteToolbar` 的 `•••` 是绝对居中，与 flex 流里的预览/置顶按钮在窄窗口重叠 → 改为左/中/右三段 flex（实测 300px 宽下工具按钮 132–158、预览 234–262、置顶 264–292，无交叠）。验证：前端 56 文件 / 413 项、Rust `cargo test --lib` 91 项、tsc、vite build、`check-architecture` 全通过。
+- `2026-11-24` **拿到首批内存基线 + 定位自启动失效**：启动应用实测托盘静置（manager / launcher 均 `visible:false`、无人操作）**Private 545.3 MB / Working Set 846.1 MB / 10 进程**（WebView2 7 个，最大单进程 352.9 MB；启动后 30 s 与 130 s 两次采样 564→546 MB，为稳态而非瞬时峰值），是原生 65 MB 解释线的 8.4 倍——"占用与是否在用无关、只与隐藏窗口数相关"从判断变成证据。附带发现开机自启动失效：`HKCU\...\Run` 无 EasyFlowHub 项，但 `StartupApproved\Run` 留有记录（说明曾创建后被移除）；根因是**自启动状态只存在于注册表项、未进 `settings` 表**，被外部清除后应用无法自愈且 UI 静默回 OFF。已写入设计 §2.4 与 Phase 0.5，修复含四步：偏好持久化 / 启动对账 / 写入后校验 / 单实例回调尊重 `--autostart`（当前会弹 Manager）。同时确定 Launcher 动作网格**固定 4 列、窄屏降 3 列**（列宽 <96 逻辑像素即降档，两套布局启动期算好并缓存，滚动位置按项索引保存）。`measure-footprint.ps1` 输出改为单次 success 流写入，可被 `Out-File` 重定向且空行不再被吞。
+- `2026-11-24` **内存降为次级目标 + 度量只在本机**：用户确认"8 GB 机器内存足够、额外设备测试没意义、测延迟才有意义"，且"保障常用功能速度前提下自然越小越好"。§7.2 重写为"次级目标 + 解释线"（65/55 MB 不再阻塞发布），补常驻内存构成拆解（刚性/半刚性/软性 + 结构性下限 30–50 MB）、6 条必做免费优化、4 条禁止的反向优化、RC 趋势归档规则；Phase 0 移除第二台机器与 RDP 阻塞要求；G1 与 S1 判据明确"响应阻塞、内存解释"。
+- `2026-11-24` **实测本机画像，修正 DPI 相关估算**：Ryzen 7 4800H / 31.4 GB / Radeon 集显 / **3840×2160 @150%** / Win11 build 26300。由此发现原估算按 1366×768 计不可用：150% 下字形面积 ×2.25，原计划的"3500 常用字图集"≈30 MB+，全屏首帧纹理 ≈33 MB（3840×2160×4）。改为**图集只预栅格化首屏字符集（300–800 字，3–6 MB）+ Launcher 必须是面板而非全屏层**，并写入 ADR 作为硬约束。`measure-footprint.ps1` 同步输出 `screen=分辨率 @DPI` 与主 GPU，避免跨 DPI 误比内存。顺带测得系统 WebView2 Runtime 已由 10 月的 878.7 MB（v157）涨到 2029.3 MB（v158）——一个月翻倍。
+- `2026-11-24` **澄清 Launcher 语义 + 高 DPI 专项优化**：用户指出 launcher 模仿 Quicker 快速面板——**跟随光标的竖版动作面板，不是工作台**，工作台另有页面。据此改正设计：面板尺寸按实测 `tauri.conf.json` 定为 440×860 逻辑像素（此前误写为 960×640 横版）、首帧缓冲 150% 下 3.4 MB 而非全屏层 33 MB；新增 §5.1.1「光标锚定与高 DPI」，含逐档缓冲/图集表、5 条零延迟优化（只按面板尺寸分配缓冲、图集只栅格化首屏字符、缩放分键最多 2 档、图标按需栅格化、关闭 MSAA/中间 FBO/模糊）与 3 个延迟坑（热键路径不枚举显示器、`pixels_per_point` 必须在 `show` 前设好、DPI 切换时新旧图集交接避免空白帧）。同时修正 Phase 0.5：**launcher 仍预创建**（懒创建会破主门禁），止血只动 manager 与临时窗口。`measure-footprint.ps1` 扩展为逐显示器分辨率 + 缩放输出。
+- `2026-11-24` **定稿预热边界**：用户确认"60 ms 已足够，最常用功能预热、其余冷启动、均衡即可"。设计新增 §5.8.1 预热分级（P0 启动预热 / P1 会话内复用 / P2 冷启动 / 不预热），判据为"每天十次以上"；同时把"不做无限加码"写入非目标——60 ms 是终点，继续下探会拖慢冷启动且增预热度过期类缺陷。ADR-0009 第 8 条同步补边界。
+- `2026-11-24` **修正目标环境**：撤销 4 GB 画像（用户反馈可接触的最低配置为 8 GB，4 GB 机器"运行 Win10 都勉强"），最低支持改为 8 GB / 4 核 / 集显；`lite` 重新定位为"软件渲染 / RDP 带宽受限"降级档，**集显改为走 standard**；lite 常驻上限 45→55 MB（内存已非主要矛盾）；Phase 0 度量改为本机集显 + `mstsc` 回环，不再需要额外硬件。
+- `2026-11-24` 确认 Native Runtime 方向（ADR-0009 `accepted`）：分阶段、成熟方案优先、低占用并适配 4 GB/集显/远程桌面、UI 简洁优先 + 主题系统。设计补入 `lite` 降级、按姿态预算与架构门禁；新增 `scripts/check-native-architecture.mjs`（crate 分层 / 越界符号 / 单文件 800 行，`native/` 缺失时 skip）并接入 `run-smoke.ps1` 与 CI `architecture-gates`；`ARCHITECTURE_GUARDRAILS.md` 新增第 10 节 native 层图。**未改产品代码**，等待 Phase 0 四姿态/四 spike 与 G0。
+
 - `2026-10-20` 已完成阶段 D（V1-F5 持续门禁）：新增 `scripts/check-architecture.mjs`（拦截 import 环、lib/features 反向依赖、`lib/tauri` 外原始 invoke、实现文件规模债，配套 `scripts/architecture-baseline.json` 债务基线只减不增）；schema-handler 配对由 Go 测试覆盖；`test.yml` 新增 `architecture-gates` 与 `native-windows`（windows-latest cargo check + lib test）两个 PR 门禁，补上审查指出缺失的 Windows native PR 检查。至此架构审查四个阶段（A/B/C/D）全部实施。
 
 - `2026-10-20` 已完成阶段 C（F11 + 第5节大文件拆分）：mcp/server.go 拆为 protocol/tools_*/notifications + 收敛 server.go，F11 `get_task_result` 等待改为真实可取消轮询（`taskWaiter`），schema/handler 同源、router 唯一 dispatch 并移除 legacy fallback；SettingsPanel 拆为 `components/manager/settings/*` 并修复 F08 UI 半边（普通保存不夹带未提交 Launcher 草稿）；native inbox.rs 拆为 `inbox/{schema,attachments,repository,service,commands}`，lib.rs 收敛为装配根并抽出 launcher/app_windows/window_position（102 命令不变）；编辑页面抽出 useQuickNoteSession/useNotesArchive/useTodoGroups/useTodoEditSession。验证：前端 52 文件 / 381 项 + tsc、Go `./...` + vet、Rust 88 项 + `cargo check` 通过。
@@ -227,6 +247,9 @@
 - **发布结果（2026-10-21）**：`0.2.0` 已按上述门禁完成本地发布检查并打 tag `v0.2.0`，由 GitHub Actions Release 工作流产出 Windows portable / NSIS / MSI、Go sidecar 与 `latest.json`。自动化门禁、本地 Windows 打包预检、sidecar 哈希对照和浏览器 / 原生窗口 smoke 通过；上一行列出的 Windows 打包态人工验收项（Snow Shot 会话、真实 Relay Provider、Files 回收站 / 权限、Downloads 取消 / 重试、主题高对比度、安装后 sidecar 启动）仍作为 follow-up 待回填 checklist，不阻塞本次发布但需在 `v0.2.x` 收口。P2 Voice 的麦克风实机验收同样延后，Phase 5 保持进行中。
 - **发布产物与 CI（2026-10-21）**：Release 与 Test 工作流通过。发布资产为 `EasyFlowHub_0.2.0_x64-setup.exe`、`EasyFlowHub_0.2.0_x64_en-US.msi`、`EasyFlowHub_0.2.0_portable.exe`、`scriptmgr.exe` 与 `latest.json`（`sha256` 与 CI 构建的 NSIS 安装包一致，释放为 prerelease，因此 `releases/latest` 仍指向 v0.1.1，需正式发布时手动切换）。期间修复 `Native Tests (Windows)` 的 `cargo check`：`tauri.conf.json` 将 `scriptmgr.exe` 声明为资源，缺少该文件时 Tauri build script 直接失败；PR 工作流现在先安装 Go 并构建 Windows amd64 sidecar 再运行 cargo 步骤（本地 `tauri build` 因 build.rs 先生成而从未暴露该问题）。
 - **应用内更新签名链路（2026-10-21）**：已闭合。启用 `bundle.createUpdaterArtifacts` 后 CI 产出 `.exe.sig` / `.msi.sig`；发布工作流改为上传签名产物并按 Tauri v2 格式生成 `latest.json`（`platforms.windows-x86_64.signature/url` + `pub_date`，`json.tool` 校验）。旧公钥指向已弃用的 deskflow 密钥、与签名密钥不匹配，导致更新从未成功；现已换新无密码 minisign 密钥对（key ID `F8A2197D5E9678E6`），`tauri.conf.json` 公钥与 GitHub Secret 同步轮换。用 minisign 对 CI 产出的 `EasyFlowHub_0.2.0_x64-setup.exe` 验签通过（trusted comment 含 `version:0.2.0`）；已用新安装包重装本机应用，新公钥已烘焙进 `easyflowhub.exe`。旧密钥以 `*.bak` 备份在 `C:\Users\yukin\Desktop\secret\easyflowhub\`。v0.2.0 已按修好的流水线重新发布。
+- **本地 release 构建资源嵌入修复（2026-10-22）**：本地增量构建时 cargo 不会因 `dist` 变化重跑 build script，`tauri::generate_context!` 会复用上一次的资源表；Vite 每次构建轮换 `assets/index-<hash>.js`，于是产出的 exe 内嵌资源与 `index.html` 引用不匹配，表现为 manager 白屏、launcher 全透明（`setup` 仍会执行，`page_load` 只到 `Started`）。`src-tauri/build.rs` 现声明 `cargo:rerun-if-changed=../dist`，前端产物变化会触发资源上下文重新生成。CI 为全新构建不受影响，该缺陷只影响本地打包。
+- **Launcher 与快速笔记体验修复（2026-10-22）**：① Launcher 四周 4px 透明带来自 `.launcher-shell` 的 `padding` 与 `calc(100vw - 8px)` 叠加，已改为 `padding: 0` + panel 铺满，并去掉透明窗口内无意义的外阴影；② 快捷键冲突新增「自动避开冲突」，按候选组合真实试注册（`Ctrl+Shift+Space → Ctrl+Alt+K → Ctrl+Alt+J → Ctrl+Shift+F10 → Alt+Shift+Space`），成功即落盘并提示，全部失败才报错；Windows `RegisterHotKey` 为独占注册，对方用键盘钩子时无法强制抢占，故只提供避让与明确说明；③ 快速笔记新增「编辑 / 预览」切换，预览复用 `MarkdownPreview`（含 `asset://` 解析与双击放大），图片在正文内联显示，顶部缩略条在预览态隐藏。
+- **Launcher 快捷键卡死修复（2026-10-22）**：快捷键回调运行在事件循环线程，而 `capture_selected_text` 会在其中同步执行 `SendInput` 模拟 Ctrl+C、读写剪贴板并 `sleep(45ms)`；当 QQ 截图等第三方工具因键盘钩子同时响应并抢占剪贴板 / 焦点时，这段被显著拉长，导致窗口画出后消息泵阻塞、表现为「未响应」且关闭按钮失效。现在抓取改为后台线程 + `SELECTION_CAPTURE_TIMEOUT_MS = 180ms` 硬超时（超时仅放弃「选中文本」增强，Launcher 照常弹出），并增加 `KEYBOARD_TRIGGER_DEBOUNCE_MS = 260ms` 防抖，吞掉同一次物理按键被钩子重复派发的多次触发；鼠标中键触发同样走超时版本。冲突本身无法程序化消除（对方使用键盘钩子时系统无法强制独占），仍以「自动避开冲突」换键为最终解法。
 - **未完成项（发布后跟进）**：Windows 打包态人工 smoke 与 P2 Voice 验收顺延到 `v0.2.x`。
 - **Track V0-A. Launcher and Context**：继续复用 action registry，统一键盘 / 中键入口、排除软件、输入上下文和输出路由；新增 `external.snow-shot.capture` 外部动作。
 - **Track V0-B. Capture and Inbox**：Snow Shot 提供可见截图会话；用户复制截图后粘贴进 Inbox。剪贴板文本、图片、文件和链接统一落入本地 Inbox，再由 Manager 整理。
@@ -301,6 +324,64 @@
 - `2026-10-16` 已补齐 Snow Shot 检测优先级、无效路径、启动失败和 camelCase IPC 返回值测试；完整前端测试 27 个文件 / 148 项通过，TypeScript 与 Rust 检查通过。
 - `2026-10-16` 已完成第一轮毛玻璃主题迁移：全局冷色玻璃 tokens、深色 / 浅色 / 系统主题切换、Manager / Launcher / Quick Note / 美化设置页面适配，并为不支持模糊的环境保留不透明 fallback；待 Windows 打包产物进行最终可读性与高对比度复验。
 - `2026-10-16` 已完成一轮 Windows 主题实机验收：原生 Tauri Manager 能加载真实笔记，深色 / 浅色主题可切换，Launcher 搜索与收藏筛选可用；期间发现并修复暗色 Manager 的 `bg-white/*` 半透明残留。Quick Note / Todo 子窗口与 Snow Shot 原生截图会话仍需下一轮独立窗口 smoke，Snow Shot 需预先开启 MCP integration；记录见 [windows-theme-smoke-2026-10-16.md](./checklists/windows-theme-smoke-2026-10-16.md)。
+
+## Native Runtime Track（`accepted`，ADR-0009）
+
+> 状态：**方向与细则已确认，未进入实施**。分阶段推进；Phase 0 先补齐度量与四项 spike，过 G0 后开始 Phase 1。
+>
+> - 设计：[plans/2026-11-24-native-runtime-redesign.md](./plans/2026-11-24-native-runtime-redesign.md)
+> - 决策：[decisions/ADR-0009-windows-native-runtime.md](./decisions/ADR-0009-windows-native-runtime.md)
+> - 架构约束：[ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md) 第 10 节
+> - 度量 / 门禁：`scripts/measure-latency.ps1`（响应，**主门禁**）、`scripts/measure-footprint.ps1`（内存/磁盘）、`scripts/check-native-architecture.mjs`（分层）
+
+### 已确认约束
+
+1. **响应优先（最高优先级）**：以常驻内存换速度。主门禁为热唤起 热键→首帧 p95 ≤ 60 ms（`lite` ≤ 120 ms）、冷唤起 ≤ 400 ms。**60 ms 即终点**，不追加到 30–40 ms（继续下探会拖慢冷启动）。
+   - **内存是响应约束下的次级目标**："保障常用功能速度的情况下自然越小越好"。65 MB（`lite` 55 MB）是解释线而非阻塞项；结构性下限约 30–50 MB（渲染设备 + 字体图集 + 首帧纹理），且随分辨率/缩放变化——4K@150% 下全屏首帧纹理 **≈33 MB**、3500 字图集 ≈30 MB+，因此 **Launcher 必须是面板而非全屏层、图集只预栅格化首屏字符集**。
+   - **高像素设备专项**：缓冲只按面板尺寸分配（440×860 逻辑 @150% = 660×1290 ≈ 3.4 MB，全屏层则 33 MB，差 10 倍）；图集与图标缓存按缩放分键、跨屏最多保留 2 档；跨屏/改缩放时新旧图集交接，避免文字空白一帧。逐档数值见设计 §5.1.1。
+   - 省内存分两类：**零响应代价的必须做**（隐藏态不重绘、列表虚拟化、图片降采样、关窗释放纹理、图集单档裁剪、worker 空闲退出）；**用响应换的一律不做**（关闭即销毁 Launcher、空闲释放图集、取消预创建）。
+   - **预热只给常用路径**：P0（Launcher 窗口/渲染设备/字体图集/首帧纹理/最近项快照、快速笔记控件、SQLite 常开）与 P1（会话内复用 Manager 渲染设备与 FTS）预热；P2 低频能力（文件搜索/下载/语音/relay/MCP/扩展/回收站深扫）一律冷启动、允许首屏空态渐进填充。判据是"每天十次以上"，详见设计 §5.8.1。
+2. **分阶段**：常驻壳 → 工作台 → 编辑器 → 下线 Tauri，每阶段可回退；迁移期按 T-Gate 0–3 逐格移交，最多 1 个 WebView 进程，T-Gate 0→1 不超过 8 周。
+3. **成熟优先**：egui + 系统 RichEdit 为主路径；G0 失败才启用 C# WinUI 3 退路。
+4. **目标环境**：最低 8 GB / 4 核 / 集显；4 GB 不承诺可用（允许启动，不进 CI、不占预算）。`lite` 只用于软件渲染 / RDP；**集显走 standard**（原设计让集显进 lite 是错的）。lite 的取舍是"仍预热 P0，但不预加载最近项、不做首帧纹理缓存"，不是"不预热"。
+5. **UI 简洁优先**：实色分层，不做毛玻璃/模糊/渐变/发光；主题 token 负责美观；Mica 保留为可选主题（默认关闭、Win11 显式开启）。
+6. **架构门禁**：crate 分层 + `check-native-architecture.mjs`，CI 阻塞，例外必须 ADR。
+7. **Launcher 语义（产品澄清）**：launcher 是**跟随光标的竖版动作面板**（Quicker 式，440×860 逻辑像素，光标所在显示器居中夹紧），工作台（Manager）是另一个窗口、另一种入口，两者不合并；不做全屏遮罩。这个语义同时决定了首帧缓冲只有 3.4 MB（150% 下）而不是 33 MB。
+
+### 动因
+
+- 产品事实是 Windows-only，但运行时仍为每个窗口支付一套 WebView2 renderer；manager 与 launcher 以 `visible: false` 创建，托盘静置也常驻。
+- 2026-10-22 白屏事故的三个根因（WebView2 profile 半写、`EBWebView` 损坏、cargo 增量未重新内嵌 `dist`）都来自 WebView 运行时与资源内嵌模型。
+- 静态实测（2026-11-24）：安装目录 39.4 MB、`easyflowhub.exe` 22.8 MB、`scriptmgr.exe` 16.6 MB、WebView2 profile 55.5 MB。**托盘静置内存实测 545.3 MB Private / 846.1 MB Working Set / 10 进程**（详见设计 §2.2）；Launcher 与 Manager+2 笔记两个姿态待补。
+
+### 目标
+
+- 热唤起 p95 ≤ 60 ms（`lite` ≤ 120 ms）、冷唤起 ≤ 400 ms（**唯一阻塞发布的指标**）；常驻 ≤ 65 MB（`lite` ≤ 55 MB，解释线）；Manager + 2 快速笔记 ≤ 220 MB；安装包 ≤ 25 MB。
+- 度量只在本机进行，不设第二台低配机、不做跨机对比——内存不是可用性瓶颈，延迟才是决策依据。
+- 单进程原生 Rust 壳（egui 页面 + 系统 RichEdit 文本岛），T0–T2 原生，T3 低频能力退为按需 worker。
+- 数据契约不变：继续使用 `notes.db`，双栈期单写者，升级前自动备份。
+
+### Phase Plan
+
+| Phase | Status | Goal | Gate |
+|---|---|---|---|
+| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ 计时契约（已完成）+ S1 壳（含预热路径）/ S2 编辑器 / S3 数据 / S4 门禁；延迟是重点，RDP 回环可选 | `G0` |
+| P0.5. 先行止血 | `[done]` 2026-11-24 | 现版本窗口生命周期改造：**manager 不预创建 + 关闭即销毁**、临时窗口关闭即销毁（launcher 仍预创建，不动主门禁）；**修复开机自启动失效**（偏好持久化 + 启动对账 + 写入校验）。实测静置 600 → 262–283 MB（−53% ~ −56%） | — |
+| P1. 常驻壳 | `[pending]` | 主题 token、托盘、热键、**预创建 Launcher**、快速笔记、待办卡片、`lite` 降级；Manager 暂由 Tauri 按需启动 | `G1` |
+| P2. 工作台 | `[pending]` | 笔记 / 收集箱 / 待办 / 脚本 / 设置 / 回收站原生，低频面板只留最小入口 | `G2` |
+| P3. 编辑器 | `[pending]` | RichEdit 文本岛、Markdown 装饰、图片、预览、自动保存 | `G3` |
+| P4. 下线 Tauri | `[pending]` | 删除 WebView 依赖，更新器与安装器切换，回滚演练 | `G4` |
+
+### 范围边界
+
+- v2 原生范围按设计第 3.3 节收窄，约 9k 行 UI 等价物；全量 13 面板 parity 不作为 v2 目标。
+- files / downloads / voice / relay / mcp / extensions 降级为 worker + 最小入口（已确认）；tasks 合并进 scripts 运行记录。
+- **不合并 `scriptmgr-go`**：合并对响应门禁贡献接近 0，成本是重写 12.8k 行 + 7.5k 行测试；仅当 J1–J4 判据触发时复核（见设计 Phase 5）。替代方案为 worker 生命周期优化。
+
+### 待办
+
+- 无待确认项。后续仅由 G0–G4 实测驱动调整；偏离主门禁的取舍必须走 ADR 例外。
+
 
 ## Candidate Next Version
 

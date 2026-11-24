@@ -41,3 +41,4 @@
 - [ADR-0006 Windows 录音归属与 Inbox 回流](./ADR-0006-voice-recording-and-inbox.md)
 - [ADR-0007 Relay 本地 API 暴露与密钥回显边界](./ADR-0007-relay-local-api-security.md)
 - [ADR-0008 录音后转写的 Owner、Provider 适配与隐私确认](./ADR-0008-voice-transcription-and-relay.md)
+- [ADR-0009 Windows 原生运行时与 UI 栈](./ADR-0009-windows-native-runtime.md)（`accepted`，分阶段实施；栈细节由 G0 锁定）

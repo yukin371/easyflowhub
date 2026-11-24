@@ -126,4 +126,32 @@ Recommended enforcement mechanisms:
 - `go test ./...`
 - PR review 检查是否出现新的 duplicate owner
 - 修改边界或 owner 后同步 `MODULE.md` / `roadmap` / `ADR`
-- 自动门禁：`node scripts/check-architecture.mjs`（import 环 / lib·features 反向依赖 / `lib/tauri` 外原始 invoke / 文件规模债，基线见 `scripts/architecture-baseline.json`）在 CI `architecture-gates` 与 Windows native `native-windows` 两个 PR 门禁中运行；schema-handler 配对由 `go test` 的 `TestStaticSchemasAllHaveRegisteredHandlers` 覆盖
+- 自动门禁：`node scripts/check-architecture.mjs`（import 环 / lib·features 反向依赖 / `lib/tauri` 外原始 invoke / 文件规模债，基线见 `scripts/architecture-baseline.json`）在 CI `architecture-gates` 与 Windows native `native-windows` 两个 PR 门禁中运行；schema-handler 配对由 `go test` 的 `TestStaticSchemasHaveRegisteredHandlers` 覆盖
+- 原生门禁：`node scripts/check-native-architecture.mjs`（本文件第 10 节；`native/` 未创建时 skip 并返回 0），已接入 `run-smoke.ps1` 与 CI `architecture-gates`
+
+## 10. Native Runtime Layer Map（planned，ADR-0009）
+
+> status: planned，`native/` 尚未创建。落地后本节与 `check-native-architecture.mjs` 共同构成硬约束。
+
+Native Runtime 采用单进程 Rust workspace，层级固定如下：
+
+| crate | 职责 | 允许依赖 | 禁止 |
+|---|---|---|---|
+| `app` | 装配根：初始化、窗口注册、命令路由 | 全部内部 crate | 业务逻辑、SQL、Win32 细节 |
+| `hub-ui` | 视图、组件、主题、交互状态 | `hub-editor`、`hub-win`、`hub-core` | `windows::*`、`rusqlite`、HTTP 客户端 |
+| `hub-editor` | RichEdit 文本岛与 Markdown 装饰 | `hub-win`、`hub-core` | `egui`/`eframe` 类型、业务状态 |
+| `hub-bridge` | scriptmgr worker 生命周期与协议 | `hub-core` | `egui`、`windows` UI 调用、SQL |
+| `hub-win` | 窗口、DWM、托盘、热键、钩子、单实例、更新 | 无内部依赖 | `egui`、SQL、领域逻辑 |
+| `hub-core` | 领域服务、SQLite、文件、解析 | 无内部依赖 | `egui`、`windows`、`tauri`、HTTP 客户端 |
+
+硬规则：
+
+1. 依赖单向，禁止环；新增 crate 必须先登记到 `check-native-architecture.mjs` 的 `ALLOWED_EDGES`。
+2. 平台能力只经 `hub-win` 暴露的 trait；UI 层出现 `use windows::` 即违规。
+3. 持久化只在 `hub-core`；UI 不持有连接、不拼 SQL。
+4. 网络只在 `hub-bridge`；worker 契约版本化 JSON。
+5. UI 与 core 只通过 DTO / 命令交互，不共享可变全局状态。
+6. `.rs` 单文件 ≤ 800 行。
+7. 例外按第 8 节流程记录，且必须写 ADR。
+
+替换关系：`src-tauri/src` 下的窗口 / 笔记 / 设置 / 脚本桥接 owner 在 Phase 1–3 逐步迁移到对应 crate；迁移完成前，两套 owner 不得同时写入同一数据（见 ADR-0009 第 6 条单写者）。

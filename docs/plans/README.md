@@ -11,6 +11,15 @@
 
 ## Fast Path
 
+### Windows 原生运行时（native runtime track）
+
+按这个顺序读：
+
+1. [../roadmap.md](../roadmap.md) 的 `Native Runtime Track`
+2. [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)（当前实施阶段：P0.5 生命周期 + 计时契约）
+3. [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)（总设计）
+4. [../decisions/ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
+
 ### 扩展平台 / VSCode 风格模块化
 
 按这个顺序读：
@@ -49,6 +58,7 @@
 
 ## Active Plans
 
+- [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)：WebView → Windows 原生单进程的重构设计（ADR-0009 `accepted`，分阶段实施）。含需求分档、`lite` 低端降级、选型矩阵、架构门禁、Phase 0–4 与 G0–G4；Phase 0 未过门禁前不写产品代码。
 - [2026-10-19-architecture-and-file-size-review.md](./2026-10-19-architecture-and-file-size-review.md)：架构审查证据、大文件职责拆分、数据完整性风险和分阶段验收；审查已完成，修复待实施。
 - [2026-10-18-v0.2.0-checkpoint-summary.md](./2026-10-18-v0.2.0-checkpoint-summary.md)
 - [2026-10-16-v0.2.0-product-delivery-plan.md](./2026-10-16-v0.2.0-product-delivery-plan.md)
