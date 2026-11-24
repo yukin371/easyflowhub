@@ -16,9 +16,10 @@
 按这个顺序读：
 
 1. [../roadmap.md](../roadmap.md) 的 `Native Runtime Track`
-2. [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)（当前实施阶段：P0.5 生命周期 + 计时契约）
-3. [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)（总设计）
-4. [../decisions/ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
+2. [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)（当前实施阶段：S1 原生壳 spike）
+3. [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)（已完成：P0.5 生命周期 + 计时契约，提供现状基线）
+4. [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)（总设计）
+5. [../decisions/ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
 
 ### 扩展平台 / VSCode 风格模块化
 
@@ -58,6 +59,8 @@
 
 ## Active Plans
 
+- [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)：S1 原生壳 spike 的设计与验收标准（预创建窗口 / 预热序列 / 光标锚定 / 热唤起 p95 ≤ 60 ms 硬门槛），分 A/B/C 三批实施。
+- [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)：P0.5 已交付（静置 600 → 262 MB、Tauri 热唤起基线 87/101/130 ms）。
 - [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)：WebView → Windows 原生单进程的重构设计（ADR-0009 `accepted`，分阶段实施）。含需求分档、`lite` 低端降级、选型矩阵、架构门禁、Phase 0–4 与 G0–G4；Phase 0 未过门禁前不写产品代码。
 - [2026-10-19-architecture-and-file-size-review.md](./2026-10-19-architecture-and-file-size-review.md)：架构审查证据、大文件职责拆分、数据完整性风险和分阶段验收；审查已完成，修复待实施。
 - [2026-10-18-v0.2.0-checkpoint-summary.md](./2026-10-18-v0.2.0-checkpoint-summary.md)
