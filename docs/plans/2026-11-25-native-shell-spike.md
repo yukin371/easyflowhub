@@ -237,6 +237,15 @@ Batch A（工作区 + 骨架 + 门禁生效） → Batch B（热路径 + 锚定 
 | C5 | ✅ | `probe-native-idle.json` / `probe-native-idle-nofont.json` 两份样本（含窗口标题与空闲 CPU） |
 | C6 | ✅ | 本文件 §4.4 与主设计 §7.1 都写了口径 |
 
+### 全批次通用项
+
+| ID | 结果 | 证据 |
+|---|---|---|
+| G-1 | ✅ | 7 个提交按「工作区 → 工具 → 文档 → 证据 → smoke 接线 → CI → 门禁修复」分批，每批单独可回退 |
+| G-2 | ✅ | 主设计 §4.3 / §7.1、`docs/roadmap.md`（Recent Progress + Phase Plan + track 状态）、`native/README.md`、`docs/plans/README.md` 均已同步 |
+| G-3 | ✅（顺带修掉一个旧红灯） | 前端 57 文件 / 418 项、`tsc`、Rust 96 项、两条架构门禁、`cargo test --workspace` 27 项，`run-smoke.ps1` **9/9 全绿**。**smoke 之前不可能全绿**：`Responsiveness budget` 拿 60 ms 判现 Tauri 版（p95 101 ms），自打点落地起每轮必红 → 改为报告型步骤 `Tauri latency baseline (report)` + `-NoFail`，判决留在原生壳（理由写在设计 §7.1 与提交信息里） |
+| G-4 | ✅ | 提交信息写成因而非改动清单：两段式显示的由来、`SW_HIDE` 饿死重绘、为什么钉 0.31 |
+
 ### 实施中暴露的 6 个真实缺陷
 
 1. **进程没有 DPI 感知**（最严重）。未调用 `SetProcessDpiAwarenessContext` 时，Windows 对整个进程虚拟化坐标：本应 3840×2160 的屏幕报 **2560×1440**、`scale=1.00`，`GetCursorPos` 也是缩放值，面板会落在目标位置的 2/3 处。修复：`main` 第一行设 `PER_MONITOR_AWARE_V2`，早于任何显示器/光标读取。这个缺陷只在缩放屏上出现，而缩放屏就是目标环境。
