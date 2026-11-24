@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["app", "crates/hub-core", "crates/hub-win", "crates/hub-ui"]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.1"
+publish = false
+
+[workspace.dependencies]
+hub-core = { path = "crates/hub-core" }
+hub-win = { path = "crates/hub-win" }
+hub-ui = { path = "crates/hub-ui" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Pinned on purpose: a spike must be reproducible, and the stack version is only
+# frozen after G0. Bumping this invalidates every archived latency sample.
+egui = "0.31"
+eframe = { version = "0.31", default-features = false, features = [
+  "default_fonts",
+  "glow",
+] }
+
+[profile.release]
+# The spike measures cold/warm latency, so debuggability matters less than a
+# realistic binary: no LTO (it would hide the true code layout cost of a real
+# build) and symbols kept for the profiler.
+opt-level = 2
+lto = false
+codegen-units = 16
+debug = 1

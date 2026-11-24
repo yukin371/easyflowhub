@@ -1,0 +1,11 @@
+[package]
+name = "hub-ui"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# egui/eframe live here and nowhere else. windows:: is forbidden by the guard, so
+# a widget can never grab a HWND and start owning window lifecycle decisions.
+[dependencies]
+egui.workspace = true
+hub-core.workspace = true

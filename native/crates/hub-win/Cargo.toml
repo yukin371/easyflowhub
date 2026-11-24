@@ -1,0 +1,26 @@
+[package]
+name = "hub-win"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The platform layer. `scripts/check-native-architecture.mjs` rejects egui/eframe
+# here, so this crate can never grow a UI dependency by accident; it also has no
+# dependency on hub-core, which is why the position maths takes plain tuples.
+#
+# windows-sys (raw FFI) rather than the typed `windows` crate: the spike exposes
+# ~15 calls, and a raw signature that cannot silently marshal a BOOL into a
+# Result keeps the measurement code obvious. Phase 1 can switch to `windows`
+# behind this same API without touching callers.
+[dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_ProcessStatus",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }

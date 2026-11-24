@@ -1,0 +1,24 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Composition root: owns the event loop, wires hub-ui to hub-win, and is the only
+# crate allowed to see all of them. No tauri here (guard), no product UI yet.
+[[bin]]
+name = "easyflowhub-native"
+path = "src/main.rs"
+
+[features]
+# Evidence only: lets EFRAME_SCREENSHOT_TO dump frame 2 to a PNG and exit, so the
+# panel can be inspected without a screen grab. Not part of any shipped build.
+screenshot = ["eframe/__screenshot"]
+
+[dependencies]
+hub-core.workspace = true
+hub-ui.workspace = true
+hub-win.workspace = true
+egui.workspace = true
+eframe.workspace = true
+serde_json.workspace = true
