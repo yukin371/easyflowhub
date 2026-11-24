@@ -28,6 +28,8 @@ cargo run --release -p app                         # 交互模式：Ctrl+Shift+S
 
 `--bench` 用 `PostThreadMessageW(WM_HOTKEY)` 触发**与真实按键相同的处理路径**（去抖 → 取光标 → 命中缓存布局 → 唤醒 → 绘制），所以 200 轮不需要人手连按。退出码：`0` 达标，`2` 超预算，`3` 热键注册失败。
 
+门禁侧用 `scripts/measure-native-latency.ps1`（解析 `--bench` 输出、判预算、归档到 `docs/releases/native-s1/`）；`run-smoke.ps1 -NativeBench` 会在 smoke 里跑 40 轮的快速版并写到临时目录，避免污染归档。
+
 ## 为什么这么切
 
 - **热键在独立线程**：`RegisterHotKey` 绑定线程消息队列，放在 UI 线程会让每次唤起与绘制抢线程；回调里只做「读光标 + 查缓存 + 入队」。

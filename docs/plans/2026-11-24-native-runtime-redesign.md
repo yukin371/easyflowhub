@@ -656,7 +656,7 @@ easyflowhub/native/
 
 | 指标 | standard | lite（软件渲染 / RDP） | 测量 |
 |---|---|---|---|
-| **热唤起 热键 → 首帧 p95** | **≤ 60 ms** | **≤ 120 ms** | `measure-latency.ps1`（配对 `[timing] hotkey_down` / `[timing] first_frame`） |
+| **热唤起 热键 → 首帧 p95** | **≤ 60 ms** | **≤ 120 ms** | `measure-native-latency.ps1`（原生壳，主动 `--bench`）；`measure-latency.ps1`（现 Tauri 版，仅作对照） |
 | 热唤起 p99 | ≤ 100 ms | ≤ 200 ms | 同上，连续 200 次取分布 |
 | 冷唤起（进程未启动）→ 首帧 p95 | ≤ 400 ms | ≤ 700 ms | `measure-latency.ps1 -ColdStart` |
 | 冷启动 → 托盘就绪 | ≤ 300 ms | ≤ 500 ms | 同上 |

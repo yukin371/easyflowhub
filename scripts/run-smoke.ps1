@@ -1,6 +1,9 @@
 param(
     [switch]$CheckReleaseArtifacts,
-    [string]$ReleaseDir = "easyflowhub-app\src-tauri\target\release"
+    [string]$ReleaseDir = "easyflowhub-app\src-tauri\target\release",
+    # The native reveal gate needs a release build of native/ and takes ~15 s at
+    # 40 cycles, so it is opt-in. Labeled 200-cycle runs belong in the archive.
+    [switch]$NativeBench
 )
 
 $ErrorActionPreference = "Stop"
@@ -109,6 +112,17 @@ Invoke-Step -Name "Native architecture guard" -WorkingDirectory "." -Action {
 # Prints SKIP (exit 0) until the app emits [timing] hotkey_down / first_frame.
 Invoke-Step -Name "Responsiveness budget" -WorkingDirectory "." -Action {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "measure-latency.ps1")
+}
+
+# Same budget, native shell. SKIPs with exit 0 when native/ is not built, so this
+# never fails a fresh clone; -NativeBench turns it on for a normal run. The run
+# archives into a temp dir on purpose - only labeled, full-length runs belong in
+# docs/releases/native-s1.
+if ($NativeBench) {
+    Invoke-Step -Name "Responsiveness (native)" -WorkingDirectory "." -Action {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "measure-native-latency.ps1") `
+            -Cycles 40 -Label smoke -OutDir (Join-Path ([IO.Path]::GetTempPath()) "easyflowhub-native-smoke")
+    }
 }
 
 Invoke-Step -Name "Cargo check" -WorkingDirectory "easyflowhub-app" -Action {
