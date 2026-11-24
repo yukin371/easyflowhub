@@ -16,7 +16,7 @@
 按这个顺序读：
 
 1. [../roadmap.md](../roadmap.md) 的 `Native Runtime Track`
-2. [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)（当前实施阶段：S1 原生壳 spike）
+2. [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)（**已完成**：S1 原生壳，热唤起 p95 48.9 ms；下一步 S2 编辑器）
 3. [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)（已完成：P0.5 生命周期 + 计时契约，提供现状基线）
 4. [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)（总设计）
 5. [../decisions/ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
