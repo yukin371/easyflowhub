@@ -84,6 +84,21 @@ export function onLauncherOpened(onOpened: (payload?: LauncherOpenedPayload) => 
   return listen('launcher-opened', onOpened as (event: unknown) => void);
 }
 
+/**
+ * Report the Launcher's first painted frame to the native side.
+ *
+ * This is the frontend half of the `[timing] hotkey_down` → `[timing]
+ * first_frame` contract consumed by `scripts/measure-latency.ps1`. It is
+ * fire-and-forget: a failed mark must never break the reveal path, so callers
+ * ignore rejections.
+ */
+export async function reportFirstFrame(): Promise<void> {
+  // Browser preview and unit tests have no native side to receive the mark;
+  // skipping it there keeps the reveal path identical in every environment.
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+  await invoke('report_first_frame');
+}
+
 /** Focus the search entry point whenever Windows activates the Launcher window. */
 export function onLauncherFocused(onFocused: () => void): Promise<UnlistenFn> {
   return listen('launcher-focused', onFocused);

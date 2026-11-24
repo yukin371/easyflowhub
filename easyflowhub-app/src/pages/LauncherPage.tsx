@@ -17,6 +17,7 @@ import {
   onLauncherFocused,
   onLauncherHidden,
   onLauncherOpened,
+  reportFirstFrame,
   setLauncherAlwaysOnTop,
   startLauncherDragging,
   replaceSelectedText,
@@ -138,6 +139,19 @@ export function LauncherPage() {
     };
   }, []);
 
+  // Responsiveness gate (scripts/measure-latency.ps1): mark the first frame that
+  // contains the revealed panel. Two frames, because the first one runs before
+  // the state updates above are painted. Fire-and-forget by design — a failed
+  // mark must never disturb the reveal path.
+  const markRevealFirstFrame = useCallback(() => {
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (callback: FrameRequestCallback) => { setTimeout(() => callback(0), 0); return 0; };
+    schedule(() => schedule(() => {
+      void reportFirstFrame().catch(() => {});
+    }));
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -149,6 +163,7 @@ export function LauncherPage() {
       setActivationToken((token) => token + 1);
       setInteractionError(undefined);
       void refreshClipboardContext(payload?.selectedText ?? undefined);
+      markRevealFirstFrame();
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
@@ -156,7 +171,7 @@ export function LauncherPage() {
       // Browser preview has no native activation events.
     });
     return () => { disposed = true; unlisten?.(); };
-  }, [cancelExecution, refreshClipboardContext]);
+  }, [cancelExecution, markRevealFirstFrame, refreshClipboardContext]);
 
   useEffect(() => {
     let disposed = false;

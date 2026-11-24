@@ -8,7 +8,7 @@
 //! in-flight work. Window placement reuses `window_position`; the Manager /
 //! quick-note / todo window behavior lives in `app_windows`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use tauri::{Emitter, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -21,6 +21,27 @@ static LAUNCHER_SHORTCUT: Mutex<Option<Shortcut>> = Mutex::new(None);
 // Launcher is a transient palette by default. The pin button is the only
 // thing that opts it into staying visible above other applications.
 static LAUNCHER_PINNED: AtomicBool = AtomicBool::new(false);
+
+/// Milestone of the last keyboard trigger, used to swallow duplicate presses.
+///
+/// Third-party screenshot tools (QQ, WeChat) listen through low-level keyboard
+/// hooks, so the same combination reaches both programs. Those tools steal
+/// focus and the clipboard while our handler is still running, which used to
+/// make a single physical press look like several toggles in a row.
+static LAST_KEYBOARD_TRIGGER_MS: AtomicU64 = AtomicU64::new(0);
+
+/// A trigger arriving within this window is treated as the same press.
+const KEYBOARD_TRIGGER_DEBOUNCE_MS: u64 = 260;
+
+/// Hard ceiling for the synthetic Ctrl+C round trip.
+///
+/// The shortcut callback runs on the event-loop thread, so anything blocking
+/// here freezes the Launcher: the window paints but stops answering, and even
+/// the close button does nothing. `clipboard_win` retries while another program
+/// owns the clipboard (exactly what happens when a screenshot tool fires on the
+/// same key), so the capture is bounded and simply skipped when it overruns —
+/// losing the selected-text nicety is far better than a hung window.
+const SELECTION_CAPTURE_TIMEOUT_MS: u64 = 180;
 
 /// Foreground window that supplied the most recent selected-text context.
 /// Stored as a raw HWND value only for the short-lived Launcher session; it is
@@ -160,6 +181,33 @@ fn capture_selected_text() -> Option<String> {
     None
 }
 
+/// Bounded wrapper around `capture_selected_text`.
+///
+/// Runs the capture on a worker thread and gives up after
+/// `SELECTION_CAPTURE_TIMEOUT_MS`, so a slow or contended clipboard can never
+/// brick the Launcher's event loop.
+fn capture_selected_text_with_timeout() -> Option<String> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(capture_selected_text());
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_millis(SELECTION_CAPTURE_TIMEOUT_MS))
+        .ok()
+        .flatten()
+}
+
+/// Returns `true` when this trigger should be ignored because it repeats the
+/// previous press inside `KEYBOARD_TRIGGER_DEBOUNCE_MS`.
+fn is_duplicate_trigger() -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    let previous = LAST_KEYBOARD_TRIGGER_MS.swap(now, Ordering::Relaxed);
+    now.saturating_sub(previous) < KEYBOARD_TRIGGER_DEBOUNCE_MS
+}
+
 #[cfg(target_os = "windows")]
 fn replace_selected_text_native(text: String) -> Result<(), String> {
     use clipboard_win::{get_clipboard_string, set_clipboard_string};
@@ -265,7 +313,10 @@ fn configure_mouse_trigger(app: &tauri::AppHandle, enabled: bool, excluded_apps:
                 if settings::is_foreground_app_excluded(&excluded) {
                     continue;
                 }
-                let selected_text = capture_selected_text();
+                // Same gate mark as the keyboard path: both triggers must land
+                // in one comparable distribution.
+                crate::logging::log_timing("hotkey_down");
+                let selected_text = capture_selected_text_with_timeout();
                 let _ = toggle_launcher_with_selection(&app_handle, selected_text);
             }
             let _ = TranslateMessage(&message);
@@ -299,6 +350,18 @@ fn position_launcher_window(app: &tauri::AppHandle) {
         .unwrap_or((564.0, 320.0));
     let Some(position) = crate::window_position::cursor_anchored_position(app, width, height) else { return; };
     let _ = window.set_position(tauri::Position::Physical(position));
+}
+
+/// Frontend half of the responsiveness gate.
+///
+/// The Launcher page calls this after two animation frames, so `first_frame`
+/// means "the reveal event was handled and a frame was produced". That is an
+/// approximation of pixel-on-screen: good enough to establish the **current
+/// WebView baseline** and to keep `measure-latency.ps1` exercised, but G0 must
+/// judge the native shell's own first-frame signal instead.
+#[tauri::command]
+pub fn report_first_frame() {
+    crate::logging::log_timing("first_frame");
 }
 
 /// Show the action launcher and focus its search field.
@@ -437,10 +500,17 @@ pub(crate) fn register_launcher_trigger(
             .on_shortcut(shortcut, move |_app, _shortcut, event| {
                 if event.state != ShortcutState::Pressed
                     || settings::is_foreground_app_excluded(&excluded_apps)
+                    || is_duplicate_trigger()
                 {
                     return;
                 }
-                let selected_text = capture_selected_text();
+                // Gate mark: keep this FIRST. Everything below — including the
+                // bounded selection capture, which can burn up to 180 ms — is
+                // user-perceived latency and must be inside the measurement.
+                crate::logging::log_timing("hotkey_down");
+                // Bounded capture: never let a contended clipboard / a
+                // competing screenshot tool hang the Launcher event loop.
+                let selected_text = capture_selected_text_with_timeout();
                 let _ = toggle_launcher_with_selection(&app_handle, selected_text);
             })
             .map_err(|e| {

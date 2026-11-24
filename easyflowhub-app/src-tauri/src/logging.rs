@@ -56,6 +56,15 @@ pub fn init(app: &tauri::AppHandle) {
 }
 
 /// Append one line to the in-memory ring (and the file when debug is on).
+fn push_ring(line: &str) {
+    if let Ok(mut guard) = buffer().lock() {
+        if guard.len() >= MAX_LINES {
+            guard.pop_front();
+        }
+        guard.push_back(line.to_string());
+    }
+}
+
 pub fn log(level: &str, source: &str, message: &str) {
     let line = format!(
         "{} [{}] [{}] {}",
@@ -65,16 +74,32 @@ pub fn log(level: &str, source: &str, message: &str) {
         message
     );
 
-    if let Ok(mut guard) = buffer().lock() {
-        if guard.len() >= MAX_LINES {
-            guard.pop_front();
-        }
-        guard.push_back(line.clone());
-    }
+    push_ring(&line);
 
     if debug_enabled() {
         append_to_file(&line);
     }
+}
+
+/// Timing marks for the responsiveness gate (`scripts/measure-latency.ps1`).
+///
+/// Written to the file sink **regardless of the developer-mode toggle**, because
+/// the gate is meaningless if it silently produces an empty distribution: this is
+/// gate data, not diagnostics. The volume is two lines per Launcher reveal, which
+/// is negligible next to the 2 MB rotation. Every other log call keeps obeying
+/// the toggle, so the "debug mode only affects verbosity and file output, never
+/// safety boundaries" contract is unchanged.
+///
+/// `event` must stay one of `hotkey_down` / `first_frame`: the measurement script
+/// pairs them by that literal string.
+pub fn log_timing(event: &str) {
+    let line = format!(
+        "{} [INFO] [timing] {}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+        event
+    );
+    push_ring(&line);
+    append_to_file(&line);
 }
 
 fn append_to_file(line: &str) {

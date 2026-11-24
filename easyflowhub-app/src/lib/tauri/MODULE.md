@@ -35,7 +35,8 @@ This module must not contain:
 | `inbox.ts` | capture bridge | 捕获、活动列表、归档 / 恢复、回收站列表 / 恢复 / 清理、幂等转笔记、打开附件或链接、打开资源文件夹 |
 | `scriptmgr.ts` | script runtime bridge | 列表、详情、执行、MCP API |
 | `settings.ts` / `appearance.ts` / `widget.ts` | native feature bridge | 设置、窗口外观、桌面小组件 |
-| `launcher.ts` | launcher bridge | 全局入口配置、前台排除、拖动/隐藏/置顶、唤起 / 聚焦 / 隐藏事件、Snow Shot 截图会话调用与安装页 |
+| `autostart.ts` | autostart bridge | 开机自启动状态读取 / 切换（`get_autostart_state` / `set_autostart_state`）；不直连 `@tauri-apps/plugin-autostart`，因为插件只认系统启动项、读不到持久化意图 |
+| `launcher.ts` | launcher bridge | 全局入口配置、前台排除、拖动/隐藏/置顶、唤起 / 聚焦 / 隐藏事件、`reportFirstFrame()`（响应门禁打点，非 Tauri 环境自动跳过）、Snow Shot 截图会话调用与安装页 |
 | `manager.ts` | manager window bridge | 显示 / 聚焦管理中心并向指定设置分区发送跨窗口导航事件 |
 | `window.ts` | window bridge | 当前窗口的置顶切换、隐藏与销毁（Quick Note / Launcher 之外的通用窗口命令） |
 | `fileSearch.ts` | file search bridge | 受控单根目录索引、搜索 / 预览 / 最近文件，以及带 generation 校验的文件操作 |
