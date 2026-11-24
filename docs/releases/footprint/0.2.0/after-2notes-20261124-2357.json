@@ -1,0 +1,31 @@
+{
+    "MeasuredAt":  "2026-11-24T23:57:25",
+    "Pose":  "2notes",
+    "Screen":  "3840x2160 @150%",
+    "Monitors":  [
+                     {
+                         "Device":  "\\\\.\\DISPLAY1",
+                         "Width":  3840,
+                         "Height":  2160,
+                         "Dpi":  144,
+                         "ScalePct":  150,
+                         "WorkArea":  "3840x2088",
+                         "Primary":  true
+                     }
+                 ],
+    "PrimaryGpu":  "AMD Radeon(TM) Graphics",
+    "AppRunning":  true,
+    "HostProcesses":  1,
+    "WebviewProcesses":  8,
+    "WorkingSetMb":  782.1,
+    "PrivateMb":  447.6,
+    "SidecarProcesses":  1,
+    "SidecarPrivateMb":  22.6,
+    "InstallDir":  "C:\\Users\\yukin\\AppData\\Local\\EasyFlowHub",
+    "InstallDirMb":  107.8,
+    "ExeMb":  22.8,
+    "SidecarExeMb":  16.6,
+    "WebviewProfileMb":  80.5,
+    "WebviewRuntimeMb":  2029.3,
+    "WebviewRuntimeVer":  "158.0.4370.33"
+}
