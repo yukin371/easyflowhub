@@ -63,13 +63,13 @@ Q11 不是凑数：现版专门为此重排过一次（`QuickNoteToolbar.tsx` �
 
 | ID | 行为 | 判定方式 | 现状 |
 |---|---|---|---|
-| Q12 | Esc **按一次**即关闭当前窗口 | 按一次窗口消失；日志恰好一行 `editor_esc` | ✗（spike 是隐藏，且旧版需按多次，已修） |
-| Q13 | 切换器打开时 Esc 只关切换器 | 开切换器按 Esc，窗口仍在、切换器消失 | ✗ |
-| Q14 | Ctrl+D 关闭当前窗口 | 同 Q12 | ✗ |
-| Q15 | 编辑器内 Ctrl+Z / Ctrl+Shift+Z 撤销/重做 | 输入三段，撤三次回空，重做三次还原 | ✗ |
-| Q16 | 置顶快捷键可切换（键位取 `shortcutConfig.toggleAlwaysOnTop`） | 按一次取消置顶，再按恢复 | ✗ |
-| Q17 | Ctrl+. 开/关工具面板 | 同 Q7 的键盘路径 | ✗ |
-| Q18 | 全局键：Ctrl+Alt+N 新建、Ctrl+Alt+D 关闭全部、Ctrl+Alt+H 最小化/恢复全部、Ctrl+Alt+M 打开工作台 | 焦点在记事本时逐个按，行为生效 | ✗ |
+| Q12 | Esc **按一次**即关闭当前窗口 | 按一次窗口消失；日志恰好一行 `editor_esc` | ◐ 岛内 subclass 拦键 → 一帧内 `view.Close`，1a 起就只按一次；关闭语义仍是退进程（Q5 要到 1b.2 才改） |
+| Q13 | 切换器打开时 Esc 只关切换器 | 开切换器按 Esc，窗口仍在、切换器消失 | ✗ 切换器未做（Phase 2） |
+| Q14 | Ctrl+D 关闭当前窗口 | 同 Q12 | ✓ 实测 `note_key action=Close` + `note_close reason=shortcut windows_before=4 windows_after=3`；进程一并退出，见 Q5 |
+| Q15 | 编辑器内 Ctrl+Z / Ctrl+Shift+Z 撤销/重做 | 输入三段，撤三次回空，重做三次还原 | ◐ 走 `EM_UNDO`/`EM_REDO`，实测输入 `abc` 后 undo ×3 得 `len=0`、redo ×3 回到 `len=3`；"三段"未按三次独立编辑验（连续输入被 RichEdit 合成一个 unit，见 `undo_probe`） |
+| Q16 | 置顶快捷键可切换（键位取 `shortcutConfig.toggleAlwaysOnTop`） | 按一次取消置顶，再按恢复 | ◐ 实测 `Ctrl+T` → `note_pin pinned=false`；键位固定旧版默认值，**未读配置**（无键位配置层） |
+| Q17 | Ctrl+. 开/关工具面板 | 同 Q7 的键盘路径 | ◐ 表里有、代码已接；中文输入法把 `wParam` 改写成 `VK_PROCESSKEY`，脚本注入无法还原，**待真实键盘按一次**（§8.4） |
+| Q18 | 全局键：Ctrl+Alt+N 新建、Ctrl+Alt+D 关闭全部、Ctrl+Alt+H 最小化/恢复全部、Ctrl+Alt+M 打开工作台 | 焦点在记事本时逐个按，行为生效 | ✗ 全局热键未注册（1b.2 托盘与进程常驻一起做） |
 
 **切换器（C1 裁决"留"，2026-11-25 补入）。** 现版 `shortcutConfig.quickSwitcher` 默认 `Ctrl+K`（`types/shortcut.ts:20`），可改键；浮层结构见 `NoteSwitcherPanel.tsx`——查询输入 + 索引 0 的"新建笔记"行 + 最近笔记列表，`selectedIndex` 由窗口键盘表驱动。Q13 的"Esc 只关切换器"依赖这三条成立才有前提。
 
@@ -83,7 +83,7 @@ Q11 不是凑数：现版专门为此重排过一次（`QuickNoteToolbar.tsx` �
 
 | ID | 行为 | 判定方式 | 现状 |
 |---|---|---|---|
-| Q19 | 打开即聚焦编辑区，光标在末尾 | 打开后直接打字，字符落在最后一行末尾 | ✗ |
+| Q19 | 打开即聚焦编辑区，光标在末尾 | 打开后直接打字，字符落在最后一行末尾 | ✓ 实测 `editor_focus focused=true caret=(0, 0)`，随后直接打字无需先点击 |
 | Q20 | 停止输入后自动保存（现版 900 ms 防抖，见 §7.1） | 输入后等 2 s，杀进程重开，内容在 | ✗ |
 | Q21 | 关闭前强制 flush | 输入一个字立刻 Esc，再打开同一笔记，那个字仍在 | ✗ |
 | Q22 | 标题取首个非空行 | 第一行输入"买菜清单"，列表标题即"买菜清单" | ✗ |
@@ -177,6 +177,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 |---|---|
 | 2026-11-25 | 起草。A 级 24 条、B 级 6 条、C 级 5 项待裁决 |
 | 2026-11-25 | **裁决完成**（§5）：C1 留、C2 留、C3 延后 Phase 3、C4 不做、C5 延后。C1/C2 升为 A 级 Q25–Q29，Q8 挂起，生效 A 级条目 23+5=**28 条**。状态 `draft` → `approved` |
+| 2026-11-25 | 1b.1 键位回填：Q14 ✓（Ctrl+D 实测）、Q16 ◐（Ctrl+T 实测，键位未读配置）、Q19 ✓（`editor_focus` 日志）、Q12/Q15 ◐、Q17 ◐（中文输入法改写 vk，待人工按键）。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.4 |
 
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
