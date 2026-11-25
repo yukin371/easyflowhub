@@ -17,8 +17,10 @@ pub mod dwm;
 pub mod hotkey;
 pub mod monitor;
 pub mod probe;
+pub mod tray;
 pub mod window;
 
-pub use hotkey::{Hotkey, PressHandler};
+pub use hotkey::{Binding, Hotkey, HotkeySet, PressHandler};
+pub use tray::{Tray, TrayCommand};
 pub use monitor::{cursor_pos, MonitorCache, MonitorRect};
 pub use probe::{is_remote_session, ProcessProbe};
