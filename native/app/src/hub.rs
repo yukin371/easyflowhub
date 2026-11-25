@@ -15,15 +15,26 @@
 //! ## What the controller owns
 //!
 //! Only the things that outlive one note: the log, the settings, the spawn
-//! counter and the list of live shells. It never renders a note and never touches
-//! a RichEdit; a note's frame runs in that viewport's own callback, which keeps
-//! the "one window, one island" pairing visible in the code.
+//! counter, the list of live shells, the tray icon and the global shortcuts. It
+//! never renders a note and never touches a RichEdit; a note's frame runs in that
+//! viewport's own callback, which keeps the "one window, one island" pairing
+//! visible in the code.
+//!
+//! ## Two entrances, one queue
+//!
+//! The hotkey thread and the tray's message window both run off the event-loop
+//! thread (a hotkey thread of its own, and the tray's window proc, which the loop
+//! dispatches between passes). Neither may create a window or run egui code, so
+//! both push a [`Request`] into one queue and ask ROOT for a repaint. One queue also
+//! means one ordering: a tray click and a keystroke cannot interleave halfway through
+//! a spawn.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hub_core::{place_note, NoteSpec, Rect, SpikeSettings};
-use hub_win::hotkey::{Hotkey, PressHandler};
+use hub_win::hotkey::{Binding, HotkeySet, PressHandler};
+use hub_win::tray::{Tray, TrayCommand};
 use hub_win::MonitorCache;
 
 use crate::log::Log;
@@ -32,21 +43,46 @@ use crate::note::{self, NoteShell, Shared};
 /// Title of the controller window. Never shown, never activated.
 pub const HUB_TITLE: &str = "easyflowhub-hub";
 
-/// The shipped "new note" combination (parity Q18).
-const NEW_NOTE_COMBO: &str = "Ctrl+Alt+N";
+/// The shipped global shortcuts (parity Q18), in the order they are registered.
+///
+/// `Ctrl+Alt+M` is here and has nowhere to go until Phase 2 -- see
+/// [`Hub::handle`]. Registering it anyway is deliberate: the combination has to be
+/// owned by whichever build is running, or the old app answers it and the new one
+/// looks like it ate the key.
+const HOTKEYS: [(&str, Request); 4] = [
+    ("Ctrl+Alt+N", Request::NewNote),
+    ("Ctrl+Alt+D", Request::CloseAll),
+    ("Ctrl+Alt+H", Request::ToggleVisible),
+    ("Ctrl+Alt+M", Request::Manager),
+];
 
 /// Same debounce the spike uses: QQ/WeChat hook the same combinations, so one
 /// physical press can arrive as two or three `WM_HOTKEY` messages.
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(250);
 
-/// A note request that has to be executed on the event-loop thread.
+/// The app icon, embedded so the tray needs no file next to the executable.
+///
+/// This is the `.ico` the Tauri build shipped, moved here because the native build
+/// is now the thing that has to draw it. `hub_win::tray` parses the frame it wants;
+/// an unreadable asset falls back to the system icon and says so in the log.
+const APP_ICON: &[u8] = include_bytes!("../assets/icon.ico");
+
+const TRAY_TOOLTIP: &str = "EasyFlowHub · 快速笔记（Ctrl+Alt+N）";
+
+/// Work that has to be executed on the event-loop thread.
 ///
 /// The hotkey thread cannot create a window (win32 windows are thread-affine and
-/// egui's `Context` must be driven from the loop), so it appends here and wakes
-/// the loop. Batch 1b.2 has one request; the tray will add the others.
+/// egui's `Context` must be driven from the loop), and the tray's window proc runs
+/// *inside* message dispatch, where re-entering the controller would run a frame
+/// inside a frame. Both append here and wake the loop instead.
 #[derive(Debug, Clone, Copy)]
 pub enum Request {
     NewNote,
+    CloseAll,
+    ToggleVisible,
+    /// `Ctrl+Alt+M`. No target yet: the manager window is Phase 2.
+    Manager,
+    Quit,
 }
 
 pub struct Config {
@@ -56,7 +92,7 @@ pub struct Config {
     pub log: Arc<Log>,
 }
 
-/// Create the controller and run until the last note is gone.
+/// Create the controller and run until the user quits from the tray.
 pub fn run(config: Config) -> ! {
     let options = eframe::NativeOptions {
         // 1×1 is deliberate: the window exists to own a message queue, and any
@@ -99,7 +135,11 @@ struct Hub {
     spawned: u32,
     /// Kept alive for the process lifetime: dropping the handle would not stop the
     /// message loop, and an owned field is what makes that visible.
-    _hotkey: Option<Hotkey>,
+    _hotkeys: Option<HotkeySet>,
+    /// Also owned, and also a lifetime: dropping it removes the icon from the
+    /// notification area, which is exactly what would happen by accident if this
+    /// field were dropped when the last note closed.
+    tray: Option<Tray>,
     /// Id whose window is expected to be gone, and how many notes were left.
     /// Logged one pass later, because the OS destroys the window at the end of the
     /// pass that stops declaring it.
@@ -142,16 +182,20 @@ impl Hub {
             inbox: Arc::new(Mutex::new(Vec::new())),
             next_id: 0,
             spawned: 0,
-            _hotkey: None,
+            _hotkeys: None,
+            tray: None,
             released: None,
         };
-        hub._hotkey = register_new_note(hub.inbox.clone(), ctx.clone(), &hub.log);
+        hub._hotkeys = register_hotkeys(hub.inbox.clone(), ctx.clone(), &hub.log);
+        hub.tray = install_tray(hub.inbox.clone(), ctx.clone(), &hub.log);
         hub.log.mark(
             0,
             "hub_start",
             &format!(
-                "notes=1 lite={} scale={:.2} root={HUB_TITLE}",
-                hub.lite, hub.scale
+                "notes=1 lite={} scale={:.2} root={HUB_TITLE} tray={}",
+                hub.lite,
+                hub.scale,
+                if hub.tray.is_some() { "on" } else { "off" }
             ),
         );
         hub.spawn(&ctx);
@@ -232,6 +276,104 @@ impl Hub {
             self.released = Some((id, self.notes.len()));
         }
     }
+
+    fn handle(&mut self, ctx: &egui::Context, request: Request) {
+        match request {
+            Request::NewNote => self.spawn(ctx),
+            Request::CloseAll => self.close_all(ctx),
+            Request::ToggleVisible => self.toggle_visible(ctx),
+            // The honest version of "not implemented": the key is registered and
+            // owned, the log says which target is missing. Silently doing nothing
+            // would look like a broken shortcut.
+            Request::Manager => self
+                .log
+                .mark(0, "note_manager", "reason=hotkey target=none phase=2"),
+            Request::Quit => self.quit(),
+        }
+    }
+
+    fn close_all(&mut self, ctx: &egui::Context) {
+        let notes: Vec<Arc<Shared>> = self.notes.clone();
+        for handle in &notes {
+            handle.lock().request_close(ctx, "all");
+        }
+        self.log
+            .mark(0, "note_close_all", &format!("notes={}", notes.len()));
+    }
+
+    /// `Ctrl+Alt+H`: minimize every note, or bring them all back.
+    ///
+    /// The direction is chosen the way the shipped build chooses it -- "if anything is
+    /// still active, collapse; otherwise restore" -- so pressing it twice always
+    /// returns to the state it started in, even if the user restored one note by hand.
+    fn toggle_visible(&mut self, ctx: &egui::Context) {
+        let notes: Vec<Arc<Shared>> = self.notes.clone();
+        if notes.is_empty() {
+            self.log.mark(0, "notes_visible", "action=none notes=0");
+            return;
+        }
+        let any_active = notes.iter().any(|handle| !handle.lock().minimized());
+        if any_active {
+            for handle in &notes {
+                handle.lock().minimize();
+            }
+        } else {
+            for handle in &notes {
+                handle.lock().restore();
+            }
+            // Same as the shipped build: focus follows the first note back, otherwise
+            // the keyboard lands wherever it happened to be.
+            if let Some(first) = notes.first() {
+                first.lock().focus();
+            }
+            // A collapsed note skips its own frames (its client area is degenerate),
+            // so the restore is what has to ask for the first frame back. `SW_RESTORE`
+            // produces one anyway; asking makes the redraw independent of that.
+            for handle in &notes {
+                ctx.request_repaint_of(note::viewport_id(handle.lock().id()));
+            }
+        }
+        self.log.mark(
+            0,
+            "notes_visible",
+            &format!(
+                "action={} notes={}",
+                if any_active { "minimize" } else { "restore" },
+                notes.len()
+            ),
+        );
+    }
+
+    /// Nothing is open. With a tray that is a resting state; without one it is a
+    /// process the user cannot see or reach, so it ends.
+    ///
+    /// The decision is made from evidence (`self.tray`) rather than from a flag, which
+    /// is why a failed `Shell_NotifyIconW` degrades to the 1b.2 behaviour instead of
+    /// leaving an invisible zombie behind.
+    fn settle(&mut self) {
+        match self.tray.as_ref() {
+            Some(tray) => self
+                .log
+                .mark(0, "hub_idle", &format!("notes=0 tray=0x{:X}", tray.hwnd())),
+            None => {
+                self.log
+                    .mark(0, "hub_exit", "reason=no_notes tray=none hotkey=stops");
+                std::process::exit(0);
+            }
+        }
+    }
+
+    /// Leave. The tray icon goes first: `std::process::exit` runs no destructors, and
+    /// a leftover icon stays in the notification area until the user hovers it.
+    fn quit(&mut self) {
+        let notes = self.notes.len();
+        if let Some(tray) = self.tray.as_mut() {
+            tray.remove();
+        }
+        self.log
+            .mark(0, "hub_exit", &format!("reason=tray notes={notes}"));
+        std::process::exit(0);
+    }
 }
 
 impl eframe::App for Hub {
@@ -257,16 +399,7 @@ impl eframe::App for Hub {
                 ),
             );
             if live == 0 {
-                // No tray yet, so there is nothing left for the user to click: the
-                // parked root would be an invisible process that only Task Manager
-                // can close, and Ctrl+Alt+N would reopen a note nobody can see the
-                // state of. Closing the last note therefore ends the run, and the
-                // log says so instead of letting "it kept running" or "it vanished"
-                // look like a crash. The tray batch flips this line's decision, not
-                // its fields.
-                self.log
-                    .mark(0, "hub_exit", "reason=no_notes tray=pending hotkey=stops");
-                std::process::exit(0);
+                self.settle();
             }
         }
 
@@ -275,9 +408,7 @@ impl eframe::App for Hub {
             inbox.drain(..).collect()
         };
         for request in requests {
-            match request {
-                Request::NewNote => self.spawn(ctx),
-            }
+            self.handle(ctx, request);
         }
 
         self.prune();
@@ -288,13 +419,9 @@ impl eframe::App for Hub {
                 (shell.id(), shell.builder())
             };
             let shell = handle.clone();
-            ctx.show_viewport_deferred(
-                egui::ViewportId::from_hash_of(("note", id)),
-                builder,
-                move |ctx, _class| {
-                    shell.lock().frame(ctx);
-                },
-            );
+            ctx.show_viewport_deferred(note::viewport_id(id), builder, move |ctx, _class| {
+                shell.lock().frame(ctx);
+            });
         }
 
         // A note whose window has not been found yet cannot request its own frames,
@@ -305,40 +432,85 @@ impl eframe::App for Hub {
     }
 }
 
-/// `Ctrl+Alt+N` → append a request and wake the event loop.
+/// One closure per combination: it appends the request and wakes ROOT.
 ///
-/// The hotkey thread owns no window and must not run egui code, so it does the two
-/// things that are thread-safe: push to a mutex-guarded queue and ask for a
-/// repaint. `request_repaint_of(ROOT)` rather than `request_repaint()`: outside a
-/// pass the context's "current viewport" is whatever ran last, and waking a note
-/// would leave the request sitting in the queue.
-fn register_new_note(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, log: &Log) -> Option<Hotkey> {
-    let handler: PressHandler = Arc::new(move || {
+/// `request_repaint_of(ROOT)` rather than `request_repaint()`: outside a pass the
+/// context's "current viewport" is whatever ran last, and waking a note would leave
+/// the request sitting in the queue until that note's own 500 ms tick.
+fn press_handler(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, request: Request) -> PressHandler {
+    Arc::new(move || {
         inbox
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(Request::NewNote);
+            .push(request);
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    })
+}
+
+fn register_hotkeys(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, log: &Log) -> Option<HotkeySet> {
+    let bindings: Vec<Binding> = HOTKEYS
+        .iter()
+        .map(|(combo, request)| Binding::new(*combo, press_handler(inbox.clone(), ctx.clone(), *request)))
+        .collect();
+
+    match HotkeySet::spawn(bindings, HOTKEY_DEBOUNCE) {
+        Ok(set) => {
+            for combo in set.combos() {
+                log.mark(0, "hotkey", &format!("combo={combo} registered=true"));
+            }
+            // Not fatal, one line each: another program owning one combination is the
+            // user's problem to see, not a reason to refuse the other three.
+            for failure in set.failures() {
+                log.mark(0, "hotkey", &format!("registered=false {failure}"));
+            }
+            log.mark(
+                0,
+                "hotkeys",
+                &format!(
+                    "registered={} failed={} thread={}",
+                    set.combos().len(),
+                    set.failures().len(),
+                    set.thread_id()
+                ),
+            );
+            Some(set)
+        }
+        Err(error) => {
+            log.mark(0, "hotkeys", &format!("registered=0 {error}"));
+            None
+        }
+    }
+}
+
+fn install_tray(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, log: &Log) -> Option<Tray> {
+    let sink = Arc::new(move |command: TrayCommand| {
+        let request = match command {
+            TrayCommand::NewNote => Request::NewNote,
+            TrayCommand::CloseAll => Request::CloseAll,
+            TrayCommand::Quit => Request::Quit,
+        };
+        inbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(request);
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     });
 
-    match Hotkey::spawn(NEW_NOTE_COMBO, HOTKEY_DEBOUNCE, handler) {
-        Ok(hotkey) => {
+    match Tray::install(TRAY_TOOLTIP, Some(APP_ICON), sink) {
+        Ok(tray) => {
             log.mark(
                 0,
-                "hotkey",
-                &format!("combo={NEW_NOTE_COMBO} registered=true thread={}", hotkey.thread_id()),
+                "tray",
+                &format!(
+                    "installed=true hwnd=0x{:X} icon={} tip={TRAY_TOOLTIP}",
+                    tray.hwnd(),
+                    tray.icon_source()
+                ),
             );
-            Some(hotkey)
+            Some(tray)
         }
-        // Not fatal: another program owning the combination is the user's problem to
-        // see, not a reason to refuse to open a note. The log is the only place it
-        // can show up until there is a tray or a settings pane.
         Err(error) => {
-            log.mark(
-                0,
-                "hotkey",
-                &format!("combo={NEW_NOTE_COMBO} registered=false {error}"),
-            );
+            log.mark(0, "tray", &format!("installed=false {error}"));
             None
         }
     }

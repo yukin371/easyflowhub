@@ -176,6 +176,39 @@ impl NoteShell {
         self.hwnd.is_some()
     }
 
+    /// Ask this note to close from outside -- the tray, or a global shortcut.
+    ///
+    /// The same path as Esc on purpose: one function decides what "close" means, so
+    /// a tray command cannot grow a second, slightly different way to destroy a
+    /// window (that difference is how "the tray's close leaks a window" happens).
+    pub fn request_close(&mut self, ctx: &egui::Context, reason: &str) {
+        self.close(ctx, reason);
+    }
+
+    /// `Ctrl+Alt+H`, shrink side. False when the window does not exist yet.
+    pub fn minimize(&mut self) -> bool {
+        self.hwnd.is_some_and(hub_win::window::minimize)
+    }
+
+    /// `Ctrl+Alt+H`, bring-back side.
+    pub fn restore(&mut self) -> bool {
+        self.hwnd.is_some_and(hub_win::window::restore)
+    }
+
+    /// Collapsed or not. An unattached note counts as *not* collapsed: it has no
+    /// window to have been minimized, and the toggle should not report "everything is
+    /// minimized" while a note is still being created.
+    pub fn minimized(&self) -> bool {
+        self.hwnd.is_some_and(hub_win::window::is_minimized)
+    }
+
+    /// Give this note the keyboard (after a restore-all).
+    pub fn focus(&mut self) {
+        if let Some(hwnd) = self.hwnd {
+            hub_win::window::focus(hwnd);
+        }
+    }
+
     /// The viewport description, re-applied every pass.
     ///
     /// egui patches a builder by diffing it against the one it recorded, so a
@@ -263,6 +296,15 @@ impl NoteShell {
                 ),
             );
             self.last_ppp = ppp;
+        }
+
+        // Collapsed windows report a degenerate client area -- measured 190x31 whole
+        // window, which turned into `island_rect 237x1` -- and laying the RichEdit out
+        // for 1 px reflows it for no one. Skipping the frame keeps the island at its
+        // real rectangle, so restoring does not have to rebuild it; the restore path
+        // asks for a repaint explicitly.
+        if self.minimized() {
+            return;
         }
 
         let output = quicknote::draw(ctx, &mut self.strip, self.palette);
@@ -454,11 +496,14 @@ impl NoteShell {
 
     fn toggle_pin(&mut self, ctx: &egui::Context) {
         self.strip.pinned = !self.strip.pinned;
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if self.strip.pinned {
-            egui::WindowLevel::AlwaysOnTop
-        } else {
-            egui::WindowLevel::Normal
-        }));
+        ctx.send_viewport_cmd_to(
+            self.viewport,
+            egui::ViewportCommand::WindowLevel(if self.strip.pinned {
+                egui::WindowLevel::AlwaysOnTop
+            } else {
+                egui::WindowLevel::Normal
+            }),
+        );
         self.log.mark(
             0,
             "note_pin",
@@ -533,10 +578,18 @@ impl NoteShell {
                 self.last_island.map(|r| r.y).unwrap_or(0),
             ),
         );
-        // Close destroys this viewport's window. The controller needs one more pass
-        // to stop declaring it and log the count after the drop, and the request
-        // below is what produces that pass instead of waiting for a mouse move.
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        // `send_viewport_cmd_to`, not `send_viewport_cmd`: the latter targets "the
+        // viewport of this pass", and `close` is not always called from one. The tray
+        // and `Ctrl+Alt+D` close notes from the *controller's* pass, where the current
+        // viewport is ROOT -- which would ask eframe to close the hub window, and
+        // eframe ends the process when the root closes. Measured 2026-11-25: closing
+        // every note from the tray killed the process even though `hub_idle` (a
+        // surviving tray) had just been logged.
+        //
+        // The controller needs one more pass to stop declaring the viewport and log
+        // the count after the drop; the repaint below is what produces that pass
+        // instead of waiting for a mouse move.
+        ctx.send_viewport_cmd_to(self.viewport, egui::ViewportCommand::Close);
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 }
