@@ -155,7 +155,7 @@
   - **自检本身也做了变异**：8 次故意改坏规则，8 次都被杀。其中 2 次第一轮**存活**，暴露的是自检的缺陷而不是规则的缺陷——尺寸用例拿被测的 `HARD_CAP` 自己算自己（改到 900 时 fixture 也跟着变 901 行，测试照样绿）；表形式依赖走的是与 kv 形式**不同的正则**，只测 kv 就等于没测。两处都补了用例，`HARD_CAP === 800` 现在被字面量钉死。
   - **三个真实缺口，都是写测试时撞出来的**：①`hub-core` 里 `use windows_sys::…` 不报错——规则写的是 `windows::`，而本项目用的是 `windows-sys`，下划线让 `\b` 匹配不到；②manifest 声明 `egui` 但源码不 `use` 完全不报——而"声明了"距离"用了"只差一行；③`[target.'cfg(windows)'.dependencies]` 整段解析不到，**放在 cfg 后面就等于隐身**。禁表因此合成**一张** `BANNED_DEPS`，符号正则与 manifest 检查都从它派生，避免两侧漂移。
   - **重构也要求证，不是声称**：把判断抽成 `analyzeNativeArchitecture(nativeRoot)` 时，成功路径与失败路径（种一个 `use egui::Context;`）都拿 HEAD 里的旧脚本对同一棵树跑 diff，输出**逐字节相同**。抽取过程中我一度把 `app` 的 `/tauri/` 收窄成 `/\btauri::/`，那是悄悄放宽，已改回。
-  - **未测**：注释内 `crate::` 的误报（**有意保留**：剥注释的剥离器出错会漏报，漏报比误报危险）、CI runner 上的实际耗时、规则集完整性（未穷举 `cfg_attr` / `include!`）、真实越界 PR 的拦截演练。
+  - **未测**：注释内 `crate::` 的误报（**有意保留**：剥注释的剥离器出错会漏报，漏报比误报危险）、规则集完整性（未穷举 `cfg_attr` / `include!`）、真实越界 PR 的拦截演练。CI runner 上的耗时后续补测：`architecture-gates` 三步各自 < 1 s。
 
 - `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [plans/2026-11-25-notes-db-compat-spike.md](./plans/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。（当时 S4 未做。）
   - **双向兼容用真代码验，不自证**：native 写入后，读它的是 **Tauri 那份代码**（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽出的连接级函数），不是复制一遍 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，另一套 build，原生侧 bundled 是 3.46.0）与我们的读者对 **42 行逐字段一致**（`rows-identical 42`）。反向也验了：Tauri 写 → native 读回同一内容。

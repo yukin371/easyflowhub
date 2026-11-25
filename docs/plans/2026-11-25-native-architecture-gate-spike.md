@@ -1,6 +1,6 @@
 # S4 架构门禁 Spike（设计 / 验收标准）
 
-> 状态：`implemented`（2026-11-25 设计 → A/B/C 三批实施 → 通过，23 项自检 + 8 次变异；4 项未测，见 §9.4）
+> 状态：`implemented`（2026-11-25 设计 → A/B/C 三批实施 → 通过，23 项自检 + 8 次变异；3 项未测，见 §9.4）
 >
 > 上游：[native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md) §4.3（S4 判据）、§5.7（分层规则）
 > 决策：[ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
@@ -148,7 +148,7 @@
 | G-1 | 通过 | `.github/workflows/test.yml` 的 `architecture-gates` job 新增一步 `Native architecture guard self-check` |
 | G-2 | 通过 | `scripts/run-smoke.ps1` 新增 `Native architecture guard self-check` 步骤；PS 语法校验通过 |
 | G-3 | 通过 | 本文档 + 主设计 §4.3 + `ARCHITECTURE_GUARDRAILS.md` 第 10 节 + `docs/roadmap.md` 同步 |
-| G-4 | 通过 | 4 项未测显式列在 §9.4 |
+| G-4 | 通过 | 3 项未测显式列在 §9.4（原 4 项，CI 耗时已补测） |
 
 ### 9.2 自检自身的两个缺陷（第一轮变异存活的两次）
 
@@ -176,9 +176,10 @@
 | 未测项 | 原因 |
 |---|---|
 | 注释内的 `crate::` 误报 | 已知且**有意保留**。剥注释的剥离器自身出错会漏报，漏报比误报危险。已写成用例 #11 钉住当前行为，错误信息带文件名以便快速改注释 |
-| CI runner 上的实际耗时 | 本地 23 项约 2 s；GitHub 的 `ubuntu-latest` 未单独计时。只影响反馈速度，不影响判据 |
 | 规则集的完整性 | 只证明"这 4 类 + 3 个绕过方式"会被拦。是否存在第 4 个绕过方式（例如 `cfg_attr` 条件导入、`include!` 拼接）未穷举 |
 | 真实越界提交的拦截演练 | 没有真的往 `main` 提一个越界 PR 看 CI 是否红。理由是 fixture 已在同一份代码路径上验证过，且 CI 步骤与本地命令完全相同 |
+
+**已补测（非未测）**：CI runner 上的门禁耗时。run `45538584529` 的 `architecture-gates` job 里，`Native architecture guard` 与 `Native architecture guard self-check` 两步的起止时间戳都是 `03:14:38`，即**每步 < 1 s**（GitHub 步骤时间戳精度为 1 s，所以这是上界，没有更细的数）；整个 job 从 checkout 到完成 10 s。本地对照是整份自检约 2 s。
 
 ### 9.5 交付物
 
