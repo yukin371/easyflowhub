@@ -168,11 +168,13 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
   # The native shell is not wired into the product yet, but it holds the only
-  # gates that can overturn the runtime decision (ADR-0009). Its 43 tests and the
-  # egui/winit/glow/hub-editor dependency graph have to keep compiling on a clean
+  # gates that can overturn the runtime decision (ADR-0009). Its 58 tests and the
+  # egui/winit/glow/rusqlite dependency graph have to keep compiling on a clean
   # Windows runner, or a finished spike silently rots while the next one is being
-  # written. `cargo test --workspace` also covers the new hub-editor crate without
-  # this file needing to know its name.
+  # written. `cargo test --workspace` also covers hub-editor and hub-core::store
+  # without this file needing to know their names. The S3 gate
+  # (scripts/measure-native-store.ps1) is NOT run here: it needs a live notes.db,
+  # and inventing one on a runner would test the fixture, not the product.
   native-crates:
     name: Native Shell (Windows)
     runs-on: windows-latest

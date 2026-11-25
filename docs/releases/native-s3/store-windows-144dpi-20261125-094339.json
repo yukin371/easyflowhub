@@ -1,0 +1,130 @@
+{
+    "kind":  "native-s3-store-archive",
+    "label":  "windows-144dpi",
+    "timestamp":  "2026-11-25T09:43:51.2516985+08:00",
+    "live":  {
+                 "bytes":  143360,
+                 "mtime":  "2026-11-25T00:31:54.1381044Z",
+                 "sha256":  "E693F5648A6A6A55A109E55A43BFB6F309175D520CCD2ED6CE2E7B32FDBE628A"
+             },
+    "independent":  "ran: integrity + row + attachment",
+    "tauri_compat":  "passed",
+    "checks":  {
+                   "db bytes match the live file":  true,
+                   "notes read = live count":  true,
+                   "settings read = live count":  true,
+                   "all notes readable":  true,
+                   "sort matches the product query":  true,
+                   "pinned notes first":  true,
+                   "updated_at descending":  true,
+                   "todo inbox located":  true,
+                   "settings decode as JSON":  true,
+                   "autostart shape read":  true,
+                   "journal_mode untouched":  true,
+                   "user_version untouched":  true,
+                   "page_size untouched":  true,
+                   "integrity ok (read)":  true,
+                   "native inserted a note":  true,
+                   "native updated it":  true,
+                   "native soft-deleted a note":  true,
+                   "native wrote an attachment":  true,
+                   "counts grew by 2 notes":  true,
+                   "attachment row appeared":  true,
+                   "integrity ok (write)":  true,
+                   "schema unchanged by writes":  true,
+                   "journal_mode still delete":  true,
+                   "user_version still 0":  true,
+                   "sqlite3 CLI integrity ok":  true,
+                   "sqlite3 CLI sees the probe row":  true,
+                   "soft-deleted row hidden from list":  true,
+                   "sqlite3 CLI sees the attachment row":  true,
+                   "dump identical to sqlite3 CLI":  true,
+                   "Tauri code reads native rows":  true,
+                   "native reads the Tauri write":  true,
+                   "write succeeds while another writer holds briefly":  true,
+                   "long lock is refused, not corrupted":  true,
+                   "integrity ok after the lock fight":  true,
+                   "held row survived the lock fight":  true,
+                   "no half-written note after a refused write":  true,
+                   "live database untouched (bytes)":  true,
+                   "live database untouched (sha256)":  true,
+                   "live database untouched (mtime)":  true
+               },
+    "failed":  [
+
+               ],
+    "sample":  {
+                   "kind":  "native-s3-store",
+                   "root":  "E:\\Github\\AllScripts\\easyflowhub\\native\\target\\s3-gate-20261125-094339\\root",
+                   "db":  "E:\\Github\\AllScripts\\easyflowhub\\native\\target\\s3-gate-20261125-094339\\root\\notes.db",
+                   "db_bytes":  143360,
+                   "sqlite":  "3.46.0",
+                   "contract":  {
+                                    "journal_mode":  "delete",
+                                    "user_version":  0,
+                                    "page_size":  4096,
+                                    "encoding":  "UTF-8"
+                                },
+                   "counts_before":  {
+                                         "notes":  40,
+                                         "deleted":  0,
+                                         "settings":  9,
+                                         "inbox_items":  0,
+                                         "inbox_attachments":  0
+                                     },
+                   "counts_after":  {
+                                        "notes":  42,
+                                        "deleted":  1,
+                                        "settings":  9,
+                                        "inbox_items":  1,
+                                        "inbox_attachments":  1
+                                    },
+                   "notes":  {
+                                 "live":  40,
+                                 "with_deleted":  40,
+                                 "sorted":  true,
+                                 "pinned_first":  true,
+                                 "updated_desc":  true
+                             },
+                   "todo":  {
+                                "found":  true,
+                                "id":  "031ea7a3-74e8-4d70-939d-09d3cd0a9532",
+                                "open":  0,
+                                "done":  1,
+                                "content_bytes":  46
+                            },
+                   "settings":  {
+                                    "keys":  [
+                                                 "autostart",
+                                                 "developer",
+                                                 "editor",
+                                                 "launcher_trigger",
+                                                 "quick_note",
+                                                 "todo",
+                                                 "transcription",
+                                                 "translation",
+                                                 "trash"
+                                             ],
+                                    "objects":  9,
+                                    "scalars":  0,
+                                    "autostart":  true
+                                },
+                   "writes":  {
+                                  "created":  true,
+                                  "updated_at_changed":  true,
+                                  "soft_deleted":  true,
+                                  "attachment":  "2757ce9d-0f06-43b9-be61-7787ece8fbcd.bin",
+                                  "attachment_bytes":  1024,
+                                  "attachment_row":  true
+                              },
+                   "schema_same":  true,
+                   "integrity":  {
+                                     "before":  true,
+                                     "after":  true
+                                 },
+                   "pass":  true,
+                   "notes_dump":  [
+
+                                  ]
+               }
+}

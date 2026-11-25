@@ -178,7 +178,20 @@ pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, Strin
 #[tauri::command]
 pub fn list_notes(app: tauri::AppHandle) -> Result<ListNotesResponse, String> {
     let conn = get_connection(&app)?;
+    let notes = list_notes_with_conn(&conn)?;
+    Ok(ListNotesResponse {
+        ok: true,
+        count: notes.len(),
+        notes,
+    })
+}
 
+/// The list query, on a caller-supplied connection.
+///
+/// Split out of the command so it can run against a database this process did not
+/// create -- that is what the S3 compatibility test needs: another implementation's
+/// file, read by this exact code path instead of a copy of the SQL.
+fn list_notes_with_conn(conn: &Connection) -> Result<Vec<Note>, String> {
     let mut stmt = conn
         .prepare(
             r#"
@@ -190,7 +203,7 @@ pub fn list_notes(app: tauri::AppHandle) -> Result<ListNotesResponse, String> {
         )
         .map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
-    let notes = stmt
+    let mapped = stmt
         .query_map([], |row| {
             Ok(Note {
                 id: row.get(0)?,
@@ -203,15 +216,11 @@ pub fn list_notes(app: tauri::AppHandle) -> Result<ListNotesResponse, String> {
                 deleted_at: row.get(7)?,
             })
         })
-        .map_err(|e| format!("Failed to query notes: {}", e))?
+        .map_err(|e| format!("Failed to query notes: {}", e))?;
+    let notes = mapped
         .collect::<SqliteResult<Vec<_>>>()
         .map_err(|e| format!("Failed to collect notes: {}", e))?;
-
-    Ok(ListNotesResponse {
-        ok: true,
-        count: notes.len(),
-        notes,
-    })
+    Ok(notes)
 }
 
 /// Get a single note by ID
@@ -1053,5 +1062,79 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("db-shm"));
         let _ = std::fs::remove_file(path.with_extension("db-journal"));
     }
-}
 
+    /// S3 compatibility: read and write a database the **native shell** produced.
+    ///
+    /// Ignored by default because it needs an artefact: `scripts/measure-native-store.ps1`
+    /// copies the live database, lets the native bench write its probe rows, and only
+    /// then runs `cargo test --lib -- --ignored`. Without `EFH_S3_DB` the test fails
+    /// rather than passing quietly -- a compatibility test that skips is worse than
+    /// no test, because the record then claims something nobody checked.
+    #[test]
+    #[ignore = "needs a native-written database; run scripts/measure-native-store.ps1"]
+    fn reads_and_writes_a_database_produced_by_the_native_shell() {
+        let path = std::env::var("EFH_S3_DB")
+            .expect("EFH_S3_DB must point at the copy written by the native bench");
+        let conn = Connection::open(&path).expect("open the native database");
+
+        // 1. The real migrations must accept the file without changing it.
+        init_db(&conn).expect("migrations run against a native-written database");
+
+        // 2. A row the native shell inserted is readable through the product's own
+        //    helper, field for field. `PROBE_BODY` plus the native-side update suffix.
+        let probe = get_note_helper(&conn, "s3-probe-created").expect("native probe row");
+        assert_eq!(probe.title, "S3 探针");
+        assert_eq!(probe.content, "探针正文\t第二行\nemoji 🐟 与 ASCII（已更新）");
+        assert_eq!(probe.tags, "s3,probe");
+        assert_eq!(probe.updated_at, "2026-11-25T00:00:01+00:00");
+
+        // 3. Soft delete written by the native shell hides the row from the product's
+        //    list but keeps it retrievable.
+        let listed = list_notes_with_conn(&conn).expect("list on the native database");
+        assert!(listed.iter().any(|note| note.id == "s3-probe-created"));
+        assert!(!listed.iter().any(|note| note.id == "s3-probe-deleted"));
+        let trashed = get_note_helper(&conn, "s3-probe-deleted").expect("soft-deleted row stays");
+        assert!(trashed.deleted_at.is_some());
+
+        // 4. The attachment the native shell copied is where the row says it is.
+        let (filename, size): (String, i64) = conn
+            .query_row(
+                "SELECT filename, size_bytes FROM inbox_attachments WHERE item_id = 's3-probe-item'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("native attachment row");
+        assert_eq!(size, 1024);
+        let assets = std::path::Path::new(&path)
+            .parent()
+            .expect("database has a parent")
+            .join("assets");
+        let stored = assets.join(&filename);
+        assert!(stored.exists(), "{} missing", stored.display());
+        let bytes = std::fs::read(&stored).expect("read attachment");
+        assert_eq!(bytes.len(), 1024);
+        assert_eq!(bytes[1], 1, "content pattern differs from what the probe wrote");
+
+        // 5. The contract values survived the native write.
+        let journal: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("journal mode");
+        assert_eq!(journal, "delete");
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user version");
+        assert_eq!(version, 0);
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity");
+        assert_eq!(integrity, "ok");
+
+        // 6. And the other direction: this side writes, the native reader reads it back
+        //    in the gate's second pass.
+        let mut write = input("s3-probe-created", "Tauri 改写：\n- [ ] 反向验证");
+        write.expected_updated_at = Some(probe.updated_at.clone());
+        let saved = save_note_with_conn(&conn, write).expect("tauri writes the native row");
+        assert_eq!(saved.note.content, "Tauri 改写：\n- [ ] 反向验证");
+        assert_ne!(saved.note.updated_at, probe.updated_at);
+    }
+}
