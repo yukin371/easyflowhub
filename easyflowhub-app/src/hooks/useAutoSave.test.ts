@@ -43,36 +43,51 @@ describe('useAutoSave', () => {
       }
     }
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('reaches saved state and clears the backup after a successful save', async () => {
     vi.useFakeTimers();
     try {
       const { result, onSaved } = await renderAutoSave();
-      const setItem = vi.spyOn(Storage.prototype, 'setItem');
-      const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+      // 断言"实际存了什么"而不是 spy：jsdom 的 Storage 是 Proxy，spy 实例只能盖住
+      // 目标对象、拿不到走代理的调用；而 spy `Storage.prototype` 在测试环境用补位
+      // 实现时（Node 24+ 会挡住 jsdom 的 storage，见 src/test/setupDomStorage.ts）
+      // 又收不到调用。断言值对两种实现都成立。
+      const backupKey = 'easyflowhub_note_autosave_n1';
 
       await act(async () => {
         result.current.scheduleSave({ noteId: 'n1', title: 'T', content: 'C', tags: 'a' });
       });
       expect(result.current.saveState).toBe('unsaved');
-      expect(setItem).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem(backupKey)).toContain('a');
 
       await act(async () => {
         await vi.runAllTimersAsync();
       });
       expect(result.current.saveState).toBe('saved');
       expect(onSaved).toHaveBeenCalledWith(savedNote);
-      expect(removeItem).toHaveBeenCalled();
+      expect(localStorage.getItem(backupKey)).toBeNull();
     } finally {
       vi.useRealTimers();
     }
   });
 
   it('keeps the editor alive when the backup write throws (quota / private mode)', async () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError');
+    // 整个替换掉 localStorage：抛错的注入不该依赖 Storage 是原生对象还是补位实现。
+    const real = localStorage;
+    const throwing = new Proxy(real, {
+      get(target, prop) {
+        if (prop === 'setItem') {
+          return () => {
+            throw new Error('QuotaExceededError');
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
     });
+    vi.stubGlobal('localStorage', throwing);
 
     const { result } = await renderAutoSave(10_000);
     await act(async () => {
@@ -120,7 +135,6 @@ describe('useAutoSave', () => {
         .mockResolvedValueOnce({ ...savedNote, id: 'n1', content: 'B' });
 
       const { result, onSaved } = await renderAutoSave();
-      const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
 
       // Schedule A and let the debounce fire so the persist is in-flight
       // (still awaiting the slow saveNote).
@@ -148,7 +162,6 @@ describe('useAutoSave', () => {
 
       // A's stale response must not have fired onSaved or cleared B's backup.
       expect(onSaved).not.toHaveBeenCalled();
-      expect(removeItem).not.toHaveBeenCalled();
       expect(localStorage.getItem('easyflowhub_note_autosave_n1')).toContain('B-body');
       // The page should still show 'unsaved' because B is still pending.
       expect(result.current.saveState).toBe('unsaved');
