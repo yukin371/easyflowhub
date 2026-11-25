@@ -41,10 +41,8 @@ use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, REC
 use windows_sys::Win32::Graphics::Gdi::UpdateWindow;
 use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, MapVirtualKeyW, SetFocus, VK_ESCAPE, VK_TAB, MAPVK_VSC_TO_VK_EX,
-};
-use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmGetVirtualKey, ImmReleaseContext};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus, VK_ESCAPE, VK_TAB};
+use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, GetClassNameW, GetWindowLongPtrW, GetWindowTextLengthW,
@@ -708,7 +706,7 @@ unsafe extern "system" fn subclass_proc(
             // the table is empty or the callback was never installed.
             other => {
                 if let Some(callback) = callbacks.on_key.as_ref() {
-                    if callback(keys::modifiers(original_key(hwnd, other, lparam))) {
+                    if callback(keys::modifiers(keys::original_key(hwnd, other, lparam))) {
                         return 0;
                     }
                 }
@@ -717,45 +715,6 @@ unsafe extern "system" fn subclass_proc(
     }
 
     DefSubclassProc(hwnd, message, wparam, lparam)
-}
-
-/// Undo the IME's rewrite of the virtual-key code.
-///
-/// With a Chinese IME active, `WM_KEYDOWN` can arrive with `wParam` set to
-/// `VK_PROCESSKEY` (0xE5) instead of the key the user pressed: the IME claims the
-/// combo before the control sees it. Measured 2026-11-25 — `Ctrl+.` after Sogou was
-/// installed arrived as `vk=0xE5`, so the tools shortcut looked "not implemented".
-///
-/// Two ways back, in order:
-/// 1. `ImmGetVirtualKey` — the documented answer, but it returns 0xE5 itself on this
-///    RichEdit, so it is not enough on its own.
-/// 2. The scan code in `lParam` bits 16–23, mapped back with the thread's layout.
-///    This is what actually works here; the IME rewrites `wParam` and leaves
-///    `lParam` alone.
-///
-/// Consuming the callback's key here also keeps the IME from acting twice: if the
-/// shell answers the shortcut, the message is not passed on and Sogou does *not*
-/// also toggle punctuation.
-fn original_key(hwnd: HWND, vk: u16, lparam: LPARAM) -> u16 {
-    const VK_PROCESSKEY: u16 = 0xE5;
-    if vk != VK_PROCESSKEY {
-        return vk;
-    }
-    let original = unsafe { ImmGetVirtualKey(hwnd) } as u16;
-    if original != 0 && original != VK_PROCESSKEY {
-        return original;
-    }
-
-    let scan = ((lparam as usize >> 16) & 0xFF) as u32;
-    if scan == 0 {
-        return vk;
-    }
-    let mapped = unsafe { MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX) } as u16;
-    if mapped == 0 {
-        vk
-    } else {
-        mapped
-    }
 }
 
 /// `WS_CLIPCHILDREN` on the parent is what stops the GL swap from painting over
