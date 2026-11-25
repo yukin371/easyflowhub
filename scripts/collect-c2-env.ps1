@@ -82,54 +82,115 @@ foreach ($g in $gpus) {
 }
 
 # ------------------------------------------------------------ input methods
-$enabled = @()
-foreach ($lang in (Get-WinUserLanguageList)) {
-    foreach ($tip in $lang.InputMethodTips) {
-        $enabled += [pscustomobject]@{ Lang = $lang.LanguageTag; Tip = $tip }
-    }
+# Identity is the TIP CLSID, never the display name.
+#
+# On 2026-11-25 this script reported Sogou and WeChat input as "not installed"
+# while both were installed and enabled. Two independent causes, both fixed:
+#   * WeChat input registers its text service as **WeType**, so a /wechat|微信/
+#     name match could never hit it. Its binary is wetype_tip.dll.
+#   * A TIP key's Description lives under HKLM; the HKCU mirror of the same key
+#     usually has none. Reading one hive means seeing a nameless service.
+# Presence is now decided from the same list the language bar itself uses, and
+# every verdict below prints what it matched, so a wrong answer is auditable
+# instead of plausible.
+$KnownTips = [ordered]@{
+    '{81d4e9c9-1d3b-41bc-9e6c-4b40bf79e35e}' = 'Microsoft Pinyin'
+    '{e7ea138e-69f8-11d7-a6ea-00065b844310}' = 'Sogou Pinyin'
+    '{86598fb9-66a2-463e-b9c2-aeb906d477ad}' = 'WeChat input (WeType)'
 }
 
-$registered = @()
-$tipRoot = 'HKLM:\SOFTWARE\Microsoft\CTF\TIP'
-if (Test-Path $tipRoot) {
-    foreach ($key in (Get-ChildItem $tipRoot -ErrorAction SilentlyContinue)) {
-        $profileRoot = Join-Path $key.PSPath 'LanguageProfile\0x00000804'
-        if (-not (Test-Path $profileRoot)) { continue }
-        foreach ($profile in (Get-ChildItem $profileRoot -ErrorAction SilentlyContinue)) {
-            $desc = (Get-ItemProperty $profile.PSPath -ErrorAction SilentlyContinue).Description
-            $registered += [pscustomobject]@{
-                Clsid   = $key.PSChildName.ToLower()
-                Profile = $profile.PSChildName.ToLower()
-                Desc    = $desc
-            }
+$enabledClsids = New-Object System.Collections.Generic.List[string]
+foreach ($lang in (Get-WinUserLanguageList)) {
+    foreach ($tip in $lang.InputMethodTips) {
+        # Format is `0804:{CLSID}{PROFILE}`; the first GUID identifies the service.
+        # The braces are inside the capture group on purpose: the table below is
+        # keyed by `{CLSID}`, and a brace-less capture silently compares unequal.
+        if ($tip -match '(\{[0-9A-Fa-f\-]{36}\})') {
+            $enabledClsids.Add($Matches[1].ToLower())
         }
     }
 }
 
-Add-Line
-Add-Line '**Input methods enabled in the language list:**'
-Add-Line
-if ($enabled.Count -eq 0) {
-    Add-Line '- (none)'
-} else {
-    foreach ($e in $enabled) {
-        $match = $registered | Where-Object { $e.Tip -like ('*' + $_.Clsid + '*') } | Select-Object -First 1
-        $label = 'unknown profile'
-        if ($match) { $label = $match.Desc }
-        Add-Line ('- {0}{1}{2} {3} -- {0}{4}{0}' -f $tick, $e.Lang, $tick, $label, $e.Tip)
+function Get-TipDescription {
+    param([string]$Clsid)
+    foreach ($root in @('HKLM:\SOFTWARE\Microsoft\CTF\TIP', 'HKCU:\SOFTWARE\Microsoft\CTF\TIP')) {
+        $profiles = Join-Path (Join-Path $root $Clsid) 'LanguageProfile'
+        if (-not (Test-Path $profiles)) { continue }
+        foreach ($langKey in (Get-ChildItem $profiles -ErrorAction SilentlyContinue)) {
+            foreach ($profileKey in (Get-ChildItem $langKey.PSPath -ErrorAction SilentlyContinue)) {
+                $desc = (Get-ItemProperty $profileKey.PSPath -ErrorAction SilentlyContinue).Description
+                if ($desc) { return $desc }
+            }
+        }
     }
+    return $null
+}
+
+function Get-TipBinary {
+    param([string]$Clsid)
+    foreach ($root in @('HKLM:\SOFTWARE\Classes\CLSID', 'HKCU:\SOFTWARE\Classes\CLSID')) {
+        $server = Join-Path (Join-Path $root $Clsid) 'InprocServer32'
+        if (-not (Test-Path $server)) { continue }
+        $dll = (Get-ItemProperty $server -ErrorAction SilentlyContinue).'(default)'
+        if ($dll) { return $dll }
+    }
+    return $null
 }
 
 Add-Line
-Add-Line '**Registered zh-CN text services (enabled or not):**'
+Add-Line '**Input methods under test** (identity is the TIP CLSID; version comes from the service binary):'
 Add-Line
-if ($registered.Count -eq 0) {
+Add-Line '| Input method | TIP CLSID | Enabled | Version | Binary |'
+Add-Line '|---|---|---|---|---|'
+foreach ($entry in $KnownTips.GetEnumerator()) {
+    $clsid = $entry.Key
+    $label = $entry.Value
+    $desc = Get-TipDescription $clsid
+    # Keep the localized name when the label does not already carry it.
+    if ($desc -and $label -notlike ('*' + $desc + '*')) {
+        $label = '{0} ({1})' -f $label, $desc
+    }
+    $on = 'no'
+    if ($enabledClsids -contains $clsid) { $on = '**yes**' }
+    $version = 'unknown'
+    $binary = 'not found'
+    $dll = Get-TipBinary $clsid
+    if ($dll) {
+        $binary = Split-Path -Leaf $dll
+        if (Test-Path $dll) {
+            $fileVersion = (Get-Item $dll).VersionInfo.FileVersion
+            if ($fileVersion) { $version = $fileVersion }
+        }
+    } elseif ($enabledClsids -contains $clsid) {
+        # Inbox services (Microsoft Pinyin) have no InprocServer32: nothing to read
+        # a version from, which is not the same thing as "not installed".
+        $binary = 'inbox service (no InprocServer32)'
+        $version = 'n/a'
+    }
+    Add-Line ("| $label | $tick$clsid$tick | $on | $version | $binary |")
+}
+
+# Everything else registered for zh-CN, so "not in the three above" is checkable
+# rather than an assertion.
+Add-Line
+Add-Line '**Other zh-CN text services registered on this machine** (not under test):'
+Add-Line
+$otherRows = New-Object System.Collections.Generic.List[string]
+foreach ($root in @('HKLM:\SOFTWARE\Microsoft\CTF\TIP', 'HKCU:\SOFTWARE\Microsoft\CTF\TIP')) {
+    if (-not (Test-Path $root)) { continue }
+    foreach ($key in (Get-ChildItem $root -ErrorAction SilentlyContinue)) {
+        $clsid = $key.PSChildName.ToLower()
+        if ($KnownTips.Contains($clsid)) { continue }
+        $desc = Get-TipDescription $clsid
+        if (-not $desc) { continue }
+        $row = "- $desc -- $tick$clsid$tick"
+        if (-not $otherRows.Contains($row)) { $otherRows.Add($row) }
+    }
+}
+if ($otherRows.Count -eq 0) {
     Add-Line '- (none)'
 } else {
-    foreach ($r in $registered) {
-        # TIP child keys are already named `{CLSID}`; do not wrap them again.
-        Add-Line ('- {0} -- {1}{2}{1}' -f $r.Desc, $tick, $r.Clsid)
-    }
+    foreach ($row in $otherRows) { Add-Line $row }
 }
 
 # ------------------------------------------------------------- binary under test
@@ -161,13 +222,15 @@ if ($running.Count -eq 0) {
 }
 
 # ------------------------------------------------------------------- verdict
-$hasSogou = @($registered | Where-Object { $_.Desc -match 'sogou|搜狗' }).Count -gt 0
-$hasWechat = @($registered | Where-Object { $_.Desc -match 'wechat|微信' }).Count -gt 0
-$hasPinyin = @($registered | Where-Object { $_.Desc -match 'Microsoft Pinyin|微软拼音' }).Count -gt 0
+# Counted from the language bar's own list, by CLSID. A name regex would have
+# said "missing" for an input method the user had been typing with all day.
+$hasPinyin = $enabledClsids -contains '{81d4e9c9-1d3b-41bc-9e6c-4b40bf79e35e}'
+$hasSogou = $enabledClsids -contains '{e7ea138e-69f8-11d7-a6ea-00065b844310}'
+$hasWechat = $enabledClsids -contains '{86598fb9-66a2-463e-b9c2-aeb906d477ad}'
 
 function Say-Presence {
     param([bool]$Present, [string]$MissingNote)
-    if ($Present) { return 'present' }
+    if ($Present) { return 'present and enabled' }
     return ('**MISSING** - ' + $MissingNote)
 }
 
