@@ -1,0 +1,28 @@
+[package]
+name = "hub-editor"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The text island. `check-native-architecture.mjs` allows exactly two edges here
+# (hub-win, hub-core) and rejects egui/eframe symbols, which is what keeps the
+# editor a leaf: it takes a physical-pixel rect and hands back text, so the
+# layout decisions stay in the app where they can be tested without a window.
+#
+# Win32_UI_Shell is here for SetWindowSubclass, and Win32_UI_Input_Ime only to
+# check that an input-method context exists - the one part of IME support that can
+# be measured without a human typing. Subclassing exists solely to see Esc/Tab
+# before RichEdit swallows them.
+[dependencies]
+hub-core.workspace = true
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Performance",
+  "Win32_UI_Shell",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }

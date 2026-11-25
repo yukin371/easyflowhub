@@ -8,8 +8,10 @@
 //! calls, so the clamping rules live here with unit tests instead of inside the
 //! hotkey thread.
 
+pub mod island;
 pub mod layout;
 pub mod settings;
 
+pub use island::PixelRect;
 pub use layout::{place, PanelSpec, Placement, Rect};
 pub use settings::{SettingsSource, SpikeSettings};
