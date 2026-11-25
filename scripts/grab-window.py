@@ -24,10 +24,15 @@ from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
 
 SRCCOPY = 0x00CC0020
 DIB_RGB_COLORS = 0
 BI_RGB = 0
+# `dwmapi.h`. `GetWindowRect` on a borderless window at 150% includes a few pixels
+# of the drop shadow, which show up as a light grey outline around every grab and
+# make "is there a 1 px border defect" unanswerable.
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
 # Without this the coordinates below are virtualised at 150% and the grab is
 # silently a quarter of the window.
@@ -57,6 +62,23 @@ class BITMAPINFO(ctypes.Structure):
     _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
 
 
+def visible_bounds(hwnd):
+    """The client area in screen coordinates.
+
+    Not `GetWindowRect` and not `DWMWA_EXTENDED_FRAME_BOUNDS`: both return the
+    window rectangle, which on this borderless shell is 2 px larger on every side
+    than the drawn surface. The pixels in that ring are the desktop, so a grab
+    built from them has a light outline that reads as a border defect.
+    """
+    rect = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(rect))
+    origin = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+    return wintypes.RECT(
+        origin.x, origin.y, origin.x + rect.right, origin.y + rect.bottom
+    )
+
+
 def find_window(needle):
     found = []
 
@@ -71,9 +93,7 @@ def find_window(needle):
         user32.GetWindowTextW(hwnd, buffer, length + 1)
         title = buffer.value
         if needle.lower() in title.lower():
-            rect = wintypes.RECT()
-            user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            found.append((hwnd, title, rect))
+            found.append((hwnd, title, visible_bounds(hwnd)))
         return True
 
     user32.EnumWindows(callback, 0)
@@ -90,9 +110,9 @@ def virtual_screen():
     return rect
 
 
-def grab(rect, out_path):
-    width = rect.right - rect.left
-    height = rect.bottom - rect.top
+def grab(rect, out_path, inset=0):
+    width = rect.right - rect.left - 2 * inset
+    height = rect.bottom - rect.top - 2 * inset
     if width <= 0 or height <= 0:
         raise SystemExit(f"empty rect {width}x{height}")
 
@@ -101,7 +121,15 @@ def grab(rect, out_path):
     bitmap = gdi32.CreateCompatibleBitmap(screen_dc, width, height)
     gdi32.SelectObject(memory_dc, bitmap)
     ok = gdi32.BitBlt(
-        memory_dc, 0, 0, width, height, screen_dc, rect.left, rect.top, SRCCOPY
+        memory_dc,
+        0,
+        0,
+        width,
+        height,
+        screen_dc,
+        rect.left + inset,
+        rect.top + inset,
+        SRCCOPY,
     )
     if not ok:
         raise SystemExit(f"BitBlt failed: {ctypes.get_last_error()}")
@@ -143,6 +171,9 @@ def main():
     parser.add_argument("--title", default="easyflowhub-note")
     parser.add_argument("--screen", action="store_true")
     parser.add_argument("--out", default=None)
+    # The borderless shell reserves ~2 px on each side for the compositor's
+    # rounding and resize edge; those pixels are the desktop, not the window.
+    parser.add_argument("--inset", type=int, default=0)
     args = parser.parse_args()
 
     if args.screen:
@@ -158,7 +189,7 @@ def main():
         print(f"hwnd={hwnd} title={title!r} rect={rect.left},{rect.top} {rect.right-rect.left}x{rect.bottom-rect.top}")
 
     out = os.path.abspath(out)
-    width, height = grab(rect, out)
+    width, height = grab(rect, out, args.inset)
     print(f"wrote {out} ({width}x{height})")
     return 0
 
