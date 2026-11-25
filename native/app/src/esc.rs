@@ -24,15 +24,20 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 /// Build the callback handed to `Editor::on_escape`.
+///
+/// `viewport` is explicit for the same reason [`crate::keys::Bus`] carries one:
+/// with several notes open, a repaint request without a target wakes whichever
+/// viewport ran last, and the Esc flag would wait for the note's own timer.
 pub fn handler(
     flag: Arc<AtomicBool>,
     presses: Arc<AtomicU32>,
     ctx: egui::Context,
+    viewport: egui::ViewportId,
 ) -> Box<dyn Fn() + Send + Sync> {
     Box::new(move || {
         presses.fetch_add(1, Ordering::SeqCst);
         flag.store(true, Ordering::SeqCst);
-        ctx.request_repaint();
+        ctx.request_repaint_of(viewport);
     })
 }
 
@@ -50,7 +55,7 @@ mod tests {
             "fixture must start with nothing pending, or the assertion below proves nothing"
         );
 
-        handler(flag.clone(), presses.clone(), ctx.clone())();
+        handler(flag.clone(), presses.clone(), ctx.clone(), egui::ViewportId::ROOT)();
 
         assert!(
             flag.load(Ordering::SeqCst),
@@ -67,7 +72,7 @@ mod tests {
     fn counts_every_press_so_a_swallowed_key_is_distinguishable() {
         let flag = Arc::new(AtomicBool::new(false));
         let presses = Arc::new(AtomicU32::new(0));
-        let callback = handler(flag, presses.clone(), egui::Context::default());
+        let callback = handler(flag, presses.clone(), egui::Context::default(), egui::ViewportId::ROOT);
 
         callback();
         callback();

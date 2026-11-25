@@ -394,6 +394,7 @@ impl SpikeApp {
                         self.escape.clone(),
                         self.esc_presses.clone(),
                         ctx.clone(),
+                        egui::ViewportId::ROOT, // one viewport: the spike's whole point
                     ));
                     editor.set_text(&editor_bench::corpus_text(120));
                     editor.caret_to_end();

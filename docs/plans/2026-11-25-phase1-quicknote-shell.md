@@ -322,13 +322,14 @@ eframe 把事件循环绑在根视口上：根窗口关闭 → `run_native` 返�
 
 停到屏外而不是 `SW_HIDE`，是 S1 就付过学费的那条：隐藏会停掉 `WM_PAINT` 投递，而根视口一旦不能绘制就不能声明 viewport，笔记会**冻住**而不是关闭。
 
-### 三个不显然的细节
+### 四个不显然的细节
 
 | 细节 | 为什么 |
 |---|---|
 | 用标题把 viewport 和 `HWND` 对上 | deferred viewport 的回调只拿到 `Context`，eframe 0.31 不在回调里暴露 `HWND`，所以 `find_by_title` 从"找那个笔记窗口"变成精确查找。标题不可见（无边框、无任务栏），成本为零 |
 | `Shared` 用 `unsafe impl Send/Sync` 包一层 | `show_viewport_deferred` 要求回调 `Send + Sync`，而 `NoteShell` 持有 `HWND` 和 RichEdit 子类指针。**没有任何东西真的跨线程**：eframe 在事件循环线程调用回调，win32 句柄也只在那条线程有效。`lock()` 里断言线程 id，把这条注释变成检查而不是承诺 |
 | 去掉 1a 的 `set_zoom_factor` | 它是 `Context` 全局的：一个笔记会改所有笔记的缩放，多显示器下不是取整误差而是整体错标。也不需要——实测 `note_ppp id=0 ppp=1.25 (was 0.00)`，窗口放到位之后 winit 第一帧就报出真实缩放，岛每帧按 `ppp` 重算矩形 |
+| 按键与 Esc 的回调必须指明 viewport | `ctx.request_repaint()` 的语义是"最后跑过一遍的那个视口"。单窗口时它恒等于根视口所以看不出来，两个笔记时它会指向**另一个窗口**，动作只能等该笔记自己的 500 ms 心跳——就是 1a 的"Esc 要按三次"换了件马甲。`keys::Bus` 和 `esc::handler` 因此都带 `ViewportId`，用 `request_repaint_of` |
 
 ### 证据（125%，日志）
 

@@ -51,6 +51,17 @@ pub fn title(id: u32) -> String {
     format!("{TITLE_PREFIX}#{id}")
 }
 
+/// The egui viewport that hosts note `id`.
+///
+/// One function for both sides on purpose: the controller declares the viewport,
+/// and the island's key and Esc callbacks have to wake *that* viewport. egui's
+/// `request_repaint()` means "the viewport that ran the last pass", which with two
+/// notes is a coin flip -- the shortcut would sit in its slot until the note's own
+/// 500 ms tick, which is the three-press bug in a new costume.
+pub fn viewport_id(id: u32) -> egui::ViewportId {
+    egui::ViewportId::from_hash_of(("note", id))
+}
+
 /// How many note windows this process has open right now.
 ///
 /// `top_level_windows()` also returns three windows nobody asked for -- winit's
@@ -79,11 +90,15 @@ pub struct Spawn {
 pub struct NoteShell {
     id: u32,
     title: String,
+    viewport: egui::ViewportId,
     spec: NoteSpec,
     placement: NotePlacement,
     log: Arc<Log>,
     lite: bool,
     hwnd: Option<isize>,
+    /// Set once the first handle lookup missed, so a note that can never attach
+    /// does not write the same line ten times a second.
+    waited: bool,
     strip: StripState,
     palette: Palette,
     appearance: NoteAppearance,
@@ -127,11 +142,13 @@ impl NoteShell {
         Self {
             id: spawn.id,
             title: title(spawn.id),
+            viewport: viewport_id(spawn.id),
             spec: spawn.spec,
             placement: spawn.placement,
             log: spawn.log,
             lite: spawn.lite,
             hwnd: None,
+            waited: false,
             strip: StripState::default(),
             palette,
             appearance,
@@ -139,7 +156,7 @@ impl NoteShell {
             editor: None,
             escape: Arc::new(AtomicBool::new(false)),
             esc_presses: Arc::new(AtomicU32::new(0)),
-            keys: keys::Bus::new(),
+            keys: keys::Bus::new(viewport_id(spawn.id)),
             closing: false,
             last_island: None,
             last_ppp: 0.0,
@@ -194,8 +211,11 @@ impl NoteShell {
             // eframe creates the window before the first callback, so a miss means
             // the lookup raced the creation. Ask again instead of parking the note
             // half-built: without a handle there is no island and no close.
-            self.log
-                .mark(0, "note_window", &format!("id={} waiting_for_handle", self.id));
+            if !self.waited {
+                self.waited = true;
+                self.log
+                    .mark(0, "note_window", &format!("id={} waiting_for_handle", self.id));
+            }
             ctx.request_repaint_after(Duration::from_millis(50));
             return;
         }
@@ -353,6 +373,7 @@ impl NoteShell {
                         self.escape.clone(),
                         self.esc_presses.clone(),
                         ctx.clone(),
+                        self.viewport,
                     ));
                     editor.on_key(self.keys.handler(ctx.clone()));
                     // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,

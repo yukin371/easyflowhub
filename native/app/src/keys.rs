@@ -131,34 +131,34 @@ pub fn egui_press(ctx: &egui::Context) -> Option<KeyPress> {
     })
 }
 
-/// Where a pressed shortcut waits until the next `update`.
+/// Where a pressed shortcut waits until the next frame.
 ///
 /// The subclass proc runs inside a message handler, so acting there would re-enter
 /// window code. A single slot is enough: two shortcuts inside one frame would both
 /// be served by the next frame anyway, and dropping the first is better than
 /// queueing a close behind a pin and then running both.
+///
+/// The bus carries its own `ViewportId` because a repaint request without one means
+/// "whoever ran last": with several notes open, that is a different window than the
+/// one the key was typed into, and the action waits for the note's 500 ms tick.
 #[derive(Clone)]
 pub struct Bus {
     slot: Arc<AtomicU8>,
-}
-
-impl Default for Bus {
-    fn default() -> Self {
-        Self {
-            slot: Arc::new(AtomicU8::new(0)),
-        }
-    }
+    viewport: egui::ViewportId,
 }
 
 impl Bus {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(viewport: egui::ViewportId) -> Self {
+        Self {
+            slot: Arc::new(AtomicU8::new(0)),
+            viewport,
+        }
     }
 
-    /// Record a shortcut and wake the UI thread.
+    /// Record a shortcut and wake this note's viewport.
     pub fn post(&self, action: Action, ctx: &egui::Context) {
         self.slot.store(action.code(), Ordering::SeqCst);
-        ctx.request_repaint();
+        ctx.request_repaint_of(self.viewport);
     }
 
     /// Take the pending action, if any.
@@ -172,10 +172,11 @@ impl Bus {
     /// `Ctrl+D` would beep inside the control as well as closing the window.
     pub fn handler(&self, ctx: egui::Context) -> Box<dyn Fn(KeyPress) -> bool + Send + Sync> {
         let slot = self.slot.clone();
+        let viewport = self.viewport;
         Box::new(move |press| match resolve(press) {
             Some(action) => {
                 slot.store(action.code(), Ordering::SeqCst);
-                ctx.request_repaint();
+                ctx.request_repaint_of(viewport);
                 true
             }
             None => false,
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn the_bus_keeps_only_the_latest_shortcut() {
-        let bus = Bus::new();
+        let bus = Bus::new(egui::ViewportId::ROOT);
         let ctx = egui::Context::default();
         assert_eq!(bus.take(), None, "an empty bus must not invent an action");
 
@@ -291,7 +292,7 @@ mod tests {
 
     #[test]
     fn the_handler_consumes_only_what_the_table_answers() {
-        let bus = Bus::new();
+        let bus = Bus::new(egui::ViewportId::ROOT);
         let ctx = egui::Context::default();
         let handler = bus.handler(ctx);
 
