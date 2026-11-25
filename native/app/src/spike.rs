@@ -154,6 +154,13 @@ pub struct SpikeApp {
     /// a press that arrives while no frame is scheduled is otherwise invisible.
     esc_presses: Arc<std::sync::atomic::AtomicU32>,
     editor_bench: Option<usize>,
+    /// Parks that left keyboard focus inside the panel, and parks attempted.
+    ///
+    /// A parked panel that still owns focus is closed only visually: typing goes
+    /// into an off-screen document. Counted rather than asserted so the bench
+    /// reports it every run instead of this being a claim in a commit message.
+    focus_leaks: usize,
+    parks: usize,
 }
 
 impl SpikeApp {
@@ -211,13 +218,13 @@ impl SpikeApp {
         // Visible but off-screen: a hidden window receives no redraws, which would
         // starve both the warm frames and every later content refresh.
         hub_win::window::show_without_activation(hwnd);
-        hub_win::window::park(hwnd);
+        let released = hub_win::window::park(hwnd);
 
         config.log.mark(
             0,
             "hidden_window",
             &format!(
-                "{}x{}+{}+{} cols={} monitor_scale={monitor_scale:.2} work={}x{}",
+                "{}x{}+{}+{} cols={} monitor_scale={monitor_scale:.2} work={}x{} focus_released={released}",
                 placement.width,
                 placement.height,
                 placement.x,
@@ -258,6 +265,8 @@ impl SpikeApp {
             escape: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             esc_presses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             editor_bench: config.editor_bench,
+            focus_leaks: 0,
+            parks: 0,
             config,
         }
     }
@@ -537,7 +546,11 @@ impl SpikeApp {
         );
 
         if self.bench_total.is_some() {
-            hub_win::window::park(self.hwnd);
+            let _released = hub_win::window::park(self.hwnd);
+            self.parks += 1;
+            if hub_win::window::current_focus() != 0 {
+                self.focus_leaks += 1;
+            }
             self.phase = Phase::Parked;
             self.last_cycle = Some(Instant::now());
             self.completed += 1;
@@ -597,7 +610,11 @@ impl SpikeApp {
             end_probe.handles as i64 - self.start_probe.handles as i64
         );
         self.config.log.mark(0, "bench_done", "");
-        print!("{report}---JSON---\n{json}---LEAK---\n{leak}\n");
+        print!("{report}---JSON---\n{json}---LEAK---\n{leak}\n---FOCUS---\n");
+        println!(
+            "{{\"kind\":\"native-focus\",\"parks\":{},\"left_focus_in_panel\":{}}}",
+            self.parks, self.focus_leaks
+        );
         {
             use std::io::Write;
             let _ = std::io::stdout().flush();
@@ -605,7 +622,8 @@ impl SpikeApp {
 
         let shown = bench::distribution(&self.samples.shown_us);
         let ok = shown.p95 as f64 / 1000.0 <= self.config.budget_p95_ms
-            && shown.p99 as f64 / 1000.0 <= self.config.budget_p99_ms;
+            && shown.p99 as f64 / 1000.0 <= self.config.budget_p99_ms
+            && self.focus_leaks == 0;
         std::process::exit(if ok { 0 } else { 2 });
     }
 }
@@ -628,7 +646,12 @@ impl eframe::App for SpikeApp {
                 .esc_presses
                 .swap(0, std::sync::atomic::Ordering::SeqCst);
             if matches!(self.phase, Phase::Shown { .. }) {
-                hub_win::window::park(self.hwnd);
+                let released = hub_win::window::park(self.hwnd);
+                self.parks += 1;
+                let focus_after = hub_win::window::current_focus();
+                if focus_after != 0 {
+                    self.focus_leaks += 1;
+                }
                 self.phase = Phase::Parked;
                 // `presses` is the evidence for the report that closing took
                 // three attempts: one means the other two never reached the
@@ -636,10 +659,18 @@ impl eframe::App for SpikeApp {
                 // open); more than one means they all arrived and were waiting
                 // for a frame. The two are fixed in different places, so they
                 // must not look identical in the log.
+                //
+                // `focus_released` is the other half of "closed": before it was
+                // non-zero, the island kept keyboard focus off-screen and typing
+                // went into an invisible document. A zero here is not proof (the
+                // focus may already have been elsewhere), so the probe, not this
+                // line, is the evidence.
                 self.config.log.mark(
                     0,
                     "editor_esc",
-                    &format!("panel parked, presses={presses}"),
+                    &format!(
+                        "panel parked, presses={presses} focus_released={released} focus_after={focus_after}"
+                    ),
                 );
                 return;
             }
@@ -679,9 +710,18 @@ impl eframe::App for SpikeApp {
         // A press while the panel is open closes it (interactive mode).
         if matches!(self.phase, Phase::Shown { .. }) && self.config.bus.has_pending() {
             let _ = self.config.bus.take();
-            hub_win::window::park(self.hwnd);
+            let released = hub_win::window::park(self.hwnd);
+            self.parks += 1;
+            let focus_after = hub_win::window::current_focus();
+            if focus_after != 0 {
+                self.focus_leaks += 1;
+            }
             self.phase = Phase::Parked;
-            self.config.log.mark(0, "toggle_hide", "");
+            self.config.log.mark(
+                0,
+                "toggle_hide",
+                &format!("focus_released={released} focus_after={focus_after}"),
+            );
             return;
         }
 

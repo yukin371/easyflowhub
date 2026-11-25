@@ -87,10 +87,36 @@ pub fn show_without_activation(hwnd: isize) {
     }
 }
 
-/// Close the panel: move it off-screen, keep it redrawable.
-pub fn park(hwnd: isize) {
+/// Close the panel: move it off-screen, give the keyboard back, keep it redrawable.
+///
+/// Moving the window is not closing it as far as the keyboard is concerned. The
+/// island keeps keyboard focus while it sits off-screen, so after Esc the panel is
+/// invisible but still the focus owner: typing goes into a window nobody can see.
+/// Measured 2026-11-25 with `scripts/esc_poke.rs` -- `focus_is_editor=true` after
+/// park, and a byte landed in the document. That is worse than a focus leak: the
+/// user believes the panel is closed and keeps typing into their other window.
+///
+/// `SetFocus(null)` is the smallest fix that does not touch the reveal path. It
+/// does **not** hand the foreground to the previously active window: doing that
+/// would make the next `SetForegroundWindow` negotiate the foreground lock, which
+/// changes what the latency benchmark measures (today's cycles start with this
+/// process already foreground, an optimistic condition worth recording separately
+/// rather than silently changing mid-benchmark). Releasing focus is enough to stop
+/// the keystrokes; the foreground question belongs to Phase 1, where reveals from
+/// another application are the normal case.
+///
+/// `SW_HIDE` remains wrong here -- see the module comment: hiding stops
+/// `WM_PAINT` delivery and stalls the next bench cycle.
+///
+/// Returns the window that held focus before the call (`0` if none), so callers
+/// can log what was released instead of asserting a fix by inspection.
+pub fn park(hwnd: isize) -> isize {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
+
     let hwnd = hwnd as HWND;
+    let previous = unsafe { GetFocus() };
     unsafe {
+        SetFocus(std::ptr::null_mut());
         SetWindowPos(
             hwnd,
             std::ptr::null_mut(),
@@ -101,6 +127,19 @@ pub fn park(hwnd: isize) {
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE,
         );
     }
+    previous as isize
+}
+
+/// Keyboard focus of the calling thread, as a raw handle (`0` = none).
+///
+/// Only meaningful on the UI thread: `GetFocus` answers for the caller's message
+/// queue, so a cross-thread check reads this thread's focus, not the panel's.
+/// Used to prove that parking really gave the keyboard back -- a zero here after
+/// `park` is the difference between "closed" and "invisible but still typing".
+pub fn current_focus() -> isize {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus;
+
+    unsafe { GetFocus() as isize }
 }
 
 /// Locate this process's window by title.
