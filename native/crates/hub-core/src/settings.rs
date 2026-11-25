@@ -12,17 +12,107 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// One colour, `[r, g, b]`.
+///
+/// Arrays instead of `#rrggbb` strings because the value crosses into two
+/// consumers that both speak bytes: egui's `Color32` and GDI's colourref. A hex
+/// parser here would be one more place for "why is my colour off by one" to hide.
+pub type Rgb = [u8; 3];
+
+/// Colours of the quick-note surface.
+///
+/// Defaults are the sampled `--manager-*` tokens the Tauri build uses, so an
+/// untouched config looks like the shipped note rather than like a second design.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct NoteColors {
+    /// Text island background, also the window body.
+    pub panel: Rgb,
+    /// Title strip.
+    pub strip: Rgb,
+    /// Hairlines under the strip and around buttons.
+    pub border: Rgb,
+    /// Body text.
+    pub ink: Rgb,
+    /// The `100%` label and inactive glyphs.
+    pub ink_soft: Rgb,
+    /// Glyphs that are neither hovered nor active.
+    pub ink_subtle: Rgb,
+    /// Active button, ghost label, and the caret if a self-drawn one ever lands.
+    pub accent: Rgb,
+}
+
+impl Default for NoteColors {
+    fn default() -> Self {
+        Self {
+            panel: [13, 21, 34],
+            strip: [31, 46, 68],
+            border: [38, 55, 72],
+            ink: [220, 230, 244],
+            ink_soft: [175, 190, 210],
+            ink_subtle: [138, 155, 178],
+            accent: [134, 171, 220],
+        }
+    }
+}
+
+/// Typography and spacing of the note body.
+///
+/// Every value here is *logical*: the editor multiplies by the monitor scale
+/// when it builds the physical rectangle. `font_pt` is the exception — points
+/// are already device independent, which is exactly why the old code that
+/// multiplied it by `pixels_per_point` rendered 16.5 pt on a 150% screen.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct NoteAppearance {
+    pub font_family: String,
+    pub font_pt: f32,
+    /// Multiple of the font's natural line height. `1.0` keeps RichEdit's own
+    /// spacing, which is what the body is tuned to: measured at 150% with this
+    /// face and 11.5 pt, one line is 26.7 logical px (a 22 px glyph plus 18 px of
+    /// leading), and 1.35 put 32 px between glyphs — visibly airy for a scratch pad.
+    pub line_spacing: f32,
+    /// Inset between the island edge and the text, logical pixels.
+    pub padding_x: i32,
+    pub padding_y: i32,
+    /// Caret thickness in **logical** pixels. `0` leaves the system value alone.
+    ///
+    /// Non-zero writes the **system-wide** caret width (`SPI_SETCARETWIDTH`) and
+    /// restores the previous value when the editor is dropped: Windows has no
+    /// per-window caret width, and a 1 px caret on a dark background is the
+    /// complaint this field answers. See `hub_editor::Theme::caret_width`.
+    pub caret_width: i32,
+    pub colors: NoteColors,
+}
+
+impl Default for NoteAppearance {
+    fn default() -> Self {
+        Self {
+            font_family: "Microsoft YaHei UI".to_string(),
+            font_pt: 11.5,
+            line_spacing: 1.0,
+            padding_x: 12,
+            padding_y: 10,
+            caret_width: 2,
+            colors: NoteColors::default(),
+        }
+    }
+}
+
 /// Note window size, logical pixels.
 ///
 /// Field names match the shipped Tauri `QuickNoteSettings` on purpose: when the
 /// two apps eventually read one settings file, `quick_note.width` must already
 /// mean the same thing on both sides. Translating between `note_width` and
 /// `quick_note.width` is the kind of mapping that silently stops being applied.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct QuickNoteSettings {
     pub width: u32,
     pub height: u32,
+    /// Not in the Tauri struct: an unknown key is ignored there, and `serde(default)`
+    /// here means a file without `appearance` still loads with the sampled theme.
+    pub appearance: NoteAppearance,
 }
 
 impl Default for QuickNoteSettings {
@@ -30,6 +120,7 @@ impl Default for QuickNoteSettings {
         Self {
             width: 400,
             height: 300,
+            appearance: NoteAppearance::default(),
         }
     }
 }
@@ -163,8 +254,39 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_json_falls_back_to_defaults() {
+    fn appearance_defaults_keep_the_sampled_theme() {
+        let appearance = NoteAppearance::default();
+        // The body palette is the shipped `--manager-*` set, composited once.
+        assert_eq!(appearance.colors.panel, [13, 21, 34]);
+        assert_eq!(appearance.colors.ink, [220, 230, 244]);
+        // 12 px keeps the body inset equal to the strip's label inset.
+        assert_eq!(appearance.padding_x, 12);
+        assert_eq!(appearance.padding_y, 10);
+        assert_eq!(appearance.caret_width, 2);
+    }
+
+    #[test]
+    fn a_colour_override_keeps_the_other_fields() {
         let dir = std::env::temp_dir().join("hub-core-settings-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("colour.json");
+        std::fs::write(
+            &path,
+            r#"{"quick_note":{"appearance":{"colors":{"accent":[255,64,64]}}}}"#,
+        )
+        .unwrap();
+
+        let (settings, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(settings.quick_note.appearance.colors.accent, [255, 64, 64]);
+        // `serde(default)` on both levels: the untouched colours survive.
+        assert_eq!(settings.quick_note.appearance.colors.panel, [13, 21, 34]);
+        assert_eq!(settings.quick_note.width, 400);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn corrupt_json_falls_back_to_defaults() {        let dir = std::env::temp_dir().join("hub-core-settings-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("corrupt.json");
         std::fs::write(&path, "{not json").unwrap();

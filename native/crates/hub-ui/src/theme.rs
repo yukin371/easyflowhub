@@ -2,14 +2,18 @@
 //!
 //! The panel is a dark action surface in both themes (§5.4 keeps the launcher out
 //! of the document theme), so the palette is fixed here rather than derived from
-//! the OS. The accent is the only thing that could later follow the user's choice.
+//! the OS. The quick-note surface is the exception: its colours come from the
+//! settings file (`quick_note.appearance.colors`), because the note is the one
+//! place where a user stares at the same pixels for minutes at a time.
 
 use egui::{Color32, FontData, FontDefinitions, FontFamily};
+use hub_core::{NoteColors, Rgb};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub panel: Color32,
+    /// The note's title strip; the launcher uses it for raised cards.
     pub panel_strong: Color32,
     pub border: Color32,
     pub ink: Color32,
@@ -45,30 +49,33 @@ impl Palette {
         }
     }
 
-    /// The quick-note window, sampled from the shipped `--quick-*` tokens.
+    /// The quick-note window, from the user's `appearance.colors`.
     ///
-    /// `styles.css` defines them as `rgba(...)` over `--manager-bg`; egui wants
-    /// opaque colours, so the translucent ones are composited here. Doing the
-    /// maths in one place keeps "the native note is slightly bluer than the Tauri
-    /// one" from becoming an unexplained visual difference.
-    pub fn quick() -> Self {
+    /// `styles.css` defines the shipped tokens as `rgba(...)` over `--manager-bg`;
+    /// the defaults in `NoteColors` already carry the composited value, so no
+    /// blending happens here. Doing the maths once, in `hub-core`, keeps "the
+    /// native note is slightly bluer than the Tauri one" from becoming an
+    /// unexplained visual difference.
+    pub fn from_colors(colors: &NoteColors) -> Self {
         Self {
-            // --manager-bg #0d1522
-            panel: Color32::from_rgb(13, 21, 34),
-            // --manager-panel-strong-opaque #1f2e44
-            panel_strong: Color32::from_rgb(31, 46, 68),
-            // rgba(166,193,226,0.2) over #0d1522
-            border: Color32::from_rgb(38, 55, 72),
-            // --manager-ink #dce6f4
-            ink: Color32::from_rgb(220, 230, 244),
-            // --manager-ink-soft #afbed2
-            ink_soft: Color32::from_rgb(175, 190, 210),
-            // --manager-ink-muted #8a9bb2
-            ink_subtle: Color32::from_rgb(138, 155, 178),
-            // --manager-accent #86abdc
-            accent: Color32::from_rgb(134, 171, 220),
+            panel: rgb(colors.panel),
+            panel_strong: rgb(colors.strip),
+            border: rgb(colors.border),
+            ink: rgb(colors.ink),
+            ink_soft: rgb(colors.ink_soft),
+            ink_subtle: rgb(colors.ink_subtle),
+            accent: rgb(colors.accent),
         }
     }
+
+    /// The shipped quick-note palette, i.e. the default `NoteColors`.
+    pub fn quick() -> Self {
+        Self::from_colors(&NoteColors::default())
+    }
+}
+
+fn rgb(color: Rgb) -> Color32 {
+    Color32::from_rgb(color[0], color[1], color[2])
 }
 
 /// Windows ships Microsoft YaHei; loading it is a file read, not a platform call,

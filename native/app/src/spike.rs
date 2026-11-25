@@ -378,8 +378,13 @@ impl SpikeApp {
         let theme = hub_editor::Theme {
             background: colorref(palette.panel_strong),
             foreground: colorref(palette.ink),
-            font_face: "Microsoft YaHei UI",
+            font_face: "Microsoft YaHei UI".to_string(),
+            // Frozen with the measured configuration: S2's 4.95 ms p95 was taken
+            // with no inset, no extra leading and the scale-multiplied point size.
             font_pt: 11.0 * ctx.pixels_per_point(),
+            line_spacing: 1.0,
+            padding: (0, 0),
+            caret_width: 0,
         };
 
         match self.editor.as_mut() {

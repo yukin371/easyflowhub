@@ -23,7 +23,7 @@
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-use hub_core::{place_note, NoteSpec, PixelRect, SpikeSettings, STRIP_HEIGHT};
+use hub_core::{place_note, NoteAppearance, NoteSpec, PixelRect, SpikeSettings, STRIP_HEIGHT};
 use hub_editor::Editor;
 use hub_ui::quicknote::{self, StripState};
 use hub_ui::Palette;
@@ -97,6 +97,12 @@ struct NoteShell {
     hwnd: isize,
     strip: StripState,
     palette: Palette,
+    appearance: NoteAppearance,
+    /// The theme last pushed into the island. `EM_SETCHARFORMAT(SCF_ALL)` reformats
+    /// the whole document, so repeating it every frame is not free: it re-runs
+    /// shaping on all ten thousand characters and, while it does, the caret is
+    /// hidden. Comparing first is what stops a 500 ms refresh from blinking it.
+    last_theme: Option<hub_editor::Theme>,
     editor: Option<Editor>,
     escape: std::sync::Arc<std::sync::atomic::AtomicBool>,
     esc_presses: Arc<AtomicU32>,
@@ -109,7 +115,8 @@ struct NoteShell {
 impl NoteShell {
     fn new(cc: &eframe::CreationContext<'_>, config: Config, spec: NoteSpec) -> Self {
         let ctx = cc.egui_ctx.clone();
-        let palette = Palette::quick();
+        let appearance = config.settings.quick_note.appearance.clone();
+        let palette = Palette::from_colors(&appearance.colors);
 
         match hub_ui::theme::install_fonts(&ctx) {
             Some(font) => config.log.mark(0, "fonts", &format!("cjk={font}")),
@@ -183,6 +190,8 @@ impl NoteShell {
             hwnd,
             strip: StripState::default(),
             palette,
+            appearance,
+            last_theme: None,
             editor: None,
             escape: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             esc_presses: Arc::new(AtomicU32::new(0)),
@@ -193,13 +202,29 @@ impl NoteShell {
         }
     }
 
-    fn sync_editor(&mut self, ctx: &egui::Context, rect: PixelRect) {
-        let theme = hub_editor::Theme {
+    /// Translate the user's logical appearance into the editor's physical theme.
+    ///
+    /// `pixels_per_point` is the only place the scale is applied: `font_pt` is in
+    /// points and must *not* be multiplied (that bug rendered 16.5 pt at 150%),
+    /// while the inset is in logical pixels and must be.
+    fn theme_for(&self, ctx: &egui::Context) -> hub_editor::Theme {
+        let ppp = ctx.pixels_per_point().max(0.1);
+        hub_editor::Theme {
             background: colorref(self.palette.panel),
             foreground: colorref(self.palette.ink),
-            font_face: "Microsoft YaHei UI",
-            font_pt: 11.0 * ctx.pixels_per_point(),
-        };
+            font_face: self.appearance.font_family.clone(),
+            font_pt: self.appearance.font_pt,
+            line_spacing: self.appearance.line_spacing,
+            padding: (
+                (self.appearance.padding_x as f32 * ppp).round() as i32,
+                (self.appearance.padding_y as f32 * ppp).round() as i32,
+            ),
+            caret_width: (self.appearance.caret_width as f32 * ppp).round() as i32,
+        }
+    }
+
+    fn sync_editor(&mut self, ctx: &egui::Context, rect: PixelRect) {
+        let theme = self.theme_for(ctx);
 
         match self.editor.as_mut() {
             None => match Editor::create(self.hwnd, rect, &theme) {
@@ -209,20 +234,28 @@ impl NoteShell {
                         self.esc_presses.clone(),
                         ctx.clone(),
                     ));
-                    editor.caret_to_end();
-                    // `EM_SCROLLCARET` is a no-op without focus, so the editor must
-                    // hold it or the caret stops following typed text at the bottom.
+                    // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,
+                    // so the caret used to be parked at 0 and the first screenful
+                    // was the only one that ever scrolled.
                     editor.focus();
+                    editor.caret_to_end();
+                    editor.scroll_caret();
+                    editor.apply_caret_width(theme.caret_width);
+                    self.last_theme = Some(theme.clone());
                     self.log.mark(
                         0,
                         "island_created",
                         &format!(
-                            "rect={}x{}+{}+{} ppp={:.2}",
+                            "rect={}x{}+{}+{} ppp={:.2} pt={} pad={}x{} caret={}",
                             rect.width,
                             rect.height,
                             rect.x,
                             rect.y,
-                            ctx.pixels_per_point()
+                            ctx.pixels_per_point(),
+                            self.appearance.font_pt,
+                            theme.padding.0,
+                            theme.padding.1,
+                            theme.caret_width
                         ),
                     );
                     self.editor = Some(editor);
@@ -230,7 +263,10 @@ impl NoteShell {
                 Err(error) => self.log.mark(0, "island_failed", &error),
             },
             Some(editor) => {
-                editor.apply_theme(&theme);
+                if self.last_theme.as_ref() != Some(&theme) {
+                    editor.apply_theme(&theme);
+                    self.last_theme = Some(theme);
+                }
                 if editor.set_rect(rect) {
                     self.log.mark(
                         0,

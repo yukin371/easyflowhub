@@ -17,7 +17,7 @@
 //! says `100%`: it would make the feature look implemented in a screenshot.
 
 use egui::{
-    Align2, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Vec2,
+    Align2, CornerRadius, FontId, Rect, Sense, Shape, Stroke, StrokeKind, Vec2,
 };
 
 use crate::theme::Palette;
@@ -26,12 +26,19 @@ use hub_core::STRIP_HEIGHT;
 /// Width reserved for each side slot, logical pixels.
 ///
 /// Wide enough for the widest left label (`GHOST` at 11 pt is ~34 px) plus the
-/// 8 px inset, and for a 24 px button on the right. The middle slot gets what is
+/// 12 px inset, and for a 24 px button on the right. The middle slot gets what is
 /// left, which is what keeps the three from overlapping at 150 px.
 pub const SIDE_SLOT_WIDTH: f32 = 44.0;
 
 /// Height of the placeholder panel behind the `•••` button.
 pub const TOOLS_PANEL_HEIGHT: f32 = 72.0;
+
+/// Inset shared by the strip label, the tools panel and the text island.
+///
+/// One constant on purpose: the label sitting 8 px in while the body starts at
+/// 12 px is the kind of 4 px misalignment that reads as "unfinished" without
+/// anyone being able to say why.
+pub const EDGE_PADDING: f32 = 12.0;
 
 const BUTTON_SIZE: f32 = 24.0;
 const GHOST_EPSILON: f32 = 0.005;
@@ -168,7 +175,7 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
             let slots = slots(full.width());
             let label = opacity_label(state.opacity);
             painter.text(
-                egui::pos2(strip.left() + 8.0, strip.center().y),
+                egui::pos2(strip.left() + EDGE_PADDING, strip.center().y),
                 Align2::LEFT_CENTER,
                 &label,
                 FontId::proportional(11.0),
@@ -181,16 +188,39 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
 
             // Buttons first: egui gives the later-registered widget priority for
             // clicks, so pressing `•••` must not also start a drag.
-            let tools_rect = button_rect(&slots.center, strip);
-            let pin_rect = button_rect(&slots.right, strip);
+            let tools_rect = center_button_rect(&slots.center, strip);
+            let pin_rect = right_button_rect(strip);
             let tools = ui.interact(tools_rect, ui.id().with("tools"), Sense::click());
             let pin = ui.interact(pin_rect, ui.id().with("pin"), Sense::click());
 
             let tools_hot = tools.hovered() || state.tools_open;
-            let pin_hot = pin.hovered() || state.pinned;
             let painter = ui.painter();
-            paint_button(painter, tools_rect, tools_hot, palette, "•••");
-            paint_button(painter, pin_rect, pin_hot, palette, "📌");
+            paint_button(painter, tools_rect, tools_hot, palette);
+            paint_tools_glyph(
+                painter,
+                tools_rect,
+                if tools_hot {
+                    palette.ink
+                } else {
+                    palette.ink_subtle
+                },
+            );
+            // Pinned is a state, hover is a hint: the button keeps its pressed look
+            // while the window is on top, which is the only feedback the user gets
+            // that the pin took effect.
+            let pin_hot = pin.hovered();
+            paint_button(painter, pin_rect, state.pinned || pin_hot, palette);
+            paint_pin_glyph(
+                painter,
+                pin_rect,
+                if state.pinned {
+                    palette.accent
+                } else if pin_hot {
+                    palette.ink
+                } else {
+                    palette.ink_subtle
+                },
+            );
 
             if tools.clicked() {
                 actions.toggle_tools = true;
@@ -223,14 +253,14 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
                     Stroke::new(1.0, palette.border),
                 );
                 painter.text(
-                    egui::pos2(panel.left() + 8.0, panel.top() + 12.0),
+                    egui::pos2(panel.left() + EDGE_PADDING, panel.top() + 12.0),
                     Align2::LEFT_TOP,
                     "工具面板",
                     FontId::proportional(11.0),
                     palette.ink_soft,
                 );
                 painter.text(
-                    egui::pos2(panel.left() + 8.0, panel.top() + 32.0),
+                    egui::pos2(panel.left() + EDGE_PADDING, panel.top() + 32.0),
                     Align2::LEFT_TOP,
                     "内容随 Phase 2 补齐 · 置顶见标题条右槽",
                     FontId::proportional(10.0),
@@ -245,7 +275,7 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
     StripOutput { content, actions }
 }
 
-fn button_rect(slot: &(f32, f32), strip: Rect) -> Rect {
+fn center_button_rect(slot: &(f32, f32), strip: Rect) -> Rect {
     let center_x = (slot.0 + slot.1) / 2.0;
     Rect::from_center_size(
         egui::pos2(center_x, strip.center().y),
@@ -253,23 +283,71 @@ fn button_rect(slot: &(f32, f32), strip: Rect) -> Rect {
     )
 }
 
-fn paint_button(painter: &egui::Painter, rect: Rect, active: bool, palette: Palette, glyph: &str) {
+/// The right button is pinned to `EDGE_PADDING`, not centred in its slot.
+///
+/// The slot is 44 px wide so that three of them can coexist at the 150 px
+/// minimum; centring a 24 px button in it would leave a 10 px gap on the right
+/// while the label keeps 12 px on the left, and the 2 px asymmetry is visible as
+/// a slightly crooked title bar.
+fn right_button_rect(strip: Rect) -> Rect {
+    let right = strip.right() - EDGE_PADDING;
+    Rect::from_min_max(
+        egui::pos2(right - BUTTON_SIZE, strip.center().y - BUTTON_SIZE / 2.0),
+        egui::pos2(right, strip.center().y + BUTTON_SIZE / 2.0),
+    )
+}
+
+fn paint_button(painter: &egui::Painter, rect: Rect, active: bool, palette: Palette) {
     if active {
-        painter.rect_filled(rect, CornerRadius::same(6), palette.panel);
+        painter.rect_filled(rect, CornerRadius::same(7), palette.panel);
         painter.rect_stroke(
             rect,
-            CornerRadius::same(6),
+            CornerRadius::same(7),
             Stroke::new(1.0, palette.border),
             StrokeKind::Inside,
         );
     }
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        glyph,
-        FontId::proportional(11.0),
-        if active { palette.ink } else { palette.ink_subtle },
-    );
+}
+
+/// Three dots, drawn instead of typed.
+///
+/// The glyph `•••` was the obvious choice and the wrong one: the font stack falls
+/// back per-character, so the bullets picked up the CJK face and rendered at a
+/// different optical size than the label next to them. Circles are exact.
+fn paint_tools_glyph(painter: &egui::Painter, rect: Rect, color: egui::Color32) {
+    for offset in [-5.5_f32, 0.0, 5.5] {
+        painter.circle_filled(rect.center() + Vec2::new(offset, 0.0), 1.6, color);
+    }
+}
+
+/// A thumbtack: cap, body, point.
+///
+/// Nothing in the emoji set survives the trip through egui's font stack intact —
+/// `📌` came out as a white box with a black smear, which is what "that square in
+/// the corner" was. Three shapes cost less than one font lookup and cannot fall
+/// back to a different family.
+fn paint_pin_glyph(painter: &egui::Painter, rect: Rect, color: egui::Color32) {
+    let center = rect.center();
+    painter.circle_filled(center + Vec2::new(0.0, -3.2), 3.5, color);
+    painter.add(Shape::convex_polygon(
+        vec![
+            center + Vec2::new(-3.5, -1.4),
+            center + Vec2::new(3.5, -1.4),
+            center + Vec2::new(1.3, 3.0),
+            center + Vec2::new(-1.3, 3.0),
+        ],
+        color,
+        Stroke::NONE,
+    ));
+    painter.add(Shape::convex_polygon(
+        vec![
+            center + Vec2::new(-1.3, 2.6),
+            center + Vec2::new(1.3, 2.6),
+            center + Vec2::new(0.0, 6.6),
+        ],
+        color,
+        Stroke::NONE,
+    ));
 }
 
 #[cfg(test)]
@@ -303,10 +381,12 @@ mod tests {
     fn at_the_minimum_width_both_buttons_fit_inside_their_slots() {
         let slots = slots(hub_core::MIN_NOTE_WIDTH);
         let strip = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(150.0, 32.0));
-        let tools = button_rect(&slots.center, strip);
-        let pin = button_rect(&slots.right, strip);
+        let tools = center_button_rect(&slots.center, strip);
+        let pin = right_button_rect(strip);
         assert!(tools.left() >= slots.center.0 && tools.right() <= slots.center.1);
         assert!(pin.left() >= slots.right.0 && pin.right() <= slots.right.1);
+        // Symmetric inset: 12 px on both sides, not 12 and 10.
+        assert!((pin.right() - (150.0 - EDGE_PADDING)).abs() < f32::EPSILON);
         assert!(tools.right() <= pin.left(), "buttons overlap at 150 px");
     }
 

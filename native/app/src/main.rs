@@ -101,6 +101,18 @@ fn main() {
             .clone()
             .unwrap_or_else(|| settings_path.with_file_name("native-note.log"));
         let log = std::sync::Arc::new(Log::new(log_path));
+        // Without this line "my appearance settings did nothing" is undecidable:
+        // the note falls back to defaults on an unreadable file, and a typo'd path
+        // looks exactly like a theme that refuses to apply.
+        log.mark(
+            0,
+            "settings",
+            &format!(
+                "path={} source={}",
+                settings_path.display(),
+                source.as_str()
+            ),
+        );
         note::run(note::Config {
             settings,
             scale,

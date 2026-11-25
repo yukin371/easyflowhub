@@ -13,11 +13,21 @@
 //!   permissions problem.
 //! * `EM_SETCHARFORMAT` silently ignores a `CHARFORMATW` whose `cbSize` is wrong:
 //!   no error, no text colour, and the only symptom is "my colour did not apply".
-//! * `yHeight` is twips (1/20 pt), not pixels.
+//! * `yHeight` is twips (1/20 pt), not pixels — and points are already device
+//!   independent, so multiplying them by `pixels_per_point` renders 16.5 pt on a
+//!   150% screen. The old shell did exactly that; the body text looked oversized
+//!   and every line wrapped earlier than the same text does in Notepad.
+//! * `EM_SETRECT` is what puts an inset between the text and the island edge. Without
+//!   it the caret sits at x = 0 on a wrapped line and its first pixel column is
+//!   clipped by the control edge, which is what "the caret disappears after a line
+//!   break" looked like.
 //! * A zero-sized child window receives no paint messages, so the size is clamped
 //!   to at least 1x1 in `hub-core::island`.
 
 pub mod measure;
+mod theme;
+
+pub use theme::Theme;
 
 /// Virtual-key codes the shell needs to talk about.
 ///
@@ -32,8 +42,10 @@ pub mod keys {
 use std::ptr;
 use std::sync::OnceLock;
 
+use crate::theme::{CharFormat, ParaFormat2, LINE_SPACING_MULTIPLE, PFM_LINESPACING, SCF_ALL};
+
 use hub_core::PixelRect;
-use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::UpdateWindow;
 use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
@@ -42,13 +54,15 @@ use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, GetClassNameW, GetWindowLongPtrW, GetWindowTextLengthW,
-    GetWindowTextW, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WM_CHAR, WM_KEYDOWN, WM_PRINTCLIENT, WS_CHILD,
-    WS_CLIPCHILDREN, WS_VISIBLE, WS_VSCROLL,
+    GetWindowTextW, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    SystemParametersInfoW, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WM_CHAR, WM_KEYDOWN,
+    WM_PRINTCLIENT, WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
 };
 
 // --- RichEdit messages (not exported by windows-sys; values from richedit.h) ---
 const EM_GETSEL: u32 = 0x00B0;
 const EM_SETSEL: u32 = 0x00B1;
+const EM_SETRECT: u32 = 0x00B3;
 const EM_REPLACESEL: u32 = 0x00C2;
 const EM_SCROLLCARET: u32 = 0x00B7;
 const EM_LINESCROLL: u32 = 0x00B6;
@@ -60,6 +74,7 @@ const EM_GETFIRSTVISIBLELINE: u32 = 0x00CE;
 const EM_GETLIMITTEXT: u32 = 0x00D5;
 const EM_GETCHARFORMAT: u32 = 0x0400 + 58;
 const EM_SETCHARFORMAT: u32 = 0x0400 + 68;
+const EM_SETPARAFORMAT: u32 = 0x0400 + 71;
 const EM_SETBKGNDCOLOR: u32 = 0x0400 + 67;
 const EM_GETSCROLLPOS: u32 = 0x0400 + 221;
 const EM_SETUNDOLIMIT: u32 = 0x0400 + 82;
@@ -78,63 +93,9 @@ const SES_EXTENDBACKCOLOR: u32 = 0x0004;
 const IMF_AUTOFONT: u32 = 0x0002;
 const IMF_DUALFONT: u32 = 0x0080;
 
-const SCF_ALL: usize = 4;
-const CFM_COLOR: u32 = 0x4000_0000;
-const CFM_SIZE: u32 = 0x8000_0000;
-const CFM_FACE: u32 = 0x2000_0000;
-const CFM_CHARSET: u32 = 0x0800_0000;
-const DEFAULT_CHARSET: u8 = 1;
-
-/// `CHARFORMATW`, 92 bytes. `cb_size` must equal `size_of::<CharFormat>()` or the
-/// control drops the whole message without reporting an error.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CharFormat {
-    cb_size: u32,
-    mask: u32,
-    effects: u32,
-    height: i32,
-    offset: i32,
-    text_color: COLORREF,
-    charset: u8,
-    pitch_and_family: u8,
-    face_name: [u16; 32],
-}
-
-impl CharFormat {
-    fn new(theme: &Theme) -> Self {
-        let mut format = Self {
-            cb_size: std::mem::size_of::<Self>() as u32,
-            mask: CFM_COLOR | CFM_SIZE | CFM_FACE | CFM_CHARSET,
-            effects: 0,
-            // Twips: 1/20 point. Writing pixels here yields a 0.5pt or 200pt font.
-            height: (theme.font_pt * 20.0).round() as i32,
-            offset: 0,
-            text_color: theme.foreground,
-            charset: DEFAULT_CHARSET,
-            pitch_and_family: 0,
-            face_name: [0; 32],
-        };
-        for (slot, unit) in format
-            .face_name
-            .iter_mut()
-            .zip(theme.font_face.encode_utf16())
-        {
-            *slot = unit;
-        }
-        format
-    }
-}
-
-/// Colours arrive as `0x00BBGGRR`, the order Windows uses everywhere. The app
-/// converts from egui's RGB so this crate never sees a UI type.
-#[derive(Clone, Copy, Debug)]
-pub struct Theme {
-    pub background: COLORREF,
-    pub foreground: COLORREF,
-    pub font_face: &'static str,
-    pub font_pt: f32,
-}
+/// `SPI_*` actions for the system caret: read the current width, write a new one.
+const SPI_GETCARETWIDTH: u32 = 0x2006;
+const SPI_SETCARETWIDTH: u32 = 0x2007;
 
 /// Read back from the control, so A5 can compare "what I set" with "what it kept"
 /// instead of trusting the call.
@@ -154,6 +115,10 @@ pub struct Editor {
     parent: HWND,
     rect: PixelRect,
     callbacks: *mut Callbacks,
+    /// The text inset last applied, kept so a resize can rebuild `EM_SETRECT`.
+    padding: (i32, i32),
+    /// System caret width before this editor changed it, restored on drop.
+    caret_restore: Option<i32>,
     /// The text colour last applied. Remembered so [`Editor::pixel_probe`] can ask
     /// "did *this* colour reach the surface" instead of only "is the surface
     /// non-uniform". Atomic because `apply_theme` takes `&self`.
@@ -174,9 +139,14 @@ impl Editor {
 
             ensure_clip_children(parent);
 
+            // No `WS_VSCROLL`: the system scrollbar is drawn with the light visual
+            // style even when the control is themed dark, so it lands in a dark
+            // note as a 17 px white gutter. Scrolling is kept (wheel plus
+            // `EM_SCROLLCARET`); the visible position indicator is a self-drawn
+            // bar in a later batch, because drawing it under the island is
+            // impossible - a child window always paints over its parent.
             let style = WS_CHILD
                 | WS_VISIBLE
-                | WS_VSCROLL
                 | ES_MULTILINE
                 | ES_AUTOVSCROLL
                 | ES_WANTRETURN;
@@ -219,6 +189,8 @@ impl Editor {
                 parent,
                 rect,
                 callbacks,
+                padding: theme.padding,
+                caret_restore: None,
                 foreground: std::sync::atomic::AtomicU32::new(theme.foreground),
             };
 
@@ -242,6 +214,7 @@ impl Editor {
             );
 
             editor.apply_theme(theme);
+            editor.apply_margins();
             Ok(editor)
         }
     }
@@ -272,7 +245,35 @@ impl Editor {
             );
         }
         self.rect = rect;
+        // The formatting rectangle is relative to the client area, so it has to be
+        // rebuilt after every resize or the inset lives on in a stale size.
+        self.apply_margins();
         true
+    }
+
+    /// Push the text inset into the control.
+    ///
+    /// `EM_SETRECT` is the only way to get an inset: RichEdit ignored the
+    /// `LEFTMARGIN`/`RIGHTMARGIN` of a plain edit control, and `EM_SETMARGINS`
+    /// moves the scrollbar gutter rather than the text origin.
+    fn apply_margins(&self) {
+        let (pad_x, pad_y) = self.padding;
+        let pad_x = pad_x.max(0).min(self.rect.width / 2);
+        let pad_y = pad_y.max(0).min(self.rect.height / 2);
+        let rect = RECT {
+            left: pad_x,
+            top: pad_y,
+            right: (self.rect.width - pad_x).max(pad_x + 1),
+            bottom: (self.rect.height - pad_y).max(pad_y + 1),
+        };
+        unsafe {
+            SendMessageW(
+                self.hwnd,
+                EM_SETRECT,
+                0,
+                &rect as *const RECT as isize,
+            );
+        }
     }
 
     pub fn apply_theme(&self, theme: &Theme) {
@@ -285,6 +286,22 @@ impl Editor {
                 SCF_ALL,
                 &mut format as *mut CharFormat as isize,
             );
+
+            if (theme.line_spacing - 1.0).abs() > 0.01 {
+                let mut paragraph = ParaFormat2 {
+                    cb_size: std::mem::size_of::<ParaFormat2>() as u32,
+                    mask: PFM_LINESPACING,
+                    ..std::mem::zeroed()
+                };
+                paragraph.line_spacing = (theme.line_spacing * 20.0).round() as i32;
+                paragraph.line_spacing_rule = LINE_SPACING_MULTIPLE;
+                SendMessageW(
+                    self.hwnd,
+                    EM_SETPARAFORMAT,
+                    SCF_ALL,
+                    &mut paragraph as *mut ParaFormat2 as isize,
+                );
+            }
         }
         self.foreground.store(
             theme.foreground,
@@ -292,30 +309,75 @@ impl Editor {
         );
     }
 
+    /// Widen the system caret and remember what to put back.
+    ///
+    /// Split from [`Editor::apply_theme`] because it is a system write, and a
+    /// redraw-heavy caller should not be repeating it every frame.
+    pub fn apply_caret_width(&mut self, width: i32) {
+        if width <= 0 {
+            return;
+        }
+        let mut previous: i32 = 0;
+        unsafe {
+            if SystemParametersInfoW(
+                SPI_GETCARETWIDTH,
+                0,
+                &mut previous as *mut i32 as *mut std::ffi::c_void,
+                0,
+            ) == 0
+            {
+                return;
+            }
+            if previous != width {
+                SystemParametersInfoW(
+                    SPI_SETCARETWIDTH,
+                    width as u32,
+                    ptr::null_mut(),
+                    0,
+                );
+            }
+            // Remember even when the width already matched: someone else's value
+            // is still the one to restore.
+            if self.caret_restore.is_none() {
+                self.caret_restore = Some(previous);
+            }
+            // An existing caret keeps its old bitmap until it is recreated, so the
+            // change would not be visible until the next focus switch.
+            self.recreate_caret(width);
+        }
+    }
+
+    /// Rebuild this thread's caret at `width` without touching system settings.
+    ///
+    /// `CreateCaret` replaces the caret of its window; RichEdit calls
+    /// `SetCaretPos`/`ShowCaret` on the same handle afterwards, so the new bitmap
+    /// is what the user sees.
+    fn recreate_caret(&self, width: i32) {
+        let height = 0i32; // 0 = caret height follows the window font
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::CreateCaret(
+                self.hwnd,
+                ptr::null_mut(),
+                width,
+                height,
+            );
+            windows_sys::Win32::UI::WindowsAndMessaging::ShowCaret(self.hwnd);
+        }
+    }
+
     pub fn char_format(&self) -> CharFormatEcho {
         unsafe {
-            let mut format = CharFormat::new(&Theme {
-                background: 0,
-                foreground: 0,
-                font_face: "",
-                font_pt: 0.0,
-            });
-            format.cb_size = std::mem::size_of::<CharFormat>() as u32;
+            let mut format = CharFormat::blank();
             SendMessageW(
                 self.hwnd,
                 EM_GETCHARFORMAT,
                 SCF_ALL,
                 &mut format as *mut CharFormat as isize,
             );
-            let end = format
-                .face_name
-                .iter()
-                .position(|unit| *unit == 0)
-                .unwrap_or(format.face_name.len());
             CharFormatEcho {
-                face: String::from_utf16_lossy(&format.face_name[..end]),
-                height_twips: format.height,
-                color: format.text_color,
+                face: format.face_name(),
+                height_twips: format.height_twips(),
+                color: format.text_color(),
             }
         }
     }
@@ -574,6 +636,14 @@ impl Drop for Editor {
                 drop(Box::from_raw(self.callbacks));
             }
         }
+        // Put the system caret width back. Doing this after the destroy matters:
+        // the control hides the caret on WM_DESTROY and would otherwise recreate
+        // one at the old width.
+        if let Some(width) = self.caret_restore.take() {
+            unsafe {
+                SystemParametersInfoW(SPI_SETCARETWIDTH, width.max(1) as u32, ptr::null_mut(), 0);
+            }
+        }
     }
 }
 
@@ -657,3 +727,9 @@ pub(crate) fn now_us() -> u64 {
 const ES_MULTILINE: u32 = 0x0004;
 const ES_AUTOVSCROLL: u32 = 0x0040;
 const ES_WANTRETURN: u32 = 0x1000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+}

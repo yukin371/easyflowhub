@@ -75,8 +75,11 @@ fn main() {
         let theme = Theme {
             background: 0x0021_252D,
             foreground: 0x00E8_EEF7,
-            font_face: "Microsoft YaHei UI",
+            font_face: "Microsoft YaHei UI".to_string(),
             font_pt: 16.5,
+            line_spacing: 1.0,
+            padding: (0, 0),
+            caret_width: 0,
         };
         let rect = PixelRect {
             x: 0,
