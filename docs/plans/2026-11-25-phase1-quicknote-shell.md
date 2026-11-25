@@ -438,6 +438,95 @@ Ctrl+Alt+M → note_manager reason=hotkey target=none phase=2
 | 管理中心窗口（`Ctrl+Alt+M` 的目标） | 需要 launcher 面板，属 Phase 2 |
 | 多显示器下的托盘图标（`NIM_SETVERSION` / 高 DPI 变体） | `CreateIconFromResourceEx` 已按 32×32 建图标，Windows 自行缩放；没有第二个显示器上的实测，不写进结论 |
 
+## 8.7 整窗透明与幽灵模式（1c）
+
+这一批把标题条左槽那个数字变成真的。1a–1b 期间它恒为 `100%`，因为那时还没有任何东西能把窗口调淡——一个显示 `GHOST` 却完全不透明的窗口，比一个老实的 `100%` 更糟。
+
+### 路径：`LWA_ALPHA`，不是自绘遮罩
+
+旧版是整窗 CSS `opacity`：标题条、正文、光标一起淡，桌面透上来。三个候选里只有一个能在这里成立：
+
+| 候选 | 结果 |
+|---|---|
+| 岛（RichEdit）单独调 alpha | 岛只覆盖正文，标题条不淡，接缝一眼就能看到 |
+| egui 画一层半透明遮罩 | 子窗口永远画在父窗口之上，遮罩会盖在正文**下面** |
+| `SetLayeredWindowAttributes(LWA_ALPHA)` | DWM 把窗口表面当一张位图整体混合，RichEdit 跟着一起淡——**采用** |
+
+顺带确认了一件事：`WS_EX_LAYERED` 不影响 GL 绘制。60% 时 `PrintWindow` 抓到的窗口表面与 100% 逐像素相同（`mean=(34.3,22.2,14.8)`，主色即面板 `#0D1522`），说明 `glow` 的 swap chain 依然落在重定向表面上。
+
+### 两条滚轮通道，一张表
+
+`Ctrl+滚轮` 在哪一侧被看到，取决于指针在哪个窗口上，而两个窗口的默认行为都不能要：
+
+| 指针在哪 | 消息 | 不接会怎样 |
+|---|---|---|
+| 正文（岛） | 子类过程里的 `WM_MOUSEWHEEL`，`LOWORD(wParam)` 带 `MK_CONTROL` | RichEdit 把 `Ctrl+滚轮` 当**文本缩放**，每格涨一点字号 |
+| 标题条（egui） | winit → `egui::Event::MouseWheel` | egui 把它当**全局 UI 缩放**；缩放因子属于 `Context`，一动所有笔记一起变大 |
+
+两边都关掉：岛在 `hub_editor::dispatch::claim` 里吞掉这个组合（返回 0，消息不再往下传），egui 在 `Hub::new` 里写 `options.zoom_with_keyboard = false`（日志 `egui_zoom ctrl_wheel=false`）。日志多一个 `path=Island|Egui` 字段——否则"滚轮没反应"和"滚到另一个窗口去了"在日志里长得一模一样。
+
+节流沿用旧版常量 50 ms（`app::wheel::Gate`，时钟注入所以能单测）。连发 5 条 `WM_MOUSEWHEEL` 实测只走一格：`note_wheel` 只有一行 `opacity=0.80 (was 1.00)`。槽位本身也只留最后一格（和 `keys::Bus` 同理），所以一帧最多一步。
+
+### GHOST 只能是 alpha 1，不能是 0
+
+这是本批唯一一个"照抄旧版数值就会出事"的地方。`LWA_ALPHA = 0` 的窗口**不可命中**：同一坐标 `WindowFromPoint` 在笔记上回答的是背后的窗口，改成 1 就回答 `RICHEDIT50W`。也就是说 alpha 0 的幽灵笔记点不到、拿不到焦点，而 `Ctrl+Shift+H` 是岛内快捷键——焦点只能靠点击拿到。本阶段正文还在内存里，一次"关掉全部"就等于丢字。
+
+所以映射表底部有地板 `GHOST_ALPHA = 1`（`hub_win::alpha`）：视觉上等于消失（实测屏幕 `(251,253,251)`，邻居 `(252,254,252)`，差一个 1/255），但窗口仍可点、仍能滚回来。旧版靠 CSS `opacity: 0` 天然保留指针事件，这里用一个字节买回同一条路径。
+
+### 证据（150%，一次运行）
+
+```
+note_begin id=0 logical=400x300 ... opacity=1.00
+note_alpha id=0 phase=attach opacity=1.00 alpha=255 applied=true readback=Some(255)
+```
+
+`phase=attach` 说明 alpha 是在 `show_without_activation` **之前**落的：builder 里 `with_visible(false)`，窗口此刻还不可见，所以按设置值 40% 打开的笔记不会先以 100% 闪一帧再淡（B3 不允许透明度跳变）。
+
+```
+岛通道   note_wheel notch=Down path=Island opacity=0.80 (was 1.00) label=80%  → alpha=204 readback=Some(204)
+标题条   note_wheel notch=Down path=Egui   opacity=0.60 (was 0.80) label=60%  → alpha=153
+五连滚   --down 5 --gap 0 → 只有一行 note_wheel（不跳档也不连跳）
+普通滚轮 --raw -120 → note_wheel 计数不变（交给 RichEdit 滚动）
+```
+
+像素侧（屏幕 DC 截图，背后是一片白 `(252,254,252)`）：
+
+| 不透明度 | 正文实测 | 期望 `a×面板 + (1−a)×白` |
+|---|---|---|
+| 100% | `(13,21,34)` | `(13,21,34)` |
+| 60% | `(109,114,121)` | `(108.6,114.2,121.2)` |
+| 40% | `(156,161,165)` | `(156.4,160.8,164.8)` |
+| 40% 标题条 | `(164,171,178)` | `(163.6,169.6,178.4)` |
+| GHOST | `(251,253,251)` | `(252,254,252)` + 1/255 地板 |
+
+Q29 的一次完整往返：
+
+```
+note_ghost id=0 ghost=true  opacity=0.00 (was 0.40) restore=0.40
+note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20%
+```
+
+`Ctrl+Shift+H` 用 `SendInput` 真按（不是 `PostMessage`）：岛的修饰键读自 `GetKeyState`，投递的消息不会带修饰键，投出来的 `Ctrl+Shift+H` 会变成裸 `H`。`Ctrl+滚轮` 的标题条通道同理，脚本里必须先 `SendInput` 按住 Ctrl 再投 `WM_MOUSEWHEEL`。
+
+左槽标签目视确认：20% 时 `PrintWindow` 抓到的窗口表面左槽显示 `20%`（`alpha=51`），不是 `100%`。
+
+### 与旧版的差异（有意）
+
+| 项 | 旧版 | 本批 | 为什么 |
+|---|---|---|---|
+| GHOST 的实际 alpha | 0 | 1/255 | 见上：0 会穿透，幽灵就捡不回来 |
+| 滚轮监听范围 | `window` 上一个 `wheel` | 岛 + 标题条两条通道 | 子窗口不把滚轮转交给父窗口的 egui，只能各接一次 |
+| 透明度初值 | 组件 state，恒 100% | `quick_note.appearance.window_alpha`（默认 1.0） | 与其它外观项同文件；它是**用户态初值**，不是主题装饰（C2） |
+
+### 本批不做
+
+| 项 | 为什么 |
+|---|---|
+| 每窗口记住透明度 | 旧版也不记（组件 state，关掉即回 100%）；持久化属 Phase 2 的 `notes.db` |
+| 淡入淡出过渡 | B3 允许没有；每次改 alpha 都会让 DWM 重组整个窗口，动画等于每帧一次重组 |
+| 透明时单独淡化光标/文字 | 整窗混合已经覆盖；再叠一层就与旧版的 CSS 语义分叉 |
+| 托盘里的"幽灵"菜单项 | 幽灵是窗内手势（旧版同样只在窗内）；托盘四项已经够用 |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -451,3 +540,5 @@ Ctrl+Alt+M → note_manager reason=hotkey target=none phase=2
 | 2026-11-25 | 1b.2 落地 viewport-per-note：根视口改为屏外控制器，每笔记一个 deferred viewport；关闭只销毁该窗口，`Ctrl+Alt+N` 经全局热键新建；去掉全局 `set_zoom_factor`；托盘与其余全局键留 1b.3，关完最后一个笔记即退出并在日志写明 `tray=pending`（§8.5） |
 
 | 2026-11-25 | 1b.3 落地托盘常驻 + `Ctrl+Alt+D/H/M` + 关完不退：托盘自带隐藏消息窗口、菜单 id 单表、退出前 `NIM_DELETE`；修掉"关闭打到根视口"（`send_viewport_cmd` → `send_viewport_cmd_to`）；最小化的笔记跳过布岛（§8.6） |
+
+| 2026-11-25 | 1c 落地整窗透明 + 幽灵模式：`hub-win::alpha` 用 `LWA_ALPHA` 让 DWM 整窗混合；`Ctrl+滚轮` 两条通道（岛 `WM_MOUSEWHEEL`、标题条 egui，两边各自的缩放都关掉）+ 50 ms 节流；`Ctrl+Shift+H` 幽灵往返；GHOST 取 alpha 1 而非 0（0 会穿透窗口，幽灵就捡不回来）；透明度初值进 `appearance.window_alpha`（§8.7） |
