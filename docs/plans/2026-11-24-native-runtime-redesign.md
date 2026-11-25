@@ -541,7 +541,7 @@ easyflowhub/native/
 - `hub-win`：托盘、热键、鼠标钩子、单实例、自启动、日志、实色窗口（Mica 可选）。
 - `hub-ui`：主题 token 骨架（color/typography/spacing/radius/elevation/motion）、Launcher、快速笔记壳、待办卡片。
 - `lite` 模式探测与降级路径；**Manager 仍由现有 Tauri 进程按需启动**（共享 DB + 写锁）。
-- **G1 门禁**：热唤起 p95 ≤ 60 ms（lite ≤ 120 ms）**阻塞发布**；常驻 ≤ 65 MB（lite ≤ 55 MB）为解释线，超线需说明；T0 功能 parity；连续 8 小时无句柄/内存增长；架构门禁常绿。
+- **G1 门禁**：热唤起 p95 ≤ 60 ms（lite ≤ 120 ms）**阻塞发布**；常驻 ≤ 65 MB（lite ≤ 55 MB）为解释线，超线需说明；T0 功能 parity（判据见 [native-quicknote-parity.md](./2026-11-25-native-quicknote-parity.md)）；连续 8 小时无句柄/内存增长；架构门禁常绿。
 
 #### 过渡期约束（防止双栈固化）
 
@@ -802,7 +802,7 @@ powershell -NoProfile -File scripts\measure-latency.ps1 -ColdStart -ProcessPath 
 | **热唤起 60 ms 在集显上不可达** | 中 | **高**（直接动摇主门禁） | 在本机集显做 S1 实测（这是标准环境，不是边缘环境）；依次前移成本（图集 → 纹理缓存 → 设备预热）；4K@150% 下控制首帧像素量（只呈现 Launcher 面板、不做全屏层、避免全屏透明合成）；仍不达标则走 ADR 例外把目标定为 100 ms，**不允许静默放宽** |
 | 常驻内存逐版本上涨（温水煮青蛙） | 中 | 中 | §7.2 免费优化清单作为硬要求；每次 RC 用 `-Json` 归档快照，连续两版本上涨且无对应功能增量即按回归处理 |
 | 中文 IME 在 RichEdit 岛中定位/组合异常 | 中 | 高 | S2 spike；必要时用 IMM32 手动定位候选窗；保留 WebView 编辑器作为临时退路 |
-| 编辑器功能回退（图片、表格、粘贴） | 高 | 中 | parity checklist；图片走"编辑=文本 + 缩略条 / 预览=渲染"，与现有 UX 一致 |
+| 编辑器功能回退（图片、表格、粘贴） | 高 | 中 | [parity 清单](./2026-11-25-native-quicknote-parity.md)；图片走"编辑=文本 + 缩略条 / 预览=渲染"，与现有 UX 一致 |
 | 主题/层次不达预期（简洁变成"简陋"） | 中 | 中 | 先定 token 与版式规范再写页面；每阶段做一次视觉 review；动效只做状态解释 |
 | GL 初始化失败（老驱动 / 虚拟机）/ RDP 卡顿 | 中 | 高 | S1 覆盖 RDP 回环与软件渲染；`lite` 强制实色无动画；仍失败则评估 wgpu/DX12 或 GDI 兜底 |
 | 架构门禁被绕过（临时例外堆积） | 中 | 中 | 门禁进 CI 阻塞；例外必须 ADR；每季度清理 baseline |
