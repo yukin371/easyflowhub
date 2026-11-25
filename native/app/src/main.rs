@@ -13,6 +13,7 @@ mod bench;
 mod editor_bench;
 mod esc;
 mod log;
+mod note;
 mod probe_json;
 mod spike;
 mod store_bench;
@@ -92,6 +93,22 @@ fn main() {
     let scale = parsed
         .simulate_scale
         .unwrap_or_else(|| primary_scale(&monitors));
+    // Phase 1 batch 1a: the note shell is a product window, not a measurement,
+    // so it takes the same settings but its own size and its own log.
+    if parsed.note {
+        let log_path = parsed
+            .log_path
+            .clone()
+            .unwrap_or_else(|| settings_path.with_file_name("native-note.log"));
+        let log = std::sync::Arc::new(Log::new(log_path));
+        note::run(note::Config {
+            settings,
+            scale,
+            lite,
+            log,
+        });
+    }
+
     let spec = PanelSpec {
         desired_width: settings.panel_width * scale,
         desired_height: settings.panel_height * scale,

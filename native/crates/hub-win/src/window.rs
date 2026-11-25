@@ -142,6 +142,30 @@ pub fn current_focus() -> isize {
     unsafe { GetFocus() as isize }
 }
 
+/// Client area size in physical pixels.
+///
+/// The host needs this instead of trusting the UI framework's idea of its own
+/// size: on the very first frame eframe 0.31 reports a placeholder screen rect
+/// (10000 px), and an island created from that is a 15000 px child window that
+/// the OS then has to clip. Asking Windows is authoritative and costs one
+/// `GetClientRect` on the frame where the size actually changed.
+pub fn client_size(hwnd: isize) -> (i32, i32) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let ok = unsafe { GetClientRect(hwnd as HWND, &mut rect) };
+    if ok == 0 {
+        return (0, 0);
+    }
+    ((rect.right - rect.left).max(0), (rect.bottom - rect.top).max(0))
+}
+
 /// Locate this process's window by title.
 ///
 /// eframe 0.31 does not expose the `HWND` through `App`, and the spike needs raw

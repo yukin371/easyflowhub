@@ -34,6 +34,7 @@ cargo run --release -p app -- --probe              # 预热后占用（含窗口
 cargo run --release -p app -- --bench 200          # 200 轮自动唤起 + 分布
 cargo run --release -p app -- --bench 200 --scale 2.0   # 模拟 200%
 cargo run --release -p app -- --editor             # 交互模式：面板里带 RichEdit 正文
+cargo run --release -p app -- --note               # Phase 1 快速笔记壳：标题条 + 文本岛（可见，无热键）
 cargo run --release -p app -- --editor-bench 200   # 键入分布 + 像素/滚动/撤销证据
 cargo run --release -p app                         # 交互模式：Ctrl+Shift+Space 开关面板
 
@@ -42,6 +43,8 @@ cargo run --release -p app -- --store-bench
 cargo run --release -p app -- --store-bench --store-root target/s3/root --store-write --store-artifacts target/s3/art
 cargo run --release -p app -- --store-hold 400 --store-root target/s3/root   # 持锁探针（并发用）
 ```
+
+`--note` 是 Phase 1 的产品窗口（`app/src/note.rs`），不是测量件：它不注册热键、不参与 bench，日志里 `note_window` / `island_created` 的尺寸就是 parity 清单 Q1–Q4、Q6–Q11 的判定依据。spike 的 `--bench` / `--editor` 保持原样，T-Gate 0 之后整个 spike 删除。
 
 `--bench` 用 `PostThreadMessageW(WM_HOTKEY)` 触发**与真实按键相同的处理路径**（去抖 → 取光标 → 命中缓存布局 → 唤醒 → 绘制），所以 200 轮不需要人手连按。退出码：`0` 达标，`2` 超预算，`3` 热键注册失败。
 

@@ -6,7 +6,9 @@
 //! characters and make the 60 ms measurement meaningless.
 
 pub mod panel;
+pub mod quicknote;
 pub mod theme;
 
 pub use panel::{first_screen_text, PanelState, PANEL_PADDING};
+pub use quicknote::{opacity_label, slots, StripState};
 pub use theme::Palette;

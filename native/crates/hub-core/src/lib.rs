@@ -19,6 +19,9 @@ pub mod settings;
 pub mod store;
 
 pub use island::PixelRect;
-pub use layout::{place, PanelSpec, Placement, Rect};
-pub use settings::{SettingsSource, SpikeSettings};
+pub use layout::{
+    place, place_note, NotePlacement, NoteSpec, PanelSpec, Placement, Rect, MIN_NOTE_HEIGHT,
+    MIN_NOTE_WIDTH, STRIP_HEIGHT,
+};
+pub use settings::{QuickNoteSettings, SettingsSource, SpikeSettings};
 pub use store::{Counts, NoteRow, SettingRow, Store, StoreError};

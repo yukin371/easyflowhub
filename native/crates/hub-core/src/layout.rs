@@ -135,6 +135,121 @@ pub fn place(cursor: (i32, i32), work: Rect, spec: &PanelSpec) -> Placement {
     }
 }
 
+// ---------------------------------------------------------------- note windows
+
+/// Minimum logical size of a note window (parity Q3).
+///
+/// Small enough to be a scratch pad, large enough that the 32 px strip still fits
+/// three slots: at 150 logical pixels the slots need 38 + flexible + 38, and 74
+/// of them are fixed chrome.
+pub const MIN_NOTE_WIDTH: f32 = 150.0;
+pub const MIN_NOTE_HEIGHT: f32 = 60.0;
+
+/// Height of the title strip, logical pixels (parity Q6-Q11).
+///
+/// Lives here rather than in `hub-ui` because the text island's top edge is
+/// derived from it: the RichEdit child window is placed at `strip` and the two
+/// values must not be able to drift apart.
+pub const STRIP_HEIGHT: f32 = 32.0;
+
+/// Gap between the cursor and the note's nearest corner, physical pixels.
+const NOTE_OFFSET: i32 = 8;
+
+/// Static shape of a note window, in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteSpec {
+    pub width: f32,
+    pub height: f32,
+    /// Gap kept between the window and the work-area edge.
+    pub margin: i32,
+}
+
+impl Default for NoteSpec {
+    fn default() -> Self {
+        Self {
+            width: 400.0,
+            height: 300.0,
+            margin: 12,
+        }
+    }
+}
+
+impl NoteSpec {
+    /// Physical size for `scale`, floor-raised to the minimum.
+    ///
+    /// The floor is applied *after* the multiplication on purpose: clamping the
+    /// logical value first would let a 0.9 scale produce 135x54 physical, which
+    /// the OS refuses to shrink to and the layout would claim is legal.
+    pub fn physical(self, scale: f32) -> (i32, i32) {
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        let width = (self.width * scale).round() as i32;
+        let height = (self.height * scale).round() as i32;
+        let min_width = (MIN_NOTE_WIDTH * scale).round() as i32;
+        let min_height = (MIN_NOTE_HEIGHT * scale).round() as i32;
+        (width.max(min_width).max(1), height.max(min_height).max(1))
+    }
+}
+
+/// Resolved note geometry. Separate from `Placement` because a note has no grid
+/// and reusing that struct would mean carrying a meaningless `columns` field
+/// through every call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotePlacement {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl NotePlacement {
+    pub fn right(self) -> i32 {
+        self.x + self.width
+    }
+
+    pub fn bottom(self) -> i32 {
+        self.y + self.height
+    }
+}
+
+/// Place a note near the cursor, fully inside `work`.
+///
+/// Anchored **below-right** of the cursor instead of centred: a 400x300 note
+/// centred on the pointer covers the text the user was reading, which is the
+/// opposite of what a scratch pad is for. When the anchored rectangle would leave
+/// the work area the window flips to the other side of the cursor; the flip is
+/// decided before clamping so an edge case resolves to "flip" rather than "slide
+/// under the cursor".
+pub fn place_note(cursor: (i32, i32), work: Rect, spec: NoteSpec, scale: f32) -> NotePlacement {
+    let margin = spec.margin.max(0);
+    let (width, height) = spec.physical(scale);
+
+    let max_width = (work.width() - 2 * margin).max(1);
+    let max_height = (work.height() - 2 * margin).max(1);
+    let width = width.min(max_width);
+    let height = height.min(max_height);
+
+    let right_edge = work.right - margin - width;
+    let bottom_edge = work.bottom - margin - height;
+
+    let x = if cursor.0 + NOTE_OFFSET + width > work.right - margin {
+        cursor.0 - NOTE_OFFSET - width
+    } else {
+        cursor.0 + NOTE_OFFSET
+    };
+    let y = if cursor.1 + NOTE_OFFSET + height > work.bottom - margin {
+        cursor.1 - NOTE_OFFSET - height
+    } else {
+        cursor.1 + NOTE_OFFSET
+    };
+
+    NotePlacement {
+        x: clamp_axis(x, work.left + margin, right_edge),
+        y: clamp_axis(y, work.top + margin, bottom_edge),
+        width,
+        height,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +323,76 @@ mod tests {
         let placement = place((10, 10), work, &PanelSpec::default());
         assert_eq!((placement.width, placement.height), (1, 1));
         assert_eq!((placement.x, placement.y), (12, 12));
+    }
+
+    // ------------------------------------------------------------ note windows
+
+    #[test]
+    fn note_default_is_400x300_logical_at_150_percent() {
+        let (width, height) = NoteSpec::default().physical(1.5);
+        assert_eq!((width, height), (600, 450));
+        let (width, height) = NoteSpec::default().physical(1.0);
+        assert_eq!((width, height), (400, 300));
+    }
+
+    #[test]
+    fn note_minimum_survives_a_scale_below_one() {
+        // 100x40 logical at 0.9 would be 90x36 physical; the floor is applied
+        // after scaling, so the result is 135x54, not 90x36.
+        let spec = NoteSpec { width: 100.0, height: 40.0, margin: 12 };
+        assert_eq!(spec.physical(0.9), (135, 54));
+        // A non-finite scale must not propagate NaN into the layout.
+        assert_eq!(NoteSpec::default().physical(f32::NAN), (400, 300));
+    }
+
+    #[test]
+    fn note_opens_below_right_of_the_cursor() {
+        let placement = place_note((500, 400), big_work(), NoteSpec::default(), 1.0);
+        assert_eq!((placement.x, placement.y), (508, 408));
+        assert_eq!((placement.width, placement.height), (400, 300));
+    }
+
+    #[test]
+    fn note_flips_to_the_left_near_the_right_edge() {
+        // 3800 + 8 + 400 > 3840 - 12, so the window must go to the left side.
+        let placement = place_note((3800, 400), big_work(), NoteSpec::default(), 1.0);
+        assert_eq!(placement.x, 3800 - 8 - 400);
+        assert!(placement.right() <= 3840 - 12);
+    }
+
+    #[test]
+    fn note_flips_up_near_the_bottom_edge() {
+        let placement = place_note((400, 2050), big_work(), NoteSpec::default(), 1.0);
+        assert_eq!(placement.y, 2050 - 8 - 300);
+        assert!(placement.bottom() <= 2088 - 12);
+    }
+
+    #[test]
+    fn note_never_leaves_the_work_area() {
+        for cursor in [(-500, -500), (0, 0), (3840, 2088), (3839, 2087)] {
+            let placement = place_note(cursor, big_work(), NoteSpec::default(), 1.5);
+            assert!(placement.x >= 12, "cursor {cursor:?} -> {placement:?}");
+            assert!(placement.y >= 12, "cursor {cursor:?} -> {placement:?}");
+            assert!(placement.right() <= 3840 - 12, "cursor {cursor:?} -> {placement:?}");
+            assert!(placement.bottom() <= 2088 - 12, "cursor {cursor:?} -> {placement:?}");
+        }
+    }
+
+    #[test]
+    fn note_shrinks_to_a_small_work_area() {
+        let work = Rect::new(0, 0, 200, 100);
+        let placement = place_note((50, 50), work, NoteSpec::default(), 1.0);
+        assert_eq!(placement.width, 200 - 24);
+        assert_eq!(placement.height, 100 - 24);
+    }
+
+    #[test]
+    fn strip_height_leaves_a_usable_body_at_the_minimum_size() {
+        // The strip must not eat the whole minimum window: 60 - 32 leaves 28 px,
+        // which is one line of 11 pt text plus padding. Used as a tripwire if
+        // either constant is raised without revisiting the other.
+        assert!(MIN_NOTE_HEIGHT - STRIP_HEIGHT >= 24.0);
+        assert!(STRIP_HEIGHT == 32.0);
+        assert!(MIN_NOTE_WIDTH == 150.0);
     }
 }

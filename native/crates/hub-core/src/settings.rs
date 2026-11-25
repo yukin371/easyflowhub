@@ -12,6 +12,28 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Note window size, logical pixels.
+///
+/// Field names match the shipped Tauri `QuickNoteSettings` on purpose: when the
+/// two apps eventually read one settings file, `quick_note.width` must already
+/// mean the same thing on both sides. Translating between `note_width` and
+/// `quick_note.width` is the kind of mapping that silently stops being applied.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct QuickNoteSettings {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for QuickNoteSettings {
+    fn default() -> Self {
+        Self {
+            width: 400,
+            height: 300,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SpikeSettings {
@@ -31,6 +53,8 @@ pub struct SpikeSettings {
     pub hotkey_debounce_ms: u64,
     /// Keep the panel visible this long during a bench run before hiding it.
     pub bench_visible_ms: u64,
+    /// Note window size (parity Q2), logical pixels.
+    pub quick_note: QuickNoteSettings,
 }
 
 impl Default for SpikeSettings {
@@ -43,6 +67,7 @@ impl Default for SpikeSettings {
             lite: false,
             hotkey_debounce_ms: 260,
             bench_visible_ms: 240,
+            quick_note: QuickNoteSettings::default(),
         }
     }
 }
@@ -108,6 +133,31 @@ mod tests {
         let (settings, source) = SpikeSettings::load(&path);
         assert_eq!(source, SettingsSource::File);
         assert!(settings.lite);
+        assert_eq!(settings.panel_height, 860.0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn note_defaults_match_the_shipped_quick_note_window() {
+        // 400x300 is what the Tauri build creates; parity Q2 is judged against it.
+        let settings = SpikeSettings::default();
+        assert_eq!(settings.quick_note.width, 400);
+        assert_eq!(settings.quick_note.height, 300);
+    }
+
+    #[test]
+    fn a_settings_file_can_resize_the_note_without_touching_the_panel() {
+        let dir = std::env::temp_dir().join("hub-core-settings-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("quick-note.json");
+        std::fs::write(&path, r#"{"quick_note":{"width":500,"height":400}}"#).unwrap();
+
+        let (settings, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(settings.quick_note.width, 500);
+        assert_eq!(settings.quick_note.height, 400);
+        // The launcher size must not have moved with it.
+        assert_eq!(settings.panel_width, 440.0);
         assert_eq!(settings.panel_height, 860.0);
         let _ = std::fs::remove_file(&path);
     }

@@ -44,6 +44,31 @@ impl Palette {
             accent: Color32::from_rgb(126, 165, 214),
         }
     }
+
+    /// The quick-note window, sampled from the shipped `--quick-*` tokens.
+    ///
+    /// `styles.css` defines them as `rgba(...)` over `--manager-bg`; egui wants
+    /// opaque colours, so the translucent ones are composited here. Doing the
+    /// maths in one place keeps "the native note is slightly bluer than the Tauri
+    /// one" from becoming an unexplained visual difference.
+    pub fn quick() -> Self {
+        Self {
+            // --manager-bg #0d1522
+            panel: Color32::from_rgb(13, 21, 34),
+            // --manager-panel-strong-opaque #1f2e44
+            panel_strong: Color32::from_rgb(31, 46, 68),
+            // rgba(166,193,226,0.2) over #0d1522
+            border: Color32::from_rgb(38, 55, 72),
+            // --manager-ink #dce6f4
+            ink: Color32::from_rgb(220, 230, 244),
+            // --manager-ink-soft #afbed2
+            ink_soft: Color32::from_rgb(175, 190, 210),
+            // --manager-ink-muted #8a9bb2
+            ink_subtle: Color32::from_rgb(138, 155, 178),
+            // --manager-accent #86abdc
+            accent: Color32::from_rgb(134, 171, 220),
+        }
+    }
 }
 
 /// Windows ships Microsoft YaHei; loading it is a file read, not a platform call,
