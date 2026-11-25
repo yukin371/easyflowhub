@@ -89,6 +89,16 @@ pub struct NoteAppearance {
     /// per-window caret width, and a 1 px caret on a dark background is the
     /// complaint this field answers. See `hub_editor::Theme::caret_width`.
     pub caret_width: i32,
+    /// Opacity a **new** note opens at, `0.0..=1.0` (parity Q28/Q29).
+    ///
+    /// The only field in this block that is **user state, not theme decoration**:
+    /// it is the initial value of the window's alpha, read once when the note is
+    /// created. From then on each note owns its own value, because `Ctrl+wheel`
+    /// dims the window under the pointer -- a shared "current opacity" would dim
+    /// every open note at once, which the shipped build never does.
+    ///
+    /// Defaults to 1.0; `0.0` is a legal setting and opens the note in ghost mode.
+    pub window_alpha: f32,
     pub colors: NoteColors,
 }
 
@@ -101,7 +111,27 @@ impl Default for NoteAppearance {
             padding_x: 18,
             padding_y: 18,
             caret_width: 2,
+            window_alpha: 1.0,
             colors: NoteColors::default(),
+        }
+    }
+}
+
+impl NoteAppearance {
+    /// Opacity for a note that is being created, clamped to what the compositor
+    /// can express.
+    ///
+    /// The file is hand-editable, so an out-of-range or `NaN` alpha has to be
+    /// survivable: `NaN` is the dangerous one, because every comparison against it
+    /// is false and a clamp written as `if x < 0 { … } else if x > 1 { … }` would
+    /// pass it through to `SetLayeredWindowAttributes`. Falling back to opaque is
+    /// the honest direction -- an invisible note with no explanation is worse than
+    /// one that ignores a typo.
+    pub fn initial_opacity(&self) -> f32 {
+        if self.window_alpha.is_finite() {
+            self.window_alpha.clamp(0.0, 1.0)
+        } else {
+            1.0
         }
     }
 }
@@ -294,7 +324,8 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_json_falls_back_to_defaults() {        let dir = std::env::temp_dir().join("hub-core-settings-test");
+    fn corrupt_json_falls_back_to_defaults() {
+        let dir = std::env::temp_dir().join("hub-core-settings-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("corrupt.json");
         std::fs::write(&path, "{not json").unwrap();
@@ -303,5 +334,49 @@ mod tests {
         assert_eq!(source, SettingsSource::Default);
         assert_eq!(settings, SpikeSettings::default());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_note_opens_fully_opaque_unless_the_file_says_otherwise() {
+        assert_eq!(NoteAppearance::default().window_alpha, 1.0);
+        assert_eq!(NoteAppearance::default().initial_opacity(), 1.0);
+    }
+
+    #[test]
+    fn the_opacity_setting_can_open_a_note_in_ghost_mode() {
+        let dir = std::env::temp_dir().join("hub-core-settings-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("alpha.json");
+        std::fs::write(
+            &path,
+            r#"{"quick_note":{"appearance":{"window_alpha":0.4}}}"#,
+        )
+        .unwrap();
+
+        let (settings, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(settings.quick_note.appearance.initial_opacity(), 0.4);
+        // Untouched neighbours keep their defaults, which is what makes the key
+        // safe to add to an existing file.
+        assert_eq!(settings.quick_note.appearance.font_pt, 11.5);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_hand_edited_opacity_is_clamped_including_nan() {
+        // `NaN` is the one that a naive `if x < 0 … else if x > 1 …` clamp lets
+        // through, and it would reach `SetLayeredWindowAttributes` as a 0 byte.
+        let mut appearance = NoteAppearance::default();
+        appearance.window_alpha = f32::NAN;
+        assert_eq!(appearance.initial_opacity(), 1.0);
+
+        appearance.window_alpha = 1.7;
+        assert_eq!(appearance.initial_opacity(), 1.0);
+
+        appearance.window_alpha = -0.2;
+        assert_eq!(appearance.initial_opacity(), 0.0);
+
+        appearance.window_alpha = 0.0;
+        assert_eq!(appearance.initial_opacity(), 0.0, "zero is a legal value");
     }
 }

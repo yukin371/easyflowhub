@@ -11,9 +11,13 @@
 //! title strip the focus is on the egui window instead. Neither path sees the
 //! other's keys, so a table entry needs no de-duplication.
 //!
-//! What is deliberately *not* here: the switcher (`Ctrl+K`) and ghost mode
-//! (`Ctrl+Shift+H`). The switcher needs the notes list (Phase 2); ghost mode needs
-//! a layered window (batch 1c). Both would be shortcuts that open nothing.
+//! What is deliberately *not* here: the switcher (`Ctrl+K`). It needs the notes
+//! list, which is Phase 2; a shortcut that opens nothing would be a key the user
+//! learns is dead.
+//!
+//! Opacity (batch 1c) **is** here, but only as `Ctrl+Shift+H` (ghost on/off).
+//! `Ctrl+wheel` is not a key press: it arrives as `WM_MOUSEWHEEL` with `MK_CONTROL`
+//! set, so it goes through [`crate::wheel`] instead of this table.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -25,6 +29,7 @@ pub use hub_editor::KeyPress;
 /// cannot silently renumber a shortcut.
 const VK_ESCAPE: u16 = 0x1B;
 const VK_D: u16 = 0x44;
+const VK_H: u16 = 0x48;
 const VK_T: u16 = 0x54;
 const VK_Z: u16 = 0x5A;
 const VK_OEM_PERIOD: u16 = 0xBE;
@@ -34,6 +39,8 @@ pub enum Action {
     Close,
     TogglePin,
     ToggleTools,
+    /// `Ctrl+Shift+H`: opacity 0, then back to the value it interrupted (Q29).
+    ToggleGhost,
     Undo,
     Redo,
 }
@@ -44,6 +51,7 @@ impl Action {
             Action::Close => 1,
             Action::TogglePin => 2,
             Action::ToggleTools => 3,
+            Action::ToggleGhost => 6,
             Action::Undo => 4,
             Action::Redo => 5,
         }
@@ -56,6 +64,7 @@ impl Action {
             3 => Some(Action::ToggleTools),
             4 => Some(Action::Undo),
             5 => Some(Action::Redo),
+            6 => Some(Action::ToggleGhost),
             _ => None,
         }
     }
@@ -83,6 +92,9 @@ pub fn resolve(press: KeyPress) -> Option<Action> {
         (VK_Z, false) => Some(Action::Undo),
         (VK_Z, true) => Some(Action::Redo),
         (VK_T, false) => Some(Action::TogglePin),
+        // Ghost mode is Shift-only on purpose: `Ctrl+H` is a text-editing key in
+        // some layouts, and the shipped entry is `Ctrl+Shift+H`.
+        (VK_H, true) => Some(Action::ToggleGhost),
         // Shift is ignored on purpose -- see the module comment. `Ctrl+Shift+D`
         // would otherwise be a line-duplicate shortcut, which this shell does not
         // implement; until it does, matching the shipped close check exactly is the
@@ -116,6 +128,7 @@ pub fn egui_press(ctx: &egui::Context) -> Option<KeyPress> {
                 egui::Key::Escape => VK_ESCAPE,
                 egui::Key::Z => VK_Z,
                 egui::Key::T => VK_T,
+                egui::Key::H => VK_H,
                 egui::Key::D => VK_D,
                 egui::Key::Period => VK_OEM_PERIOD,
                 _ => continue,
@@ -261,6 +274,25 @@ mod tests {
             None,
             "Shift+. reports '>' as `event.key`, so the shipped check misses it"
         );
+    }
+
+    #[test]
+    fn ctrl_shift_h_toggles_ghost_and_ctrl_h_does_not() {
+        let mut ghost = ctrl(VK_H);
+        ghost.shift = true;
+        assert_eq!(resolve(ghost), Some(Action::ToggleGhost));
+
+        assert_eq!(
+            resolve(ctrl(VK_H)),
+            None,
+            "the shipped entry is Ctrl+Shift+H; Ctrl+H alone is an editing key"
+        );
+
+        // Ctrl+Alt+H is a *global* hotkey (minimize/restore every note), so it must
+        // not also reach this table through the island.
+        let mut global = ctrl(VK_H);
+        global.alt = true;
+        assert_eq!(resolve(global), None);
     }
 
     #[test]

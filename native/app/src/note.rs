@@ -37,6 +37,7 @@ use hub_ui::Palette;
 use crate::esc;
 use crate::keys;
 use crate::log::Log;
+use crate::wheel;
 
 /// Prefix of every note window title. The suffix is the note id.
 ///
@@ -113,6 +114,13 @@ pub struct NoteShell {
     /// Shortcuts pressed in the island's subclass proc or in egui, waiting for the
     /// next frame. See [`keys`] for why they cannot act where they are seen.
     keys: keys::Bus,
+    /// Notches from the island's `WM_MOUSEWHEEL`, plus the 50 ms floor shared with
+    /// the egui path. See [`wheel`].
+    wheel: wheel::Wheel,
+    gate: wheel::Gate,
+    /// Alpha last handed to the compositor. `None` until the window is attached, so
+    /// the first application is never skipped by the "unchanged" guard.
+    last_alpha: Option<u8>,
     closing: bool,
     last_island: Option<PixelRect>,
     /// Last `pixels_per_point` this note laid out at, for the transition log.
@@ -123,11 +131,18 @@ impl NoteShell {
     pub fn new(spawn: Spawn) -> Self {
         let appearance = spawn.settings.quick_note.appearance.clone();
         let palette = Palette::from_colors(&appearance.colors);
+        // A note opens at the configured alpha (normally 100%). Applying it here as
+        // well as in `attach` is not redundant: this is the value the *label* shows
+        // on the very first frame, before the OS window exists.
+        let strip = StripState {
+            opacity: appearance.initial_opacity(),
+            ..StripState::default()
+        };
         spawn.log.mark(
             0,
             "note_begin",
             &format!(
-                "id={} logical={}x{} placement={}x{}+{}+{} scale={:.2}",
+                "id={} logical={}x{} placement={}x{}+{}+{} scale={:.2} opacity={:.2}",
                 spawn.id,
                 spawn.spec.width,
                 spawn.spec.height,
@@ -135,7 +150,8 @@ impl NoteShell {
                 spawn.placement.height,
                 spawn.placement.x,
                 spawn.placement.y,
-                spawn.scale
+                spawn.scale,
+                strip.opacity
             ),
         );
 
@@ -149,7 +165,7 @@ impl NoteShell {
             lite: spawn.lite,
             hwnd: None,
             waited: false,
-            strip: StripState::default(),
+            strip,
             palette,
             appearance,
             last_theme: None,
@@ -157,6 +173,9 @@ impl NoteShell {
             escape: Arc::new(AtomicBool::new(false)),
             esc_presses: Arc::new(AtomicU32::new(0)),
             keys: keys::Bus::new(viewport_id(spawn.id)),
+            wheel: wheel::Wheel::new(viewport_id(spawn.id)),
+            gate: wheel::Gate::default(),
+            last_alpha: None,
             closing: false,
             last_island: None,
             last_ppp: 0.0,
@@ -278,6 +297,19 @@ impl NoteShell {
             }
         }
 
+        // `Ctrl+wheel` (Q28). Two channels, one gate: over the island the message is
+        // `WM_MOUSEWHEEL` and arrives at the control's subclass proc (RichEdit would
+        // otherwise zoom the text), over the title strip it arrives as an egui
+        // scroll event (egui's own Ctrl+wheel zoom is disabled in `Hub::new`).
+        // Only one of them can fire for a given notch -- they are different windows.
+        let now_ms = ctx.input(|input| (input.time * 1000.0) as u64);
+        if let Some(notch) = self.wheel.take() {
+            self.nudge(notch, now_ms, wheel::Source::Island);
+        } else if let Some(notch) = wheel::egui_notch(ctx) {
+            self.nudge(notch, now_ms, wheel::Source::Egui);
+        }
+        self.apply_alpha("frame");
+
         // No zoom factor is applied here on purpose. `set_zoom_factor` is global to
         // the `Context`, so one note would rescale every other note's window; with
         // viewports on different monitors that is not a rounding difference, it is
@@ -361,13 +393,18 @@ impl NoteShell {
             self.placement.width,
             self.placement.height,
         );
+        // Alpha lands **before** the window is shown, on purpose. The window still
+        // exists invisibly at this point (`with_visible(false)` in the builder), and
+        // a note configured to open at 40% must not appear at 100% for one frame
+        // and then fade -- that is a transparency *jump*, which B3 rules out.
+        self.hwnd = Some(hwnd);
+        self.apply_alpha("attach");
         hub_win::window::show_without_activation(hwnd);
         // A second note is created while the user is still in the first one, so the
         // foreground has to be moved explicitly. Q19 asks for the caret in the text
         // on open; `SetFocus` on an inactive window fails and the first keystroke
         // would go to the previous note.
         let foreground = hub_win::window::focus(hwnd);
-        self.hwnd = Some(hwnd);
         self.log.mark(
             0,
             "note_window",
@@ -381,6 +418,65 @@ impl NoteShell {
             ),
         );
         true
+    }
+
+    /// Push the strip's opacity into the compositor (parity Q28/Q29), on change.
+    ///
+    /// One `SetLayeredWindowAttributes` per *change*, never per frame: the call is
+    /// cheap but it makes DWM recompose the window, and a 500 ms tick that repeated
+    /// it would be pure waste.
+    ///
+    /// `readback` is what the OS kept, logged next to what was asked for. A window
+    /// that refused to become layered (or a compositor that ignored the attribute)
+    /// would otherwise look exactly like a working one until someone compared
+    /// screenshots.
+    fn apply_alpha(&mut self, phase: &str) {
+        let Some(hwnd) = self.hwnd else {
+            return;
+        };
+        let alpha = hub_win::alpha::from_opacity(self.strip.opacity);
+        if self.last_alpha == Some(alpha) {
+            return;
+        }
+        let applied = hub_win::alpha::set(hwnd, alpha);
+        let readback = hub_win::alpha::get(hwnd);
+        self.last_alpha = Some(alpha);
+        self.log.mark(
+            0,
+            "note_alpha",
+            &format!(
+                "id={} phase={phase} opacity={:.2} alpha={alpha} applied={applied} readback={readback:?}",
+                self.id, self.strip.opacity
+            ),
+        );
+    }
+
+    /// One `Ctrl+wheel` notch, after the 50 ms floor.
+    fn nudge(&mut self, notch: wheel::Notch, now_ms: u64, from: wheel::Source) {
+        if !self.gate.allow(now_ms) {
+            self.log.mark(
+                0,
+                "note_wheel",
+                &format!(
+                    "id={} notch={notch:?} path={from:?} stepped=false reason=throttle",
+                    self.id
+                ),
+            );
+            return;
+        }
+        let before = self.strip.opacity;
+        self.strip.opacity = quicknote::step_opacity(before, notch == wheel::Notch::Up);
+        self.log.mark(
+            0,
+            "note_wheel",
+            &format!(
+                "id={} notch={notch:?} path={from:?} opacity={:.2} (was {:.2}) label={}",
+                self.id,
+                self.strip.opacity,
+                before,
+                quicknote::opacity_label(self.strip.opacity)
+            ),
+        );
     }
 
     /// Translate the user's logical appearance into the editor's physical theme.
@@ -418,6 +514,9 @@ impl NoteShell {
                         self.viewport,
                     ));
                     editor.on_key(self.keys.handler(ctx.clone()));
+                    // RichEdit treats `Ctrl+wheel` as text zoom. The shell wants it
+                    // for window opacity, so the notch is claimed at the control.
+                    editor.on_wheel(self.wheel.handler(ctx.clone()));
                     // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,
                     // so the caret used to be parked at 0 and the first screenful
                     // was the only one that ever scrolled.
@@ -489,9 +588,33 @@ impl NoteShell {
             keys::Action::Close => self.close(ctx, "shortcut"),
             keys::Action::TogglePin => self.toggle_pin(ctx),
             keys::Action::ToggleTools => self.toggle_tools(),
+            keys::Action::ToggleGhost => self.toggle_ghost(),
             keys::Action::Undo => self.history(true),
             keys::Action::Redo => self.history(false),
         }
+    }
+
+    /// `Ctrl+Shift+H` (Q29): opacity 0, then back to what it interrupted.
+    ///
+    /// Only the opacity changes. Whether the window is pinned, what it contains and
+    /// when it was last saved are all untouched -- "visible but out of the way" is a
+    /// different request from `Ctrl+Alt+H` (minimize every note), and mixing the
+    /// two would make one key do two things depending on state.
+    fn toggle_ghost(&mut self) {
+        let before = self.strip.opacity;
+        self.strip.toggle_ghost();
+        self.log.mark(
+            0,
+            "note_ghost",
+            &format!(
+                "id={} ghost={} opacity={:.2} (was {:.2}) restore={:.2}",
+                self.id,
+                self.strip.opacity <= 0.005,
+                self.strip.opacity,
+                before,
+                self.strip.ghost_restore
+            ),
+        );
     }
 
     fn toggle_pin(&mut self, ctx: &egui::Context) {

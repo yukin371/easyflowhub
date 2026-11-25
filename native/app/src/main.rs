@@ -19,6 +19,7 @@ mod note;
 mod probe_json;
 mod spike;
 mod store_bench;
+mod wheel;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

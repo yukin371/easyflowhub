@@ -159,6 +159,15 @@ impl Hub {
                 .mark(0, "fonts", "no CJK font found; text renders as tofu"),
         }
 
+        // `Ctrl+wheel` belongs to window opacity (Q28), not to UI zoom. egui turns
+        // that gesture into `set_zoom_factor`, and the zoom factor is global to the
+        // `Context` -- so with this left on, one notch over the title strip would
+        // dim the note *and* resize its strip, and every other note with it.
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
+        config
+            .log
+            .mark(0, "egui_zoom", "ctrl_wheel=false (opacity owns the gesture)");
+
         match hub_win::window::find_by_title(HUB_TITLE) {
             Some(hwnd) => {
                 let released = hub_win::window::park(hwnd);
