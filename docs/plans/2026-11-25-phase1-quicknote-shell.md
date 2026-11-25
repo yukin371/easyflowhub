@@ -467,54 +467,95 @@ Ctrl+Alt+M → note_manager reason=hotkey target=none phase=2
 
 节流沿用旧版常量 50 ms（`app::wheel::Gate`，时钟注入所以能单测）。连发 5 条 `WM_MOUSEWHEEL` 实测只走一格：`note_wheel` 只有一行 `opacity=0.80 (was 1.00)`。槽位本身也只留最后一格（和 `keys::Bus` 同理），所以一帧最多一步。
 
-### GHOST 只能是 alpha 1，不能是 0
+### GHOST：背景色键消除，内容留 20%
 
-这是本批唯一一个"照抄旧版数值就会出事"的地方。`LWA_ALPHA = 0` 的窗口**不可命中**：同一坐标 `WindowFromPoint` 在笔记上回答的是背后的窗口，改成 1 就回答 `RICHEDIT50W`。也就是说 alpha 0 的幽灵笔记点不到、拿不到焦点，而 `Ctrl+Shift+H` 是岛内快捷键——焦点只能靠点击拿到。本阶段正文还在内存里，一次"关掉全部"就等于丢字。
+`LWA_ALPHA` 是整窗一个数，落不到"背景 0%、文字 20%"上：乘下去两者一起淡，乘到 0 就一起没了。旧版能达到这个效果，是因为 CSS `opacity: 0` 的窗口**仍然接收指针事件**——一个 0% 的元素点得到；而 `LWA_ALPHA = 0` 的窗口点不到（实测：`WindowFromPoint` 在笔记上回答的是背后窗口，alpha 1 才回答 `RICHEDIT50W`）。
 
-所以映射表底部有地板 `GHOST_ALPHA = 1`（`hub_win::alpha`）：视觉上等于消失（实测屏幕 `(251,253,251)`，邻居 `(252,254,252)`，差一个 1/255），但窗口仍可点、仍能滚回来。旧版靠 CSS `opacity: 0` 天然保留指针事件，这里用一个字节买回同一条路径。
+一个点不回来的 0% 幽灵是不可接受的：`Ctrl+Shift+H` 是岛内快捷键，焦点只能靠点击拿到，而本阶段正文还在内存里，一次"关掉全部"就等于丢字。之前的折中是 `GHOST_ALPHA = 1`（视觉消失、仍可点），但 1/255 的幽灵**看不见**——这正是用户提出的问题：焦点一离开，屏幕上没有任何东西可以瞄准。
+
+所以幽灵态换一种混合：`LWA_COLORKEY | LWA_ALPHA`。
+
+| 像素 | 结果 |
+|---|---|
+| 面板色（正文背景、RichEdit 底色） | alpha 0，**背景彻底消失** |
+| 其余（正文文字、标题条、图标） | alpha 51 = **20%** |
+
+键就是面板色，因为窗口边界两侧本来就是它：egui 画面板，`EM_SETBKGNDCOLOR` 填 RichEdit 同一个值。幽灵态因此不需要换色重绘，只换合成方式。
+
+**前提条件：Mica 必须关。** Mica 是 DWM 在窗口表面**背后**画的系统背板，键色像素会显示模糊壁纸而不是消失。实测（2026-11-25，背后是一片白 `(252,254,252)`）：
+
+| backdrop | 正文实测 | 说明 |
+|---|---|---|
+| `DWMSBT_MAINWINDOW`（Mica） | `(207,210,209)` | 20% 平铺——键被背板挡住 |
+| `DWMSBT_NONE` | `(252,254,252)` | 与桌面**逐值相等**，真的没了 |
+
+所以 `apply_alpha` 在切混合时一起切 `DWMWA_SYSTEMBACKDROP_TYPE`，日志带 `backdrop=mica|none`。其它不透明度不受影响：不透明面板把背板完全盖住。
+
+### 幽灵态仍然可点，这是有意的
+
+键色像素“让出鼠标”这条只对**窗口自身的像素**成立；正文区压着一个 `RICHEDIT50W` 子窗口，它的命中不跟随父窗口的键。实测：
+
+```
+bodyHit  (透明正文) -> 0xC50F64 'RICHEDIT50W'
+stripHit (20% 标题条) -> 0x680ECE 'Window Class'    ← 笔记窗口
+```
+
+于是幽灵态是一块**看不见、但点得到**的区域。实测把焦点交给 WorkBuddy 后再点击透明正文，前台立刻变回笔记（`isNote=True`），点击 20% 的标题条同样。这正是"找回笔记"最直接的路径：位置由标题条与文字标出，点一下就能继续写。代价是它不会让鼠标穿透到桌面——这个取舍写进差异表，作为下一步可调项。
 
 ### 证据（150%，一次运行）
 
 ```
 note_begin id=0 logical=400x300 ... opacity=1.00
-note_alpha id=0 phase=attach opacity=1.00 alpha=255 applied=true readback=Some(255)
+note_alpha id=0 phase=attach opacity=1.00 alpha=255 applied=true readback=Some(255, None)
 ```
 
 `phase=attach` 说明 alpha 是在 `show_without_activation` **之前**落的：builder 里 `with_visible(false)`，窗口此刻还不可见，所以按设置值 40% 打开的笔记不会先以 100% 闪一帧再淡（B3 不允许透明度跳变）。
 
 ```
-岛通道   note_wheel notch=Down path=Island opacity=0.80 (was 1.00) label=80%  → alpha=204 readback=Some(204)
+岛通道   note_wheel notch=Down path=Island opacity=0.80 (was 1.00) label=80%  → alpha=204
 标题条   note_wheel notch=Down path=Egui   opacity=0.60 (was 0.80) label=60%  → alpha=153
 五连滚   --down 5 --gap 0 → 只有一行 note_wheel（不跳档也不连跳）
 普通滚轮 --raw -120 → note_wheel 计数不变（交给 RichEdit 滚动）
+20%      note_alpha opacity=0.20 flat alpha=51 backdrop=mica readback=Some((51, None))
+GHOST    note_alpha opacity=0.00 ghost key=22150D alpha=51 backdrop=none
+                    readback=Some((51, Some(2233613)))      ← 键确实是 panel #0D1522
 ```
 
 像素侧（屏幕 DC 截图，背后是一片白 `(252,254,252)`）：
 
-| 不透明度 | 正文实测 | 期望 `a×面板 + (1−a)×白` |
+| 不透明度 | 正文实测 | 期望 |
 |---|---|---|
 | 100% | `(13,21,34)` | `(13,21,34)` |
-| 60% | `(109,114,121)` | `(108.6,114.2,121.2)` |
+| 60% | `(109,114,121)` | `0.6×面板+0.4×白 = (108.6,114.2,121.2)` |
 | 40% | `(156,161,165)` | `(156.4,160.8,164.8)` |
 | 40% 标题条 | `(164,171,178)` | `(163.6,169.6,178.4)` |
-| GHOST | `(251,253,251)` | `(252,254,252)` + 1/255 地板 |
+| GHOST 正文 | `(252,254,252)` | **与桌面逐值相等**（差 0） |
+| GHOST 标题条 | `(208,212,215)` | `0.2×strip+0.8×白 = (207.8,211.6,215.2)` |
+| GHOST 文字 | `(250,250,246)` | `0.2×ink+0.8×白 = (246,249,250)`，抗锯齿边缘更接近桌面 |
+
+GHOST 的"完全消除"是这一批唯一不能用肉眼判断的结论：截图里能看见背后窗口的文字原样透过来，而 20% 混合只会让它们变淡。逐值相等才是证据。
 
 Q29 的一次完整往返：
 
 ```
 note_ghost id=0 ghost=true  opacity=0.00 (was 0.40) restore=0.40
+note_alpha id=0 opacity=0.00 ghost key=22150D alpha=51 backdrop=none
 note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20%
+note_alpha id=0 opacity=0.40 flat alpha=102 backdrop=mica readback=Some((102, None))  ← 键已清除
 ```
+
+`backdrop=mica` 这一行是回归点：从幽灵退回平铺时，键必须一起清掉（`Blend::Flat` 只发 `LWA_ALPHA`），否则一个 100% 的笔记会被抠掉整块面板。
 
 `Ctrl+Shift+H` 用 `SendInput` 真按（不是 `PostMessage`）：岛的修饰键读自 `GetKeyState`，投递的消息不会带修饰键，投出来的 `Ctrl+Shift+H` 会变成裸 `H`。`Ctrl+滚轮` 的标题条通道同理，脚本里必须先 `SendInput` 按住 Ctrl 再投 `WM_MOUSEWHEEL`。
 
-左槽标签目视确认：20% 时 `PrintWindow` 抓到的窗口表面左槽显示 `20%`（`alpha=51`），不是 `100%`。
+左槽标签目视确认：20% 时 `PrintWindow` 抓到的窗口表面左槽显示 `20%`（`alpha=51`），不是 `100%`。幽灵态的标签仍是 `GHOST`——它现在是**模式名**，不再是"0% 且看不见"的意思，所以旁边多一个 20% 的数字只会让人以为窗口是 20% 的。
 
 ### 与旧版的差异（有意）
 
 | 项 | 旧版 | 本批 | 为什么 |
 |---|---|---|---|
-| GHOST 的实际 alpha | 0 | 1/255 | 见上：0 会穿透，幽灵就捡不回来 |
+| GHOST 的实现 | CSS `opacity: 0`（元素仍接收指针） | 背景色键消除 + 内容 20% | 0% 的 native 窗口不可命中，幽灵就捡不回来 |
+| GHOST 的可见性 | 完全不可见 | 标题条与文字 20% | 用户实测反馈：完全透明且失焦后找不到位置 |
 | 滚轮监听范围 | `window` 上一个 `wheel` | 岛 + 标题条两条通道 | 子窗口不把滚轮转交给父窗口的 egui，只能各接一次 |
 | 透明度初值 | 组件 state，恒 100% | `quick_note.appearance.window_alpha`（默认 1.0） | 与其它外观项同文件；它是**用户态初值**，不是主题装饰（C2） |
 
@@ -522,10 +563,10 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 
 | 项 | 为什么 |
 |---|---|
+| 幽灵态让鼠标穿透到桌面 | 透明像素已经"看不见"，但正文子窗口仍命中。改成穿透要给 RichEdit 加 `WS_EX_TRANSPARENT`，那样只有标题条能点回来；当前"点透明处也能叫回笔记"更适合"找回"，留作可调项 |
 | 每窗口记住透明度 | 旧版也不记（组件 state，关掉即回 100%）；持久化属 Phase 2 的 `notes.db` |
 | 淡入淡出过渡 | B3 允许没有；每次改 alpha 都会让 DWM 重组整个窗口，动画等于每帧一次重组 |
-| 透明时单独淡化光标/文字 | 整窗混合已经覆盖；再叠一层就与旧版的 CSS 语义分叉 |
-| 托盘里的"幽灵"菜单项 | 幽灵是窗内手势（旧版同样只在窗内）；托盘四项已经够用 |
+| 幽灵态提高文字对比度 | 20% 是用户给的下限；再提就等于把"幽灵"变成"半透明"，而对比度取决于壁纸，任何固定补偿都会在另一种壁纸上失效 |
 
 ## 9. 变更记录
 
@@ -541,4 +582,5 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 
 | 2026-11-25 | 1b.3 落地托盘常驻 + `Ctrl+Alt+D/H/M` + 关完不退：托盘自带隐藏消息窗口、菜单 id 单表、退出前 `NIM_DELETE`；修掉"关闭打到根视口"（`send_viewport_cmd` → `send_viewport_cmd_to`）；最小化的笔记跳过布岛（§8.6） |
 
-| 2026-11-25 | 1c 落地整窗透明 + 幽灵模式：`hub-win::alpha` 用 `LWA_ALPHA` 让 DWM 整窗混合；`Ctrl+滚轮` 两条通道（岛 `WM_MOUSEWHEEL`、标题条 egui，两边各自的缩放都关掉）+ 50 ms 节流；`Ctrl+Shift+H` 幽灵往返；GHOST 取 alpha 1 而非 0（0 会穿透窗口，幽灵就捡不回来）；透明度初值进 `appearance.window_alpha`（§8.7） |
+| 2026-11-25 | 1c 落地整窗透明 + 幽灵模式：`hub-win::alpha` 用 `LWA_ALPHA` 让 DWM 整窗混合；`Ctrl+滚轮` 两条通道（岛 `WM_MOUSEWHEEL`、标题条 egui，两边各自的缩放都关掉）+ 50 ms 节流；`Ctrl+Shift+H` 幽灵往返；透明度初值进 `appearance.window_alpha`（§8.7） |
+| 2026-11-25 | 1c.2 改幽灵的合成方式：`LWA_ALPHA` 的 0% 幽灵不可命中、1/255 的幽灵又看不见，改为 `Blend::Ghost`（`LWA_COLORKEY \| LWA_ALPHA`）——面板色作键，背景逐值消除，文字与标题条留 20%；发现并处理 Mica 背板会挡住色键（幽灵态切 `DWMWA_SYSTEMBACKDROP_TYPE = NONE`）；实测透明正文仍可点击、能把笔记叫回前台（§8.7） |
