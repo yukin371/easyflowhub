@@ -65,7 +65,7 @@ const BUTTON_SIZE: f32 = 28.0;
 const ICON_SIZE: f32 = 16.0;
 /// The unit box the shipped icons are authored in (`viewBox="0 0 24 24"`).
 const ICON_VIEWBOX: f32 = 24.0;
-pub const GHOST_EPSILON: f32 = 0.005;
+const GHOST_EPSILON: f32 = 0.005;
 const OPACITY_STEP: f32 = 0.2;
 
 /// Horizontal slots, as `[start, end)` ranges in logical pixels.

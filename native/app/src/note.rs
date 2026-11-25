@@ -118,9 +118,9 @@ pub struct NoteShell {
     /// the egui path. See [`wheel`].
     wheel: wheel::Wheel,
     gate: wheel::Gate,
-    /// Blend last handed to the compositor. `None` until the window is attached, so
+    /// Alpha last handed to the compositor. `None` until the window is attached, so
     /// the first application is never skipped by the "unchanged" guard.
-    last_blend: Option<hub_win::alpha::Blend>,
+    last_alpha: Option<u8>,
     closing: bool,
     last_island: Option<PixelRect>,
     /// Last `pixels_per_point` this note laid out at, for the transition log.
@@ -175,7 +175,7 @@ impl NoteShell {
             keys: keys::Bus::new(viewport_id(spawn.id)),
             wheel: wheel::Wheel::new(viewport_id(spawn.id)),
             gate: wheel::Gate::default(),
-            last_blend: None,
+            last_alpha: None,
             closing: false,
             last_island: None,
             last_ppp: 0.0,
@@ -420,22 +420,6 @@ impl NoteShell {
         true
     }
 
-    /// The blend the strip's opacity implies. Zero is ghost mode, and ghost mode is
-    /// **not** alpha 0 — 0 is click-through, so the note could not be clicked back.
-    /// See `hub_win::alpha` for the colour-key details.
-    fn blend(&self) -> (hub_win::alpha::Blend, &'static str) {
-        if self.strip.opacity <= quicknote::GHOST_EPSILON {
-            return hub_win::alpha::ghost(
-                colorref(self.palette.panel),
-                colorref(self.palette.panel_strong),
-            );
-        }
-        (
-            hub_win::alpha::Blend::Flat(hub_win::alpha::from_opacity(self.strip.opacity)),
-            "",
-        )
-    }
-
     /// Push the strip's opacity into the compositor (parity Q28/Q29), on change.
     ///
     /// One `SetLayeredWindowAttributes` per *change*, never per frame: the call is
@@ -450,29 +434,19 @@ impl NoteShell {
         let Some(hwnd) = self.hwnd else {
             return;
         };
-        let (blend, note) = self.blend();
-        if self.last_blend == Some(blend) {
+        let alpha = hub_win::alpha::from_opacity(self.strip.opacity);
+        if self.last_alpha == Some(alpha) {
             return;
         }
-        // The backdrop has to move with the blend, not once at startup: Mica is a
-        // system backplate behind the window surface, so a keyed-out pixel would show
-        // the blurred wallpaper instead of vanishing. Measured 2026-11-25 -- body at
-        // `(207, 210, 209)` with Mica on, the desktop's own `(252, 254, 252)` with it
-        // off. It costs nothing at other opacities because an opaque panel covers it.
-        let ghost = blend.key().is_some();
-        let backdrop = if ghost || self.lite { "none" } else { "mica" };
-        let mica = hub_win::dwm::set_mica(hwnd, !ghost && !self.lite);
-        let applied = hub_win::alpha::apply(hwnd, blend);
+        let applied = hub_win::alpha::set(hwnd, alpha);
         let readback = hub_win::alpha::get(hwnd);
-        self.last_blend = Some(blend);
+        self.last_alpha = Some(alpha);
         self.log.mark(
             0,
             "note_alpha",
             &format!(
-                "id={} phase={phase} opacity={:.2} {} backdrop={backdrop} mica_ok={mica} applied={applied} readback={readback:?}{note}",
-                self.id,
-                self.strip.opacity,
-                blend.describe()
+                "id={} phase={phase} opacity={:.2} alpha={alpha} applied={applied} readback={readback:?}",
+                self.id, self.strip.opacity
             ),
         );
     }
