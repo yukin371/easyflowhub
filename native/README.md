@@ -46,6 +46,25 @@ cargo run --release -p app -- --store-hold 400 --store-root target/s3/root   # �
 
 `--note` 是 Phase 1 的产品窗口（`app/src/note.rs`），不是测量件：它不注册热键、不参与 bench，日志里 `note_window` / `island_created` 的尺寸就是 parity 清单 Q1–Q4、Q6–Q11 的判定依据。spike 的 `--bench` / `--editor` 保持原样，T-Gate 0 之后整个 spike 删除。
 
+`--note` 的外观全部来自 `quick_note.appearance`（字号、行距、内边距、插入符宽度、七个颜色）：
+
+```bash
+cargo run --release -p app -- --note --settings my-note.json
+```
+
+```json
+{ "quick_note": { "appearance": {
+  "font_pt": 12.0,
+  "line_spacing": 1.1,
+  "padding_x": 14,
+  "colors": { "accent": [120, 180, 255] }
+} } }
+```
+
+没写的字段取默认值（那份默认值就是 Tauri 的 `--manager-*` token），所以一个只改 `accent` 的文件不会把别的颜色清零。`caret_width` 会写系统插入符宽度并在退出时恢复，原因见计划文档 §8.1。
+
+`scripts/grab-window.py` 是这台机器上唯一能截图的路子：沙箱禁用 `Add-Type`，PowerShell 的 `System.Drawing` 一行流跑不起来，而"行首 1 px 的光标有没有被裁掉"没法靠描述判断。它用 `ctypes` + `gdi32!BitBlt` 直接抓窗口矩形并写 BMP，不依赖任何第三方包；`--screen` 抓整个虚拟桌面，`--title` 按标题子串选窗口。光标可见性就是用它连拍 8 帧、数竖线列数得出的（改前 0/8、改后 4/8）。
+
 `--bench` 用 `PostThreadMessageW(WM_HOTKEY)` 触发**与真实按键相同的处理路径**（去抖 → 取光标 → 命中缓存布局 → 唤醒 → 绘制），所以 200 轮不需要人手连按。退出码：`0` 达标，`2` 超预算，`3` 热键注册失败。
 
 `--editor-bench` 在被停靠（隐藏）的窗口上跑完整证据：类名/字符格式回读、`WM_PRINTCLIENT` 像素采样、滚动、resize 跟随、撤销/重做、按键归属，最后是两组键入分布（1k / 10k 文档）。它**不需要可见窗口，也不截屏**，因此可以在无人值守的机器上跑。退出码：`0` 达标，`2` 超预算。
