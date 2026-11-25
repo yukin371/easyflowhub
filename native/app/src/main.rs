@@ -10,6 +10,7 @@
 
 mod args;
 mod bench;
+mod editor_bench;
 mod log;
 mod probe_json;
 mod spike;
@@ -116,6 +117,10 @@ fn main() {
         skip_font: parsed.no_font,
         demo: parsed.demo,
         burst: parsed.burst,
+        editor: parsed.editor,
+        editor_bench: parsed.editor_bench,
+        editor_budget_p95_ms: parsed.editor_budget_p95_ms,
+        editor_budget_p99_ms: parsed.editor_budget_p99_ms,
     };
     let bench_total = parsed.bench;
 

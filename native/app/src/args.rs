@@ -29,6 +29,13 @@ pub struct Args {
     pub no_font: bool,
     /// Disable vsync — diagnostic only, it changes what the number means.
     pub no_vsync: bool,
+    /// Draw the text island instead of the action grid (S2).
+    pub editor: bool,
+    /// Run this many timed keystrokes in the island, then print the distribution.
+    pub editor_bench: Option<usize>,
+    /// S2 gate for "keystroke → character painted" (app side, excludes composition).
+    pub editor_budget_p95_ms: f64,
+    pub editor_budget_p99_ms: f64,
     pub help: bool,
 }
 
@@ -50,6 +57,10 @@ impl Default for Args {
             burst: 0,
             no_font: false,
             no_vsync: false,
+            editor: false,
+            editor_bench: None,
+            editor_budget_p95_ms: 16.0,
+            editor_budget_p99_ms: 25.0,
             help: false,
         }
     }
@@ -73,6 +84,10 @@ easyflowhub-native — S1 shell spike
   --burst <N>            post N hotkey messages 60 ms apart (debounce check)
   --no-font              diagnostic: skip the CJK font (font/atlas cost probe)
   --no-vsync             diagnostic: measure without vsync
+  --editor               draw the RichEdit island instead of the action grid
+  --editor-bench <N>     type N timed characters into the island, print, exit
+  --editor-budget-p95 <ms>  gate for keystroke -> painted (default 16)
+  --editor-budget-p99 <ms>  gate for keystroke -> painted p99 (default 25)
   -h, --help             this text
 ";
 
@@ -137,6 +152,26 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
             }
             "--no-font" => args.no_font = true,
             "--no-vsync" => args.no_vsync = true,
+            "--editor" => args.editor = true,
+            "--editor-budget-p95" => {
+                args.editor_budget_p95_ms = value("--editor-budget-p95")?
+                    .parse()
+                    .map_err(|_| "--editor-budget-p95 expects milliseconds".to_string())?;
+            }
+            "--editor-budget-p99" => {
+                args.editor_budget_p99_ms = value("--editor-budget-p99")?
+                    .parse()
+                    .map_err(|_| "--editor-budget-p99 expects milliseconds".to_string())?;
+            }
+            "--editor-bench" => {
+                args.editor_bench = Some(
+                    value("--editor-bench")?
+                        .parse()
+                        .map_err(|_| "--editor-bench expects a number".to_string())?,
+                );
+                // The bench needs the island; asking for one implies the other.
+                args.editor = true;
+            }
             "-h" | "--help" => args.help = true,
             other => return Err(format!("unknown argument '{other}'; try --help")),
         }
@@ -176,6 +211,13 @@ mod tests {
     #[test]
     fn rejects_an_out_of_range_scale() {
         assert!(parse_args(&["app", "--scale", "9"]).is_err());
+    }
+
+    #[test]
+    fn editor_bench_implies_the_editor() {
+        let args = parse_args(&["app", "--editor-bench", "200"]).unwrap();
+        assert_eq!(args.editor_bench, Some(200));
+        assert!(args.editor);
     }
 
     #[test]

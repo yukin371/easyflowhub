@@ -124,6 +124,55 @@ pub fn draw(ctx: &egui::Context, state: &mut PanelState) {
         });
 }
 
+/// Draw the editor layout and return the rectangle the native text island must
+/// occupy, in **logical points**.
+///
+/// The panel leaves a hole here: egui paints the border and the chrome, the
+/// RichEdit child window fills the middle. Painting anything inside the returned
+/// rect from egui would fight the child window (egui's output is a GL swap, the
+/// island is GDI), so the surface inside is deliberately left empty.
+pub fn draw_editor(ctx: &egui::Context, state: &mut PanelState) -> Rect {
+    let palette = state.palette;
+    let mut island = Rect::NOTHING;
+
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.panel)
+                .inner_margin(egui::Margin::same(PANEL_PADDING as i8)),
+        )
+        .show(ctx, |ui| {
+            ui.set_clip_rect(ctx.screen_rect());
+            draw_header(ui, state);
+            ui.add_space(6.0);
+
+            let width = ui.available_width();
+            let height = (ui.available_height() - 26.0).max(120.0);
+            let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+
+            ui.painter().rect_filled(rect, CornerRadius::same(8), palette.panel_strong);
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(8),
+                Stroke::new(1.0, palette.border),
+                StrokeKind::Inside,
+            );
+
+            // Inset by the border plus one pixel of breathing room; the island's own
+            // background is the same colour, so the seam is invisible.
+            island = rect.shrink(2.0);
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("RichEdit 文本岛 · Esc 关闭 · Ctrl+Z 撤销")
+                    .size(11.0)
+                    .color(palette.ink_subtle),
+            );
+        });
+
+    island
+}
+
 fn draw_header(ui: &mut egui::Ui, state: &mut PanelState) {
     let palette = state.palette;
     ui.allocate_ui(Vec2::new(ui.available_width(), HEADER_HEIGHT), |ui| {

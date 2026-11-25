@@ -10,7 +10,7 @@ pub struct Samples {
     pub refresh_us: Vec<u64>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Distribution {
     pub n: usize,
     pub min: u64,

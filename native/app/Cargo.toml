@@ -19,6 +19,7 @@ screenshot = ["eframe/__screenshot"]
 hub-core.workspace = true
 hub-ui.workspace = true
 hub-win.workspace = true
+hub-editor.workspace = true
 egui.workspace = true
 eframe.workspace = true
 serde_json.workspace = true

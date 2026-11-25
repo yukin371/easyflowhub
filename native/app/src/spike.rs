@@ -21,10 +21,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hub_core::{place, PanelSpec, Placement, Rect, SpikeSettings};
+use hub_core::{place, PanelSpec, PixelRect, Placement, Rect, SpikeSettings};
+use hub_editor::Editor;
 use hub_ui::PanelState;
 
-use crate::{bench, log::Log};
+use crate::{bench, editor_bench, log::Log};
 
 pub const WINDOW_TITLE: &str = "easyflowhub-native-spike";
 
@@ -107,6 +108,13 @@ pub struct Config {
     pub demo: bool,
     /// See `Args::burst`.
     pub burst: usize,
+    /// Draw the text island instead of the action grid (S2).
+    pub editor: bool,
+    /// Type N timed characters into the island and exit.
+    pub editor_bench: Option<usize>,
+    /// S2 gate: p95 / p99 for "keystroke → character painted".
+    pub editor_budget_p95_ms: f64,
+    pub editor_budget_p99_ms: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -137,6 +145,12 @@ pub struct SpikeApp {
     /// Physical size of the window, so a size change is logged instead of silently
     /// costing the first frame a resize.
     window_size: (i32, i32),
+    /// The RichEdit island, created on the first drawn frame.
+    editor: Option<Editor>,
+    /// Set by the island's subclass proc when Esc is pressed; consumed by `update`
+    /// so the window code is never re-entered from inside the message handler.
+    escape: Arc<std::sync::atomic::AtomicBool>,
+    editor_bench: Option<usize>,
 }
 
 impl SpikeApp {
@@ -237,6 +251,9 @@ impl SpikeApp {
             demo_pending: config.demo,
             burst_pending: config.burst,
             window_size: (placement.width, placement.height),
+            editor: None,
+            escape: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            editor_bench: config.editor_bench,
             config,
         }
     }
@@ -326,7 +343,142 @@ impl SpikeApp {
     }
 
     fn draw_panel(&mut self, ctx: &egui::Context) {
-        hub_ui::panel::draw(ctx, &mut self.panel);
+        if !self.config.editor {
+            hub_ui::panel::draw(ctx, &mut self.panel);
+            return;
+        }
+
+        let island = hub_ui::panel::draw_editor(ctx, &mut self.panel);
+        let rect = PixelRect::from_logical(
+            [island.min.x, island.min.y, island.width(), island.height()],
+            ctx.pixels_per_point(),
+        );
+        self.sync_editor(ctx, rect);
+    }
+
+    /// Create the island on first use, then only move it when the rect changed.
+    ///
+    /// The child window lives in the parent's client area, so the panel's own
+    /// position never has to be forwarded here - only the layout inside it.
+    fn sync_editor(&mut self, ctx: &egui::Context, rect: PixelRect) {
+        let palette = self.panel.palette;
+        let theme = hub_editor::Theme {
+            background: colorref(palette.panel_strong),
+            foreground: colorref(palette.ink),
+            font_face: "Microsoft YaHei UI",
+            font_pt: 11.0 * ctx.pixels_per_point(),
+        };
+
+        match self.editor.as_mut() {
+            None => match Editor::create(self.hwnd, rect, &theme) {
+                Ok(mut editor) => {
+                    let escape = self.escape.clone();
+                    editor.on_escape(Box::new(move || {
+                        escape.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }));
+                    editor.set_text(&editor_bench::corpus_text(120));
+                    editor.caret_to_end();
+                    // Focus is not cosmetic: `EM_SCROLLCARET` is a no-op while the
+                    // control lacks it, so without this the caret stops following
+                    // typed text at the bottom of the visible area. The panel was
+                    // just opened by a keystroke, so the editor is where input
+                    // belongs.
+                    editor.focus();
+                    self.config.log.mark(
+                        0,
+                        "editor_created",
+                        &format!(
+                            "class={} rect={}x{}+{}+{} limit={}",
+                            editor.class_name(),
+                            rect.width,
+                            rect.height,
+                            rect.x,
+                            rect.y,
+                            editor.limit()
+                        ),
+                    );
+                    self.editor = Some(editor);
+                }
+                Err(error) => {
+                    self.config.log.mark(0, "editor_failed", &error);
+                    self.config.editor = false;
+                }
+            },
+            Some(editor) => {
+                editor.apply_theme(&theme);
+                if editor.set_rect(rect) {
+                    self.config.log.mark(
+                        0,
+                        "editor_rect",
+                        &format!("{}x{}+{}+{}", rect.width, rect.height, rect.x, rect.y),
+                    );
+                }
+            }
+        }
+    }
+
+    /// S2 evidence run: identity, pixels, scroll, undo, then two typed distributions.
+    fn run_editor_bench(&mut self, samples: usize) -> ! {
+        let Some(editor) = self.editor.as_mut() else {
+            eprintln!("editor bench: island was not created");
+            std::process::exit(1);
+        };
+
+        let mut evidence = editor_bench::capture(editor);
+        evidence.burst_ms = hub_editor::measure::burst_chars(
+            editor.hwnd(),
+            &editor_bench::corpus_text(200),
+            200,
+        ) as f64
+            / 1000.0;
+        let burst_chars = editor.char_count();
+
+        let one_k = editor_bench::type_bench(
+            editor,
+            1_000,
+            samples,
+            std::time::Duration::from_millis(60),
+        );
+        // Half the samples at 10k: the question is "does it degrade", and 100 is
+        // already enough to separate a flat curve from a linear one.
+        let ten_k = editor_bench::type_bench(
+            editor,
+            10_000,
+            samples / 2,
+            std::time::Duration::from_millis(60),
+        );
+
+        print!(
+            "{}---EDITOR-JSON---\n{}\n",
+            editor_bench::report(&evidence, &one_k, &ten_k),
+            editor_bench::report_json(
+                &evidence,
+                &one_k,
+                &ten_k,
+                self.config.editor_budget_p95_ms,
+                self.config.editor_budget_p99_ms,
+            )
+        );
+        {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+
+        self.config.log.mark(
+            0,
+            "editor_bench_done",
+            &format!(
+                "chars_after_burst={burst_chars} type_p95_ms={:.2} ten_k_p95_ms={:.2}",
+                one_k.p95_ms(),
+                ten_k.p95_ms()
+            ),
+        );
+
+        let ok = one_k.within(
+            self.config.editor_budget_p95_ms,
+            self.config.editor_budget_p99_ms,
+        ) && ten_k.p95_ms() <= one_k.p95_ms().max(0.1) * 2.0;
+        std::process::exit(if ok { 0 } else { 2 });
     }
 
     /// Repaint the panel for a request that is already on screen.
@@ -461,6 +613,18 @@ impl eframe::App for SpikeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.frames += 1;
 
+        // Esc is captured by the island's subclass proc, which must not re-enter
+        // window code from inside a message handler; the flag defers it here.
+        if self
+            .escape
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            hub_win::window::park(self.hwnd);
+            self.phase = Phase::Parked;
+            self.config.log.mark(0, "editor_esc", "panel parked");
+            return;
+        }
+
         if !self.prewarm_done {
             // §5.1.1: the scale must be right before the window is ever shown,
             // otherwise the first visible frame is drawn at the wrong size and then
@@ -530,6 +694,13 @@ impl eframe::App for SpikeApp {
             return;
         }
 
+        if let Some(samples) = self.editor_bench {
+            if self.warm_left == 0 && self.editor.is_some() {
+                self.run_editor_bench(samples);
+            }
+            return;
+        }
+
         if self.burst_pending > 0 && self.warm_left == 0 {
             // Three presses inside one debounce window must produce exactly one
             // reveal. Each press is a separate posted message, exactly like a
@@ -549,4 +720,9 @@ impl eframe::App for SpikeApp {
 
         self.maybe_start_cycle(ctx);
     }
+}
+
+/// egui stores RGB; Windows colour values are `0x00BBGGRR`.
+fn colorref(color: egui::Color32) -> u32 {
+    color.r() as u32 | (color.g() as u32) << 8 | (color.b() as u32) << 16
 }
