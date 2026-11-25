@@ -25,19 +25,11 @@
 //!   to at least 1x1 in `hub-core::island`.
 
 pub mod measure;
+pub mod keys;
 mod theme;
 
+pub use keys::KeyPress;
 pub use theme::Theme;
-
-/// Virtual-key codes the shell needs to talk about.
-///
-/// Plain `u16` constants on purpose: `app` must not name a win32 type, so this
-/// crate keeps the platform vocabulary on its side of the boundary.
-pub mod keys {
-    pub const TAB: u16 = 0x09;
-    pub const ESCAPE: u16 = 0x1B;
-    pub const Z: u16 = 0x5A;
-}
 
 use std::ptr;
 use std::sync::OnceLock;
@@ -49,8 +41,10 @@ use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, REC
 use windows_sys::Win32::Graphics::Gdi::UpdateWindow;
 use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_TAB};
-use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetFocus, MapVirtualKeyW, SetFocus, VK_ESCAPE, VK_TAB, MAPVK_VSC_TO_VK_EX,
+};
+use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmGetVirtualKey, ImmReleaseContext};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, GetClassNameW, GetWindowLongPtrW, GetWindowTextLengthW,
@@ -79,6 +73,7 @@ const EM_SETBKGNDCOLOR: u32 = 0x0400 + 67;
 const EM_GETSCROLLPOS: u32 = 0x0400 + 221;
 const EM_SETUNDOLIMIT: u32 = 0x0400 + 82;
 const EM_REDO: u32 = 0x0400 + 84;
+const EM_CANREDO: u32 = 0x0400 + 85;
 const EM_AUTOURLDETECT: u32 = 0x0400 + 91;
 const EM_SETLANGOPTIONS: u32 = 0x0400 + 120;
 const EM_SETEDITSTYLE: u32 = 0x0400 + 204;
@@ -108,6 +103,10 @@ pub struct CharFormatEcho {
 
 struct Callbacks {
     on_escape: Option<Box<dyn Fn() + Send + Sync>>,
+    /// Returns `true` when the shell consumed the key. A `false` falls through to
+    /// `DefSubclassProc`, which is what keeps `Ctrl+Z` inside RichEdit's own undo
+    /// instead of reimplementing it one level up.
+    on_key: Option<Box<dyn Fn(KeyPress) -> bool + Send + Sync>>,
 }
 
 pub struct Editor {
@@ -173,7 +172,10 @@ impl Editor {
                 ));
             }
 
-            let callbacks = Box::into_raw(Box::new(Callbacks { on_escape: None }));
+            let callbacks = Box::into_raw(Box::new(Callbacks {
+                on_escape: None,
+                on_key: None,
+            }));
 
             // ~800 lines of safety: keep the callback box reachable from the
             // subclass proc and free it in Drop.
@@ -466,6 +468,18 @@ impl Editor {
         }
     }
 
+    /// Whether there is anything to undo / redo right now.
+    ///
+    /// The shell asks before acting so the log can say `can=false` instead of
+    /// reporting a "redo that did nothing" as if it had run.
+    pub fn can_undo(&self) -> bool {
+        unsafe { SendMessageW(self.hwnd, EM_CANUNDO, 0, 0) != 0 }
+    }
+
+    pub fn can_redo(&self) -> bool {
+        unsafe { SendMessageW(self.hwnd, EM_CANREDO, 0, 0) != 0 }
+    }
+
     pub fn clear_undo(&self) {
         unsafe {
             SendMessageW(self.hwnd, EM_EMPTYUNDOBUFFER, 0, 0);
@@ -580,6 +594,15 @@ impl Editor {
         unsafe { SetFocus(self.hwnd) != ptr::null_mut() }
     }
 
+    /// Whether the control currently owns the keyboard focus.
+    ///
+    /// `SetFocus` returns the *previous* focus window, so a non-null result does not
+    /// prove the call worked on a window in another thread. Reading it back is the
+    /// only way to tell "focus moved" from "focus was refused".
+    pub fn is_focused(&self) -> bool {
+        unsafe { GetFocus() == self.hwnd }
+    }
+
     /// Whether the control has an input-method context.
     ///
     /// This is the automatable half of B9: if `ImmGetContext` returns NULL, no IME
@@ -620,6 +643,15 @@ impl Editor {
     pub fn on_escape(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
         unsafe {
             (*self.callbacks).on_escape = Some(callback);
+        }
+    }
+
+    /// Install the window-level shortcut hook. The callback runs inside the
+    /// subclass proc, so it must only raise a flag — window code is not re-entered
+    /// from a message handler.
+    pub fn on_key(&mut self, callback: Box<dyn Fn(KeyPress) -> bool + Send + Sync>) {
+        unsafe {
+            (*self.callbacks).on_key = Some(callback);
         }
     }
 
@@ -671,11 +703,59 @@ unsafe extern "system" fn subclass_proc(
                 SendMessageW(hwnd, WM_CHAR, 0x09, 1);
                 return 0;
             }
-            _ => {}
+            // Everything else goes through the shell's shortcut table. Esc stays
+            // above it because closing is not a table entry: it must work even if
+            // the table is empty or the callback was never installed.
+            other => {
+                if let Some(callback) = callbacks.on_key.as_ref() {
+                    if callback(keys::modifiers(original_key(hwnd, other, lparam))) {
+                        return 0;
+                    }
+                }
+            }
         }
     }
 
     DefSubclassProc(hwnd, message, wparam, lparam)
+}
+
+/// Undo the IME's rewrite of the virtual-key code.
+///
+/// With a Chinese IME active, `WM_KEYDOWN` can arrive with `wParam` set to
+/// `VK_PROCESSKEY` (0xE5) instead of the key the user pressed: the IME claims the
+/// combo before the control sees it. Measured 2026-11-25 — `Ctrl+.` after Sogou was
+/// installed arrived as `vk=0xE5`, so the tools shortcut looked "not implemented".
+///
+/// Two ways back, in order:
+/// 1. `ImmGetVirtualKey` — the documented answer, but it returns 0xE5 itself on this
+///    RichEdit, so it is not enough on its own.
+/// 2. The scan code in `lParam` bits 16–23, mapped back with the thread's layout.
+///    This is what actually works here; the IME rewrites `wParam` and leaves
+///    `lParam` alone.
+///
+/// Consuming the callback's key here also keeps the IME from acting twice: if the
+/// shell answers the shortcut, the message is not passed on and Sogou does *not*
+/// also toggle punctuation.
+fn original_key(hwnd: HWND, vk: u16, lparam: LPARAM) -> u16 {
+    const VK_PROCESSKEY: u16 = 0xE5;
+    if vk != VK_PROCESSKEY {
+        return vk;
+    }
+    let original = unsafe { ImmGetVirtualKey(hwnd) } as u16;
+    if original != 0 && original != VK_PROCESSKEY {
+        return original;
+    }
+
+    let scan = ((lparam as usize >> 16) & 0xFF) as u32;
+    if scan == 0 {
+        return vk;
+    }
+    let mapped = unsafe { MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX) } as u16;
+    if mapped == 0 {
+        vk
+    } else {
+        mapped
+    }
 }
 
 /// `WS_CLIPCHILDREN` on the parent is what stops the GL swap from painting over
