@@ -16,7 +16,7 @@
 | Q2 默认 400×300，取自设置 | ✅ | 新增 `quick_note.width/height`，键名与 Tauri 版一致 |
 | Q3 最小 150×60 | ✅ | `with_min_inner_size`，交由 winit 落到 `WM_GETMINMAXINFO` |
 | Q4 光标所在屏 + 四边夹紧 | ✅ | 复用 `hub-core::place` 的夹紧算法，锚点改为笔记尺寸 |
-| **Q5 关闭即销毁，新建是全新窗口** | ⏭ **1b.2** | 与本批的单窗口模型冲突，见 D5 |
+| **Q5 关闭即销毁，新建是全新窗口** | ✅ **1b.2** | 一个进程、每笔记一个 viewport；关闭只销毁那一个窗口，见 §8.5 |
 | Q6 左槽显不透明度 / `GHOST` | ◐ | 文本与状态机本批做；**真实整窗透明度**在 1c（需 layered window） |
 | Q7 中槽 `•••` 开关工具面板 | ✅ | 开合与高亮；面板内容留 Phase 2 |
 | Q8 预览按钮 | — | C3 已延后 Phase 3，挂起 |
@@ -32,7 +32,8 @@ Q6 只做一半是**有意**的：百分比数字对不对（`opacity_label`）�
 |---|---|---|
 | **1a**（本批） | 单窗口壳：几何 + 标题条 + 拖动 + 置顶 + 最小尺寸 | 全部可在**一个窗口**内验证，不需要改进程/窗口模型 |
 | **1b.1** | 键位与焦点：Esc / Ctrl+D 关闭、撤销重做、置顶、工具面板、打开即聚焦 | 验证前提与 1a 相同——**按键看结果**，不需要改窗口模型 |
-| **1b.2** | 多笔记窗口 + 关闭即销毁 + 托盘不退进程 | 要引入 viewport-per-note 与托盘生命周期，`Q5` 才能被真正满足 |
+| **1b.2** | 多笔记窗口 + 关闭即销毁 + `Ctrl+Alt+N` 新建（✅ 见 §8.5） | 要引入 viewport-per-note，`Q5` 才能被真正满足 |
+| **1b.3** | 托盘常驻 + 其余全局键（`Ctrl+Alt+D/H/M`）+ 关完窗口不退进程 | 需要托盘生命周期；在此之前"关完最后一个笔记就退出"是唯一不自欺的选择 |
 | **1c** | 整窗透明度 + 幽灵模式（Q28/Q29） | 需新增 `hub-win` 的合成路径；与 1a 的纯 UI 工作无耦合 |
 | **1d** | `Ctrl+K` 切换器（Q25–Q27） | 需要 `notes.db` 的最近列表，属 Phase 2 数据层前置 |
 
@@ -61,6 +62,8 @@ Q6 只做一半是**有意**的：百分比数字对不对（`opacity_label`）�
 
 **D7 —— 1a 的 Esc = 退出进程，不伪装成"关闭窗口"。**
 没有托盘之前，"关闭窗口"只能是退出进程。写日志时用 `note_close`，并在字段里带 `windows_before/after`，1b 接上托盘后这里改成"销毁 viewport、进程存活"，日志字段不用改——**判据先于实现存在**，1b 才不会顺手把 Q5 判成"已满足"。
+
+> 2026-11-25 更新（1b.2）：Esc 现在只销毁**该** viewport，其余笔记存活；托盘仍未到位，所以最后一个笔记关闭时进程退出（§8.5）。日志字段从 `windows_before/after` 落成 `open_notes=`，因为原始窗口总数里混着 winit 事件窗口和输入法宿主，不是笔记。
 
 **D8 —— 复用 S1 的窗口路径，不重写。**
 创建顺序仍是"`with_visible(false)` → `find_by_title` → 物理像素 `place` → `show_without_activation`"。S1 的 p95 就是在这个顺序下测出来的；1a 只改内容，不改创建路径，这样"标题条上线后热唤起变慢"的怀疑可以立刻排除。
@@ -306,6 +309,64 @@ note_key action=Redo / note_history redo can=true len=3        ← Q15：重做�
 | 置顶键位读配置 | 现在没有键位配置层；固定用旧版默认值 `Ctrl+T`，等配置层一起做 |
 | `Ctrl+Shift+Z` 之外的编辑器键位（复制行、标题级别等） | 旧版有 12 条，属编辑器内部功能，不是窗口键 |
 
+## 8.5 多窗口与销毁（1b.2）
+
+1b 的验证前提和前两批不同：要数**进程里的窗口**，不是"看窗口"。所以这一批第一个决定不是"怎么建第二个窗口"，而是"谁持有事件循环"。
+
+### 根视口不是笔记
+
+eframe 把事件循环绑在根视口上：根窗口关闭 → `run_native` 返回 → 进程结束。若笔记 #0 就是根视口，关掉它会把其余笔记一起带走，正好是 Q5 的反面。于是：
+
+- 根视口是 1×1 的控制器窗口（标题 `easyflowhub-hub`），首帧就被 `hub_win::window::park` 停到屏幕外。实测落点 `-24000,-24000`，与 `window.rs` 里记的系统夹取一致（要 `-30000` 只给到 `-24000`）。
+- 每个笔记是一个 deferred viewport，标题 `easyflowhub-note#<id>`。
+
+停到屏外而不是 `SW_HIDE`，是 S1 就付过学费的那条：隐藏会停掉 `WM_PAINT` 投递，而根视口一旦不能绘制就不能声明 viewport，笔记会**冻住**而不是关闭。
+
+### 三个不显然的细节
+
+| 细节 | 为什么 |
+|---|---|
+| 用标题把 viewport 和 `HWND` 对上 | deferred viewport 的回调只拿到 `Context`，eframe 0.31 不在回调里暴露 `HWND`，所以 `find_by_title` 从"找那个笔记窗口"变成精确查找。标题不可见（无边框、无任务栏），成本为零 |
+| `Shared` 用 `unsafe impl Send/Sync` 包一层 | `show_viewport_deferred` 要求回调 `Send + Sync`，而 `NoteShell` 持有 `HWND` 和 RichEdit 子类指针。**没有任何东西真的跨线程**：eframe 在事件循环线程调用回调，win32 句柄也只在那条线程有效。`lock()` 里断言线程 id，把这条注释变成检查而不是承诺 |
+| 去掉 1a 的 `set_zoom_factor` | 它是 `Context` 全局的：一个笔记会改所有笔记的缩放，多显示器下不是取整误差而是整体错标。也不需要——实测 `note_ppp id=0 ppp=1.25 (was 0.00)`，窗口放到位之后 winit 第一帧就报出真实缩放，岛每帧按 `ppp` 重算矩形 |
+
+### 证据（125%，日志）
+
+```
+hub_window parked=true focus_released=0
+hotkey combo=Ctrl+Alt+N registered=true thread=40280
+note_spawn id=0 live=1 cursor=1017,851 monitor_scale=1.25
+note_window id=0 500x375+1025+468 dwm=["dark","round","mica"] foreground=true
+
+note_key id=1 action=Close
+note_close id=1 reason=shortcut open_notes=2
+note_destroyed id=1 open_notes=1 process_windows=5 notes=1   ← 那一个窗口没了，#0 还在
+note_close id=2 reason=os open_notes=3                       ← Alt+F4 走同一条销毁路径
+note_destroyed id=2 open_notes=2 process_windows=6 notes=2
+note_close id=0 reason=shortcut open_notes=1
+note_destroyed id=0 open_notes=0 process_windows=4 notes=0
+hub_exit reason=no_notes tray=pending hotkey=stops
+```
+
+两条实测结论：
+
+- **销毁是真的**：关闭后从外部 `EnumWindows` 只剩 `note#0` + 控制器；不是 park 到屏外，也不是隐藏。
+- **新建是全新窗口**：`note_begin id=1` → `island_created id=1 ... caret=(0, 0)`，新 RichEdit、空文档，旧笔记的文本与光标不受影响。
+- **热键是全局的**：Q18 的判定条件是"焦点在别的程序上"，所以单独测了一次——把前台切到另一个窗口后再按 `Ctrl+Alt+N`，日志 `note_spawn id=1 live=2`，接着 `note_window ... foreground=true`，新笔记拿到前台并把光标放进正文。
+
+`open_notes` 只数带笔记前缀的标题。`top_level_windows()` 还会返回 winit 的 14×14 事件窗口和两个输入法宿主（实测 `Winit Thread Event Target` / `MSCTFIME UI` / `Default IME`），直接数总数会因为与笔记无关的原因跳动，那样的数字不能当判据。
+
+`note_close` 和 `note_destroyed` 必须成对：前者在窗口还在时记录（`open_notes` 仍含自己），后者在下一个 pass 记录。只有一行无法区分"请求关闭"和"已经关闭"——这正是 D7 定 `windows_before/after` 时想要的形状，只是字段名换成了更不会误导的 `open_notes`。
+
+### 本批不做，以及为什么关完就退出
+
+| 项 | 为什么 |
+|---|---|
+| 托盘常驻 | 没有托盘图标，就没有"进程还在"的可操作入口 |
+| 关完最后一个笔记不退出 | 和上一条绑在一起：一个只能靠任务管理器结束的隐形进程比"退出"更糟。所以现在关完就 `hub_exit`，日志写明 `tray=pending`；1b.3 只改这一行的判断，不改字段 |
+| `Ctrl+Alt+D/H/M`（Q18 其余三条） | 关闭全部 / 最小化全部需要托盘语义，打开工作台需要 launcher 面板 |
+| 新建窗口的级联偏移 | 旧版也没有：`cursor_anchored_position` 把每个笔记都锚在光标上，多个笔记完全重合是复刻行为，不是缺陷 |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -316,3 +377,4 @@ note_key action=Redo / note_history redo can=true len=3        ← Q15：重做�
 | 2026-11-25 | 1a.2 置顶图标返工：1a.1 自拼的图钉换回旧 UI 的书签路径（两态靠 `fill` 区分），按钮尺寸与配色回到 28×28 / muted-accent，去掉旧 UI 没有的圆角底板（§8.2） |
 | 2026-11-25 | 1a.3 标题条留白回到旧 UI 的两层 padding：标签 16、按钮框 8（图标可见 14），`SIDE_SLOT_WIDTH` 44 → 60；正文内边距 12/10 → 18/18 以对齐标签；记下最小窗宽下 `GHOST` 越槽 5 px 但让开三点 6 px（§8.3） |
 | 2026-11-25 | 1b 拆成 1b.1（键位，本批）与 1b.2（多窗口/托盘）；1b.1 落地键位表、两条输入路径、`EM_UNDO`/`EM_REDO` 统一、输入法改写 vk 的还原；记下 `Ctrl+.` 只能人工验证（§8.4） |
+| 2026-11-25 | 1b.2 落地 viewport-per-note：根视口改为屏外控制器，每笔记一个 deferred viewport；关闭只销毁该窗口，`Ctrl+Alt+N` 经全局热键新建；去掉全局 `set_zoom_factor`；托盘与其余全局键留 1b.3，关完最后一个笔记即退出并在日志写明 `tray=pending`（§8.5） |
