@@ -163,9 +163,21 @@ New-Item -ItemType Directory -Force -Path .\docs\releases\native-c2 | Out-Null
 - 面板在第一次按下的瞬间就隐藏 → 正常，`presses=1`
 - 要先关候选窗再按一次 → 前面那次没有 `editor_esc` 记录，属于输入法吃了键
 
-**另一件尚未修的事（会污染 C2 判读，先记住）**：park 只是把窗口移到屏幕外，窗口仍然可见、仍是前台，**焦点也仍然留在编辑器里**。所以面板隐藏后继续打字，字符会静默写进那个看不见的编辑器（`esc_probe` 实测 `parked: focus_is_editor=true` / `typed='a' chars=1`）。修它需要把焦点交还并重新聚焦，会改动 reveal 路径的工作量，必须重测 S1 的 p95 —— 不在这批里做。
+**焦点残留已修（2026-11-25 15:20，run-1 作废之后）**。此前 park 只是把窗口移到屏幕外，窗口仍然可见、仍是前台，**焦点也仍然留在编辑器里**，所以面板隐藏后继续打字，字符会静默写进那个看不见的编辑器（`esc_probe` 曾实测 `focus_is_editor=true` / `typed='a' chars=1`）。现在 `park` 会同时 `SetFocus(null)`：
 
-**因此本轮纪律：按 Esc 之后不要直接开始打字**，先确认目标窗口已经拿到焦点。否则你会在半小时后发现"丢了几个字"，而那其实是打进了隐藏面板，不是输入法的问题。
+| 探针（`scripts/esc_poke.rs`，按 PID 找窗口） | 修复前 | 修复后 |
+|---|---|---|
+| `focus_is_editor_after` | `true` | **`false`**（`focus_after=0`） |
+| `result` | （无判定） | **`PASS`** |
+| 窗口位置 | `-20000-20000` | `-20000-20000`（未变） |
+
+日志侧同步可见：`editor_esc panel parked, presses=1 focus_released=6228652 focus_after=0`。
+
+**但只修了一半，half 在哪要说清**：前台（foreground）仍在面板上，`esc_poke` 报 `foreground_is_target=true`。所以按 Esc 后击键**不再**进编辑器（这是会丢数据的那一半，已解决），但焦点没有自动回到你原先那个窗口，需要点一下或 `Alt+Tab`。把前台还回去会让下一次 `SetForegroundWindow` 走前台锁协商，从而改变 bench 的测量条件——那属于 Phase 1 的必答题，不在这批里顺手改（S1 的 p95 全程在本进程已前台的乐观条件下测得，见 [S1 文档](./2026-11-25-native-shell-spike.md) 的"测量条件"）。
+
+**因此本轮纪律仍然是：按 Esc 之后先看一眼目标窗口**。只是原因从"会静默写入"变成"焦点不会自动回来"，代价从丢字降为多按一下。
+
+bench 侧也加了牙齿：`--bench` 每次 park 后读一次焦点，`---FOCUS---` 段输出 `parks` 与 `left_focus_in_panel`，**非 0 直接 exit 2**，不再靠人工看一眼。本次 30 轮实测 `{"parks":30,"left_focus_in_panel":0}`，`shown p95=48.8 ms`（与 S1 的 48.9 持平，p99 48.8，预算 60/100 均 PASS）。
 
 ### 5.4 30 分钟节拍表（每种输入法一轮）
 
