@@ -53,7 +53,9 @@ cargo run --release -p app -- --store-hold 400 --store-root target/s3/root   # �
 
 S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** native 读写真副本；**L2** 把结果交给 **Tauri 那份代码**（`cargo test --lib -- --ignored` 里的 `notes::tests::reads_and_writes_a_database_produced_by_the_native_shell`）；**L3** 独立的 `sqlite3` CLI（另一套 SQLite build）做 `integrity_check` 与逐行逐字段比对。只有 L1 过时文档写"仅自读通过"，不许折算成"兼容"。
 
-文本岛的两个诊断示例（`cargo run -p hub-editor --example scroll_probe` / `--example undo_probe`）保留了"为什么必须拿焦点才滚动""RichEdit 怎么合并撤销单元"的实测结论，别再靠猜。
+文本岛的三个诊断示例（`cargo run -p hub-editor --example scroll_probe` / `--example undo_probe` / `--example esc_probe`）保留了"为什么必须拿焦点才滚动""RichEdit 怎么合并撤销单元""Esc 是按一次还是根本没被轮询"的实测结论，别再靠猜。
+
+`scripts/esc_poke.rs` 是同一件事在**真实 app** 上的版本：它按 PID 找到窗口、向 RichEdit 子窗口投一次 `WM_KEYDOWN`，再看窗口有没有移出屏幕——用来区分"按键没送到"和"送到了但没人读"。`rustc -O -o esc_poke.exe scripts/esc_poke.rs` 即可，不参与 workspace（新增 crate 会被架构门禁判为未登记）。
 
 ## 为什么这么切
 
