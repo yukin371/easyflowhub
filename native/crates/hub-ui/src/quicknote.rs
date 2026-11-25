@@ -16,9 +16,7 @@
 //! strip that says `GHOST` over an opaque window would be worse than one that
 //! says `100%`: it would make the feature look implemented in a screenshot.
 
-use egui::{
-    Align2, CornerRadius, FontId, Rect, Sense, Shape, Stroke, StrokeKind, Vec2,
-};
+use egui::{Align2, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
 use crate::theme::Palette;
 use hub_core::STRIP_HEIGHT;
@@ -26,7 +24,7 @@ use hub_core::STRIP_HEIGHT;
 /// Width reserved for each side slot, logical pixels.
 ///
 /// Wide enough for the widest left label (`GHOST` at 11 pt is ~34 px) plus the
-/// 12 px inset, and for a 24 px button on the right. The middle slot gets what is
+/// 12 px inset, and for a 28 px button on the right. The middle slot gets what is
 /// left, which is what keeps the three from overlapping at 150 px.
 pub const SIDE_SLOT_WIDTH: f32 = 44.0;
 
@@ -40,7 +38,11 @@ pub const TOOLS_PANEL_HEIGHT: f32 = 72.0;
 /// anyone being able to say why.
 pub const EDGE_PADDING: f32 = 12.0;
 
-const BUTTON_SIZE: f32 = 24.0;
+const BUTTON_SIZE: f32 = 28.0;
+/// Icon box inside a button, matching the shipped 16×16 SVGs.
+const ICON_SIZE: f32 = 16.0;
+/// The unit box the shipped icons are authored in (`viewBox="0 0 24 24"`).
+const ICON_VIEWBOX: f32 = 24.0;
 const GHOST_EPSILON: f32 = 0.005;
 const OPACITY_STEP: f32 = 0.2;
 
@@ -193,34 +195,25 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
             let tools = ui.interact(tools_rect, ui.id().with("tools"), Sense::click());
             let pin = ui.interact(pin_rect, ui.id().with("pin"), Sense::click());
 
-            let tools_hot = tools.hovered() || state.tools_open;
             let painter = ui.painter();
-            paint_button(painter, tools_rect, tools_hot, palette);
-            paint_tools_glyph(
-                painter,
-                tools_rect,
-                if tools_hot {
-                    palette.ink
-                } else {
-                    palette.ink_subtle
-                },
-            );
-            // Pinned is a state, hover is a hint: the button keeps its pressed look
-            // while the window is on top, which is the only feedback the user gets
-            // that the pin took effect.
-            let pin_hot = pin.hovered();
-            paint_button(painter, pin_rect, state.pinned || pin_hot, palette);
-            paint_pin_glyph(
+            // Neither button paints a background, in any state: the shipped
+            // toolbar gives these a `background: none` and no border, and a
+            // rounded plate behind a 16 px glyph reads as a different control.
+            paint_tools_glyph(painter, tools_rect, glyph_color(palette, state.opacity));
+            paint_bookmark(
                 painter,
                 pin_rect,
                 if state.pinned {
                     palette.accent
-                } else if pin_hot {
-                    palette.ink
                 } else {
                     palette.ink_subtle
                 },
+                state.pinned,
             );
+
+            if tools.hovered() || pin.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
 
             if tools.clicked() {
                 actions.toggle_tools = true;
@@ -297,16 +290,24 @@ fn right_button_rect(strip: Rect) -> Rect {
     )
 }
 
-fn paint_button(painter: &egui::Painter, rect: Rect, active: bool, palette: Palette) {
-    if active {
-        painter.rect_filled(rect, CornerRadius::same(7), palette.panel);
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(7),
-            Stroke::new(1.0, palette.border),
-            StrokeKind::Inside,
-        );
-    }
+/// The `color-mix(in srgb, … 72%, transparent)` the shipped toolbar paints its
+/// icons with, including its `0.32` floor.
+///
+/// The floor is not arbitrary: at ghost opacity the icons must stay visible
+/// enough to be clicked, which is why the shipped toolbar never lets them fall
+/// below roughly a third no matter how transparent the window gets.
+fn glyph_color(palette: Palette, opacity: f32) -> egui::Color32 {
+    let alpha = (opacity.clamp(0.0, 1.0) * 0.72).max(0.32);
+    let ink = palette.ink;
+    // Alpha, not `gamma_multiply`: that one scales RGB as well, which darkens
+    // the glyph instead of letting the strip show through — on this near-black
+    // panel the difference is a visibly muddier icon.
+    egui::Color32::from_rgba_unmultiplied(
+        ink.r(),
+        ink.g(),
+        ink.b(),
+        (alpha * 255.0).round() as u8,
+    )
 }
 
 /// Three dots, drawn instead of typed.
@@ -320,39 +321,139 @@ fn paint_tools_glyph(painter: &egui::Painter, rect: Rect, color: egui::Color32) 
     }
 }
 
-/// A thumbtack: cap, body, point.
+/// The always-on-top icon, traced from the shipped toolbar rather than redrawn.
 ///
-/// Nothing in the emoji set survives the trip through egui's font stack intact —
-/// `📌` came out as a white box with a black smear, which is what "that square in
-/// the corner" was. Three shapes cost less than one font lookup and cannot fall
-/// back to a different family.
-fn paint_pin_glyph(painter: &egui::Painter, rect: Rect, color: egui::Color32) {
-    let center = rect.center();
-    painter.circle_filled(center + Vec2::new(0.0, -3.2), 3.5, color);
-    painter.add(Shape::convex_polygon(
-        vec![
-            center + Vec2::new(-3.5, -1.4),
-            center + Vec2::new(3.5, -1.4),
-            center + Vec2::new(1.3, 3.0),
-            center + Vec2::new(-1.3, 3.0),
-        ],
-        color,
-        Stroke::NONE,
-    ));
-    painter.add(Shape::convex_polygon(
-        vec![
-            center + Vec2::new(-1.3, 2.6),
-            center + Vec2::new(1.3, 2.6),
-            center + Vec2::new(0.0, 6.6),
-        ],
-        color,
-        Stroke::NONE,
-    ));
+/// `QuickNoteToolbar.tsx` renders `M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z`
+/// at 16×16 with a 2-unit stroke, `fill:none` while floating and
+/// `fill:currentColor` while pinned. It is a **bookmark, not a thumbtack** — the
+/// earlier `📌` was a different metaphor that egui's font stack could not even
+/// draw (it came out as a white box). The 2-unit corner radius and the 3.5-unit
+/// notch are what keep this legible at 16 px, so they are copied as numbers
+/// instead of being re-derived.
+fn paint_bookmark(painter: &egui::Painter, rect: Rect, color: egui::Color32, filled: bool) {
+    let box_rect = Rect::from_center_size(rect.center(), Vec2::splat(ICON_SIZE));
+    let outline = bookmark_outline(box_rect);
+    let stroke = Stroke::new(2.0 * ICON_SIZE / ICON_VIEWBOX, color);
+
+    if filled {
+        // egui's fill tessellator is only defined for convex paths, and the notch
+        // at (12, 17.5) is a reflex vertex. Three convex pieces sharing the two
+        // edges that meet there cover exactly the same area.
+        let mut body = outline[..9].to_vec();
+        body.push(bookmark_point(box_rect, 19.0, 17.5));
+        body.push(bookmark_point(box_rect, 5.0, 17.5));
+        painter.add(Shape::convex_polygon(body, color, Stroke::NONE));
+        painter.add(Shape::convex_polygon(
+            vec![
+                bookmark_point(box_rect, 5.0, 17.5),
+                bookmark_point(box_rect, 12.0, 17.5),
+                bookmark_point(box_rect, 5.0, 21.0),
+            ],
+            color,
+            Stroke::NONE,
+        ));
+        painter.add(Shape::convex_polygon(
+            vec![
+                bookmark_point(box_rect, 19.0, 17.5),
+                bookmark_point(box_rect, 19.0, 21.0),
+                bookmark_point(box_rect, 12.0, 17.5),
+            ],
+            color,
+            Stroke::NONE,
+        ));
+    }
+
+    // `strokeLinejoin="round"`: egui butts its segments together, which would
+    // leave a notch at the two sharp corners at this stroke width. A dot per
+    // vertex is that join, and it costs one triangle each.
+    for point in &outline {
+        painter.circle_filled(*point, stroke.width / 2.0, color);
+    }
+    painter.add(Shape::closed_line(outline, stroke));
+}
+
+/// The bookmark's vertices, in `ICON_VIEWBOX` units, mapped into `rect`.
+///
+/// The two top corners are quarter arcs of radius 2 centred at (7, 5) and
+/// (17, 5); four segments each is below one device pixel of error at 16 px.
+fn bookmark_outline(rect: Rect) -> Vec<Pos2> {
+    const RADIUS: f32 = 2.0;
+    let mut points = Vec::with_capacity(12);
+    points.push(bookmark_point(rect, 5.0, 5.0));
+    for (centre_x, start_degrees) in [(7.0_f32, 180.0_f32), (17.0, 270.0)] {
+        for step in 1..=4 {
+            let degrees = start_degrees + 90.0 * step as f32 / 4.0;
+            let radians = degrees.to_radians();
+            points.push(bookmark_point(
+                rect,
+                centre_x + RADIUS * radians.cos(),
+                5.0 + RADIUS * radians.sin(),
+            ));
+        }
+    }
+    points.push(bookmark_point(rect, 19.0, 21.0));
+    points.push(bookmark_point(rect, 12.0, 17.5));
+    points.push(bookmark_point(rect, 5.0, 21.0));
+    points
+}
+
+fn bookmark_point(rect: Rect, x: f32, y: f32) -> Pos2 {
+    let unit = rect.width() / ICON_VIEWBOX;
+    rect.min + Vec2::new(x, y) * unit
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pin_is_the_shipped_bookmark_not_a_thumbtack() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::splat(ICON_SIZE));
+        let outline = bookmark_outline(rect);
+        // `M5 5` + four samples per arc + `L19 21`, `L12 17.5`, `L5 21`.
+        assert_eq!(outline.len(), 12);
+        let unit = ICON_SIZE / ICON_VIEWBOX;
+        assert!(
+            (outline[0] - egui::pos2(5.0 * unit, 5.0 * unit)).length() < 1e-4,
+            "first vertex must be the path's M5 5, got {:?}",
+            outline[0]
+        );
+        // The notch is what makes it a bookmark. Dropping it would leave a
+        // plain rectangle that still passes a "an icon was drawn" check.
+        let notch = bookmark_point(rect, 12.0, 17.5);
+        assert!(outline.iter().any(|point| (*point - notch).length() < 1e-4));
+    }
+
+    #[test]
+    fn the_bookmark_fits_inside_its_icon_box() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::splat(ICON_SIZE));
+        let half_stroke = ICON_SIZE / ICON_VIEWBOX;
+        for point in bookmark_outline(rect) {
+            assert!(
+                rect.shrink(half_stroke).contains(point),
+                "{point:?} leaves the 16 px box {rect:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_icons_are_translucent_but_never_fade_out() {
+        let palette = Palette::quick();
+        // `color-mix(in srgb, --quick-text 72%, transparent)` at full opacity.
+        assert_eq!(glyph_color(palette, 1.0).a(), 184);
+        // The shipped `alphaAtLeast(…, 0.32, …)`: a ghost note keeps clickable
+        // icons even at 0%.
+        assert_eq!(glyph_color(palette, 0.0).a(), 82);
+        // The hue must survive: `Color32` stores premultiplied, so the check is
+        // on the unmultiplied value, with one step of slack for the round trip.
+        // Using `gamma_multiply` here instead would have scaled the RGB and made
+        // the icon darker than the ink it is supposed to be.
+        let [r, g, b, _] = glyph_color(palette, 1.0).to_srgba_unmultiplied();
+        let expected = [palette.ink.r(), palette.ink.g(), palette.ink.b()];
+        for (got, want) in [r, g, b].into_iter().zip(expected) {
+            assert!(got.abs_diff(want) <= 1, "hue shifted: {got} vs {want}");
+        }
+    }
 
     #[test]
     fn three_slots_never_overlap_at_the_minimum_width() {
