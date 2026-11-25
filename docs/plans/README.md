@@ -16,10 +16,14 @@
 按这个顺序读：
 
 1. [../roadmap.md](../roadmap.md) 的 `Native Runtime Track`
-2. [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)（**已完成**：S1 原生壳，热唤起 p95 48.9 ms；下一步 S2 编辑器）
-3. [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)（已完成：P0.5 生命周期 + 计时契约，提供现状基线）
-4. [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)（总设计）
-5. [../decisions/ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
+2. [2026-11-25-g0-review.md](./2026-11-25-g0-review.md)（**已批准 2026-11-25**：G0 有条件通过，锁定 egui/eframe 0.31，退出条件 C1–C5）
+3. [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)（**已完成**：S1 原生壳，热唤起 p95 48.9 ms）
+4. [2026-11-25-richedit-island-spike.md](./2026-11-25-richedit-island-spike.md)（**已完成**：S2 文本岛，键入 p95 4.95 ms，2 项人工未测）
+5. [2026-11-25-notes-db-compat-spike.md](./2026-11-25-notes-db-compat-spike.md)（**已完成**：S3 数据兼容，39 项检查，4 项未测）
+6. [2026-11-25-native-architecture-gate-spike.md](./2026-11-25-native-architecture-gate-spike.md)（**已完成**：S4 门禁自检，23 项 + 8 次变异）
+7. [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)（已完成：P0.5 生命周期 + 计时契约，提供现状基线）
+8. [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)（总设计）
+9. [../decisions/ADR-0009-windows-native-runtime.md](../decisions/ADR-0009-windows-native-runtime.md)
 
 ### 扩展平台 / VSCode 风格模块化
 
@@ -59,9 +63,13 @@
 
 ## Active Plans
 
-- [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)：S1 原生壳 spike 的设计与验收标准（预创建窗口 / 预热序列 / 光标锚定 / 热唤起 p95 ≤ 60 ms 硬门槛），分 A/B/C 三批实施。
+- [2026-11-25-g0-review.md](./2026-11-25-g0-review.md)：**G0 阶段门禁评审（已批准）**。四项 spike 的得分板、15 个未测项按"能否推翻栈选择"分级、4 个决定的裁决（内存 130 MB 接受但 65 不改 / IME 转 Phase 1 第一周硬性 / WAL 保持 delete / 有条件进入 Phase 1），含现网 Tauri 内存实测与三口径说明。
+- [2026-11-25-native-shell-spike.md](./2026-11-25-native-shell-spike.md)：S1 原生壳 spike（已完成：热唤起 p95 48.9 ms，3 项未测）。
+- [2026-11-25-richedit-island-spike.md](./2026-11-25-richedit-island-spike.md)：S2 文本岛 spike（已完成：键入 p95 4.95 ms，2 项人工未测）。
+- [2026-11-25-notes-db-compat-spike.md](./2026-11-25-notes-db-compat-spike.md)：S3 数据兼容 spike（已完成：39 项检查，4 项未测）。
+- [2026-11-25-native-architecture-gate-spike.md](./2026-11-25-native-architecture-gate-spike.md)：S4 架构门禁 spike（已完成：23 项自检 + 8 次变异，补 3 个真实缺口）。
 - [2026-11-24-window-lifecycle-and-latency-contract.md](./2026-11-24-window-lifecycle-and-latency-contract.md)：P0.5 已交付（静置 600 → 262 MB、Tauri 热唤起基线 87/101/130 ms）。
-- [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)：WebView → Windows 原生单进程的重构设计（ADR-0009 `accepted`，分阶段实施）。含需求分档、`lite` 低端降级、选型矩阵、架构门禁、Phase 0–4 与 G0–G4；Phase 0 未过门禁前不写产品代码。
+- [2026-11-24-native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md)：WebView → Windows 原生单进程的重构设计（ADR-0009 `accepted`，G0 已通过，分阶段实施）。含需求分档、`lite` 低端降级、选型矩阵、架构门禁、Phase 0–4 与 G0–G4；Phase 0 已完成，当前在 Phase 1。
 - [2026-10-19-architecture-and-file-size-review.md](./2026-10-19-architecture-and-file-size-review.md)：架构审查证据、大文件职责拆分、数据完整性风险和分阶段验收；审查已完成，修复待实施。
 - [2026-10-18-v0.2.0-checkpoint-summary.md](./2026-10-18-v0.2.0-checkpoint-summary.md)
 - [2026-10-16-v0.2.0-product-delivery-plan.md](./2026-10-16-v0.2.0-product-delivery-plan.md)
