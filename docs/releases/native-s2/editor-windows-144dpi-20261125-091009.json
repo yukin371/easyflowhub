@@ -1,0 +1,142 @@
+{
+    "kind":  "native-s2-editor-archive",
+    "label":  "windows-144dpi",
+    "samples":  200,
+    "timestamp":  "2026-11-25T09:10:09.2081969+08:00",
+    "budget":  {
+                   "p95":  16,
+                   "p99":  25
+               },
+    "checks":  {
+                   "class is RICHEDIT50W":  true,
+                   "text colour painted":  true,
+                   "empty doc has no ink":  true,
+                   "caret scrolled (10k)":  true,
+                   "short doc does not scroll":  true,
+                   "rect moves on change":  true,
+                   "rect idle when unchanged":  true,
+                   "undo restores text":  true,
+                   "redo restores text":  true,
+                   "undo stack has depth":  true,
+                   "Esc reaches shell":  true,
+                   "Tab inserts, no focus loss":  true,
+                   "unhandled key falls through":  true,
+                   "IME context present":  true,
+                   "10k load \u003c 200 ms":  true,
+                   "10k paste \u003c 150 ms":  true,
+                   "burst \u003c 400 ms":  true
+               },
+    "failed":  [
+
+               ],
+    "sample":  {
+                   "kind":  "native-s2-editor",
+                   "at":  "unix:1795569008",
+                   "class":  "RICHEDIT50W",
+                   "limit":  2147483632,
+                   "face":  "Microsoft YaHei UI",
+                   "height_twips":  330,
+                   "color":  "0xF7EEE8",
+                   "pixels":  {
+                                  "samples":  19392,
+                                  "dominant":  "0x2D2521",
+                                  "share":  0.9849,
+                                  "distinct":  39,
+                                  "ink_empty":  0.0000,
+                                  "ink_typed":  0.0151,
+                                  "fg_empty":  0,
+                                  "fg_typed":  135
+                              },
+                   "load_ms":  {
+                                   "doc_1k":  16.30,
+                                   "doc_10k":  11.54,
+                                   "paste_10k":  14.44
+                               },
+                   "paste_chars":  10000,
+                   "scroll":  {
+                                  "lines":  589,
+                                  "small":  0,
+                                  "large":  569,
+                                  "offset_y":  31295
+                              },
+                   "resize":  {
+                                  "same_moved":  false,
+                                  "changed_moved":  true,
+                                  "restored_moved":  true
+                              },
+                   "undo":  {
+                                "coalesced":  1,
+                                "grouped":  2,
+                                "steps":  1,
+                                "ok":  true
+                            },
+                   "redo":  {
+                                "steps":  1,
+                                "ok":  true
+                            },
+                   "keys":  {
+                                "esc":  true,
+                                "tab":  true,
+                                "fallthrough":  true,
+                                "imm":  true
+                            },
+                   "burst_ms":  203.27,
+                   "doc_1k":  {
+                                  "n":  200,
+                                  "insert_us":  {
+                                                    "p50":  2141,
+                                                    "p95":  4411,
+                                                    "p99":  6911
+                                                },
+                                  "repaint_us":  {
+                                                     "p50":  1158,
+                                                     "p95":  1839,
+                                                     "p99":  2387
+                                                 },
+                                  "type_us":  {
+                                                  "min":  2078,
+                                                  "p50":  3319,
+                                                  "p95":  5695,
+                                                  "p99":  7556,
+                                                  "max":  13828
+                                              },
+                                  "compose_us":  {
+                                                     "valid":  true,
+                                                     "n":  20,
+                                                     "p50":  5361,
+                                                     "p95":  9134
+                                                 }
+                              },
+                   "doc_10k":  {
+                                   "n":  100,
+                                   "insert_us":  {
+                                                     "p50":  2311,
+                                                     "p95":  4757,
+                                                     "p99":  6385
+                                                 },
+                                   "repaint_us":  {
+                                                      "p50":  1148,
+                                                      "p95":  1699,
+                                                      "p99":  2026
+                                                  },
+                                   "type_us":  {
+                                                   "min":  2305,
+                                                   "p50":  3455,
+                                                   "p95":  5668,
+                                                   "p99":  7014,
+                                                   "max":  7036
+                                               },
+                                   "compose_us":  {
+                                                      "valid":  true,
+                                                      "n":  11,
+                                                      "p50":  5682,
+                                                      "p95":  9750
+                                                  }
+                               },
+                   "budget":  {
+                                  "p95":  16,
+                                  "p99":  25
+                              },
+                   "pass":  true
+               }
+}
