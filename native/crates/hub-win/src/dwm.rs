@@ -32,6 +32,22 @@ fn set_i32(hwnd: HWND, attribute: i32, value: i32) -> bool {
     hr >= 0
 }
 
+/// Turn the Mica backdrop on or off after the window exists.
+///
+/// Ghost mode needs it off: Mica paints a system-provided backplate *behind* the
+/// window's surface, so a colour-keyed (fully transparent) pixel shows the blurred
+/// wallpaper instead of disappearing — measured 2026-11-25, the body stayed at
+/// `(207, 210, 209)` over a white desktop with Mica on, and became `(252, 254, 252)`
+/// (the desktop value, byte for byte) with it off. Nothing is lost at other
+/// opacities: an opaque panel covers the backplate entirely.
+pub fn set_mica(hwnd: isize, on: bool) -> bool {
+    set_i32(
+        hwnd as HWND,
+        DWMWA_SYSTEMBACKDROP_TYPE,
+        if on { DWMSBT_MAINWINDOW } else { DWMSBT_NONE },
+    )
+}
+
 /// Apply the shell chrome and report what stuck.
 pub fn apply(hwnd: isize, lite: bool) -> Vec<&'static str> {
     let hwnd = hwnd as HWND;
