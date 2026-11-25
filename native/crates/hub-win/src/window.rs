@@ -25,6 +25,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Far enough that no virtual desktop (including a 4-monitor 4K wall) reaches it.
+///
+/// Measured on Win11 26300: asking for -30000 lands at -20000, so the OS clamps
+/// the coordinate. The intent (off every monitor) survives the clamp, but the
+/// number that ends up in `GetWindowRect` is -20000, not this constant -- do not
+/// assert on the constant when checking a parked window.
 const PARKED_X: i32 = -30_000;
 const PARKED_Y: i32 = -30_000;
 
