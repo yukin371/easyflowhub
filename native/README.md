@@ -1,6 +1,6 @@
-# native/ — Windows 原生运行时（S1 + S2 spike）
+# native/ — Windows 原生运行时（S1 + S2 + S3 spike）
 
-这是 [Native Runtime 重构](../docs/plans/2026-11-24-native-runtime-redesign.md) 的可运行切片：[S1 验收](../docs/plans/2026-11-25-native-shell-spike.md)（热唤起 p95 48.9 ms）与 [S2 验收](../docs/plans/2026-11-25-richedit-island-spike.md)（键入 p95 4.95 ms）的实体。**它不是产品代码**：它回答两个问题——单进程 + 预创建窗口，热唤起能不能压到 p95 ≤ 60 ms；以及系统文本控件贴在 egui 自绘面板里，键入能不能压到 p95 ≤ 16 ms。
+这是 [Native Runtime 重构](../docs/plans/2026-11-24-native-runtime-redesign.md) 的可运行切片：[S1 验收](../docs/plans/2026-11-25-native-shell-spike.md)（热唤起 p95 48.9 ms）、[S2 验收](../docs/plans/2026-11-25-richedit-island-spike.md)（键入 p95 4.95 ms）与 [S3 验收](../docs/plans/2026-11-25-notes-db-compat-spike.md)（直读直写 `notes.db`，39 项检查）的实体。**它不是产品代码**：它回答三个问题——单进程 + 预创建窗口，热唤起能不能压到 p95 ≤ 60 ms；系统文本控件贴在 egui 自绘面板里，键入能不能压到 p95 ≤ 16 ms；以及脱离 Tauri 之后，现有 `notes.db` 还读不读得动、写下去旧版本还认不认。
 
 ## 结构
 
@@ -8,13 +8,13 @@
 native/
 ├─ Cargo.toml            workspace（app + 四个 crate）
 ├─ app/                  组合根：事件循环、热键线程接线、bench 驱动
-├─ crates/hub-core/      纯逻辑：布局夹紧、列数、设置、岛几何（无平台依赖，有单测）
+├─ crates/hub-core/      纯逻辑：布局夹紧、列数、设置、岛几何 + `store`（notes.db 读写，无平台依赖，有单测）
 ├─ crates/hub-win/       win32：热键、显示器缓存、DWM、进程探针、窗口放置
 ├─ crates/hub-ui/        egui：调色板、字体、面板绘制与预热
 └─ crates/hub-editor/    win32：RICHEDIT50W 文本岛（子窗口）、测量与像素证据
 ```
 
-依赖方向由 `scripts/check-native-architecture.mjs` 强制（`app → hub-ui/hub-win/hub-core/hub-editor`，`hub-ui → hub-core`，`hub-editor → hub-win/hub-core`，其余无内部边），并禁止 `hub-editor` 出现 `egui::`——文本岛只吃物理像素矩形、只吐文本，布局决策留在 app 侧。
+依赖方向由 `scripts/check-native-architecture.mjs` 强制（`app → hub-ui/hub-win/hub-core/hub-editor`，`hub-ui → hub-core`，`hub-editor → hub-win/hub-core`，其余无内部边），并禁止 `hub-editor` 出现 `egui::`——文本岛只吃物理像素矩形、只吐文本，布局决策留在 app 侧。**持久化只在 `hub-core::store`**（设计 §5.7 规则 3）：UI 不持有连接、不拼 SQL，`rusqlite` 也只有这一个 crate 依赖。
 
 ## 跑起来
 
@@ -27,13 +27,22 @@ cargo run --release -p app -- --bench 200 --scale 2.0   # 模拟 200%
 cargo run --release -p app -- --editor             # 交互模式：面板里带 RichEdit 正文
 cargo run --release -p app -- --editor-bench 200   # 键入分布 + 像素/滚动/撤销证据
 cargo run --release -p app                         # 交互模式：Ctrl+Shift+Space 开关面板
+
+# S3：读真实库（只读），再在副本上写探针
+cargo run --release -p app -- --store-bench
+cargo run --release -p app -- --store-bench --store-root target/s3/root --store-write --store-artifacts target/s3/art
+cargo run --release -p app -- --store-hold 400 --store-root target/s3/root   # 持锁探针（并发用）
 ```
 
 `--bench` 用 `PostThreadMessageW(WM_HOTKEY)` 触发**与真实按键相同的处理路径**（去抖 → 取光标 → 命中缓存布局 → 唤醒 → 绘制），所以 200 轮不需要人手连按。退出码：`0` 达标，`2` 超预算，`3` 热键注册失败。
 
 `--editor-bench` 在被停靠（隐藏）的窗口上跑完整证据：类名/字符格式回读、`WM_PRINTCLIENT` 像素采样、滚动、resize 跟随、撤销/重做、按键归属，最后是两组键入分布（1k / 10k 文档）。它**不需要可见窗口，也不截屏**，因此可以在无人值守的机器上跑。退出码：`0` 达标，`2` 超预算。
 
-门禁侧：`scripts/measure-native-latency.ps1`（S1）与 `scripts/measure-native-editor.ps1`（S2）各自解析输出、判预算 + 结构证据、归档到 `docs/releases/native-s1|s2/`；`run-smoke.ps1 -NativeBench` 会在 smoke 里跑快速版并写到临时目录，避免污染归档。
+`--store-bench` 不带 `--store-write` 时是只读的；带 `--store-write` 时会**拒绝**指向真实 app data 目录（`%APPDATA%\com.yukin.easyflowhub`），必须先复制一份。探针行 id 固定为 `s3-probe-*`，每次运行先清掉自己上次留下的行，所以计数差值在重复运行时不变。退出码：`0` 自检通过，`2` 自检失败。
+
+门禁侧：`scripts/measure-native-latency.ps1`（S1）、`scripts/measure-native-editor.ps1`（S2）、`scripts/measure-native-store.ps1`（S3）各自解析输出、判预算 + 结构证据、归档到 `docs/releases/native-s1|s2|s3/`；`run-smoke.ps1 -NativeBench` 会在 smoke 里跑快速版并写到临时目录，避免污染归档。
+
+S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** native 读写真副本；**L2** 把结果交给 **Tauri 那份代码**（`cargo test --lib -- --ignored` 里的 `notes::tests::reads_and_writes_a_database_produced_by_the_native_shell`）；**L3** 独立的 `sqlite3` CLI（另一套 SQLite build）做 `integrity_check` 与逐行逐字段比对。只有 L1 过时文档写"仅自读通过"，不许折算成"兼容"。
 
 文本岛的两个诊断示例（`cargo run -p hub-editor --example scroll_probe` / `--example undo_probe`）保留了"为什么必须拿焦点才滚动""RichEdit 怎么合并撤销单元"的实测结论，别再靠猜。
 
@@ -55,7 +64,11 @@ cargo run --release -p app                         # 交互模式：Ctrl+Shift+S
 | 首帧不是"直接 blit 上一帧纹理" | eframe 不暴露目标帧缓冲 | 实测量不足 60 ms 时改 `egui_glow` 手动循环接管 swap + blit |
 | 面板内容是静态样例 | 只为预热真实字符集与布局，不代表最终 UI | Phase 2 换成真实动作/最近项 |
 | 无托盘、无中键钩子 | 都不在 60 ms 路径上，属 T0 parity | Phase 1 与功能一起落地 |
-| 文本岛正文是内存文档、无保存 | 存储布局属 S3 | Phase 2 接 `notes.db` |
+| 文本岛正文是内存文档、无保存 | 存储布局属 S3 | Phase 2 接 `notes.db`（S3 已验通，接线在 Phase 2） |
+| `store` 没有 schema 版本号，只有与 Tauri 同文的幂等列探测 | 现库 `user_version = 0`，单方面打版本号会让两套迁移体系分叉 | Phase 2 统一迁移器与版本号，原生与 Tauri 共用一份 |
+| `store` 只覆盖 notes / settings / 附件的写入，不含 Inbox 完整 capture 路径 | S3 只回答"文件还读不读得动"，capture 是产品逻辑 | Phase 2 随 Inbox 迁移一起搬 |
+| `store` 保持 `journal_mode = delete`，不切 WAL | 切 WAL 会改文件头并留 `-wal`/`-shm`，影响备份/同步/"复制 db"的语义，属产品级决定 | 若要切，先写 ADR 并复验备份链路；并发已有 `IMMEDIATE` + 5 s `busy_timeout` 兜底 |
+
 | 文本岛无 Markdown 装饰、无图片粘贴 | 属 P3；装饰画在文本控件之上，不改变 S2 的结论 | P3 |
 | 输入法只验到 `ImmGetContext` 非空 | 三种输入法各 30 分钟需要人 | RC 前人工验收，结果回填 S2 文档 §9 |
 

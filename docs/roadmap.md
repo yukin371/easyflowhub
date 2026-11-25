@@ -144,7 +144,17 @@
 
 ### Recent Progress
 
-- `2026-11-25` **S2 通过：文本岛键入 p95 4.95 ms（阈值 16，余量 11）**。设计与验收标准先落在 [plans/2026-11-25-richedit-island-spike.md](./plans/2026-11-25-richedit-island-spike.md)，再按 A/B/C 三批实现并逐条验收。**G0 仍未过**：S3 / S4 未做。
+- `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [plans/2026-11-25-notes-db-compat-spike.md](./plans/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。**G0 仍未过**：只剩 S4（门禁自检）。
+  - **双向兼容用真代码验，不自证**：native 写入后，读它的是 **Tauri 那份代码**（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽出的连接级函数），不是复制一遍 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，另一套 build，原生侧 bundled 是 3.46.0）与我们的读者对 **42 行逐字段一致**（`rows-identical 42`）。反向也验了：Tauri 写 → native 读回同一内容。
+  - **"无 schema 破坏"是可 diff 的**：`sqlite_master` 全量 dump 写前写后**逐字节相同**；`journal_mode=delete` / `user_version=0` / `page_size=4096` / `encoding=UTF-8` 四项不动；`integrity_check` 在 native 写后、Tauri 写后、独立 CLI 三次全 `ok`。**刻意不切 WAL**：那会改文件头 write version 并留下 `-wal`/`-shm`，属产品级决定（备份/同步/"复制 db"的语义都变），不该由 spike 替用户定。
+  - **真实数据不是造的**：live 库 `143,360 B`，**40 条笔记 / 9 个设置 / 待办箱**全部读出，字段与 CLI 逐项相等；排序（置顶优先 + `updated_at` 降序）与产品查询口径一致。
+  - **并发是实测的**：另一进程持 `IMMEDIATE` 写锁 400 ms 时本进程写入被 `busy_timeout` 吸收并成功；持锁 7 s（超 5 s 超时）时本进程**明确失败**（`database is locked`）、无半行、`integrity_check` 仍 `ok`、持锁方的行还在。
+  - **G-1**：live 库字节数 / sha256 / mtime 三项写前写后完全相同——全程只碰 `native/target/s3-gate-<stamp>/root/notes.db` 副本；`--store-bench --store-write` 还会**拒绝**指向真实 app data 目录（代码约束，不是操作纪律）。
+  - **4 个真实发现**：①`autostart` 是 `{"enabled":true}` **对象不是布尔**（设计时按 bool 写，实测纠正）；②`notes` 表物理列序因 `ALTER TABLE` 追加而不同于建表文本，`INSERT ... VALUES` 会把 `tags` 写进 `created_at` 槽——静默损坏，全部语句显式列名；③PS 5.1 `Start-Process` 在环境变量大小写重复（`HTTPS_PROXY`/`https_proxy`）时直接抛异常，并发测试改用 .NET Process API；④PS 5.1 把原生 stderr 变成 `ErrorRecord`，`-is [string]` 过滤会吞掉 `database is locked`，门禁因此差点把"被拒绝"判成"失败"。
+  - **未测（4 项，明确列出）**：22 389 个既有附件的批量可读性（只验契约与新写入文件）、待办 parser 完整口径（只看 `- [ ]`/`- [x]` 行数）、随机并发压力、Win10 双系统。
+  - **工具化**：`--store-bench [--store-write] [--store-hold <ms>]` + `scripts/measure-native-store.ps1`（L1 native / L2 Tauri 真代码 / L3 独立 CLI / 并发 / G-1，一条命令 `RESULT: PASS`）；`cargo test --workspace` 43 → **58 项**；样本归档 `docs/releases/native-s3/`（两次独立运行逐项相同）。
+
+- `2026-11-25` **S2 通过：文本岛键入 p95 4.95 ms（阈值 16，余量 11）**。设计与验收标准先落在 [plans/2026-11-25-richedit-island-spike.md](./plans/2026-11-25-richedit-island-spike.md)，再按 A/B/C 三批实现并逐条验收。（当时 S3 / S4 未做。）
   - **工作区**：新增 `hub-editor` crate（第五个），`check-native-architecture.mjs` → `passed (5 crates)`；`cargo test --workspace` 27 → **43 项**。CI 的 `native-crates` job 自动覆盖新 crate。
   - **承载方式**：`RICHEDIT50W`（`Msftedit.dll`）作为 egui 面板的**子 HWND**，矩形由布局给出、按物理像素对齐；父窗口补 `WS_CLIPCHILDREN`，这是"GL 不盖子控件"的唯一保证。`hub-editor` 只吃 `PixelRect`、只吐文本，门禁禁止出现 `egui::`。
   - **实测**（n=200 @1k / n=100 @10k，150% 单屏，三次运行）：`type` p50 **2.9** / p95 **4.95** / p99 **6.33** / max 6.8 ms；10k 文档 p95 **5.09 ms**，比值 **0.95–1.07**（**曲线是平的，不是线性上涨**——插入成本与文档长度无关，这是 S2 最想确认的一件事）。10k 加载 8–11 ms、粘贴 13–14 ms、连发 200 字符 203–225 ms。`compose` 仅报告 p50 4.9–7.5 ms。
@@ -350,7 +360,7 @@
 
 ## Native Runtime Track（`accepted`，ADR-0009）
 
-> 状态：**S1 壳 + S2 文本岛已完成（2026-11-25），G0 未过**。分阶段推进；Phase 0 先补齐度量与四项 spike，过 G0 后开始 Phase 1。剩余 S3 数据兼容 / S4 门禁自检。
+> 状态：**S1 壳 + S2 文本岛 + S3 数据已完成（2026-11-25），G0 未过**。分阶段推进；Phase 0 先补齐度量与四项 spike，过 G0 后开始 Phase 1。剩余 **S4 门禁自检**。
 >
 > - 设计：[plans/2026-11-24-native-runtime-redesign.md](./plans/2026-11-24-native-runtime-redesign.md)
 > - 决策：[decisions/ADR-0009-windows-native-runtime.md](./decisions/ADR-0009-windows-native-runtime.md)
@@ -388,7 +398,7 @@
 
 | Phase | Status | Goal | Gate |
 |---|---|---|---|
-| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ ~~计时契约~~（已完成）+ ~~S1 壳（含预热路径）~~（**已完成，p95 48.9 ms，见 §7.1**）+ ~~S2 编辑器~~（**已完成，键入 p95 4.95 ms，2 项人工未测**）+ S3 数据 / S4 门禁；延迟是重点，RDP 回环可选 | `G0` |
+| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ ~~计时契约~~（已完成）+ ~~S1 壳（含预热路径）~~（**已完成，p95 48.9 ms，见 §7.1**）+ ~~S2 编辑器~~（**已完成，键入 p95 4.95 ms，2 项人工未测**）+ ~~S3 数据~~（**已完成，39 项检查，双向兼容 + 无 schema 破坏**）+ S4 门禁；延迟是重点，RDP 回环可选 | `G0` |
 | P0.5. 先行止血 | `[done]` 2026-11-24 | 现版本窗口生命周期改造：**manager 不预创建 + 关闭即销毁**、临时窗口关闭即销毁（launcher 仍预创建，不动主门禁）；**修复开机自启动失效**（偏好持久化 + 启动对账 + 写入校验）。实测静置 600 → 262–283 MB（−53% ~ −56%） | — |
 | P1. 常驻壳 | `[pending]` | 主题 token、托盘、热键、**预创建 Launcher**、快速笔记、待办卡片、`lite` 降级；Manager 暂由 Tauri 按需启动 | `G1` |
 | P2. 工作台 | `[pending]` | 笔记 / 收集箱 / 待办 / 脚本 / 设置 / 回收站原生，低频面板只留最小入口 | `G2` |
