@@ -105,7 +105,7 @@ launcher 窗口 (eframe / glow, WS_CLIPCHILDREN)
 
 0. **`repaint` 为什么要强制重绘。** 实测：`UpdateWindow` 紧跟在 `WM_CHAR` 之后耗时 0 µs——RichEdit 在消息内部就同步画完了，没有脏区可供"刷新"，所以"插入 vs 绘制"在自然路径上根本无法分离。门禁因此改为 `insert` + 一次显式 `InvalidateRect` + `UpdateWindow` 的全量重绘：两段有重叠，**这个和是真实成本的上界**，对门禁而言是安全方向。
 
-1. **合成不计入门禁**。DWM 合成是 60 Hz 的一帧（16.7 ms），`DwmFlush` 的返回值必然落在 `[paint, paint + 16.7]`，把相位等待算进去等于要求"比一个刷新周期还快"——这条指标就永远不可能达标，指标本身失去意义。因此门禁量**应用控制的部分**，合成单列报告（`compose` 的 p95 落在 17–20 ms 是正常的）。
+1. **合成不计入门禁**。DWM 合成是 60 Hz 的一帧（16.7 ms），`DwmFlush` 的返回值必然落在 `[repaint, repaint + 16.7]`，把相位等待算进去等于要求"比一个刷新周期还快"——这条指标就永远不可能达标，指标本身失去意义。因此门禁量**应用控制的部分**，合成单列报告（实测 p50 4.9–7.5 ms）。
    这与 S1 的处理方式是同一个：S1 也把"内容刷新（p50 140 ms）"单列、不进门禁。**16 ms 这个数字没有改**。
 2. **不走真实键盘驱动**。`SendMessageW` 直接投递到控件，省掉键盘驱动与消息队列（后者 < 1 ms，量级可忽略）。但真实 IME 的按键节奏完全不同，这一点**无法自动化**，列入未测。
 3. **每样本间隔 60 ms**，避免把上一字符的排队算进下一字符。另加一条**吞吐**指标：`PostMessageW` 连发 200 个 `WM_CHAR` 后泵消息直到绘制结束、测总耗时——它抓的是"消息队列被饿死"这类单次延迟看不出的问题。
@@ -161,7 +161,7 @@ hub-editor 里不允许出现 egui::（门禁硬约束）
 
 | ID | 验收项 | 判定 |
 |---|---|---|
-| C1 | `--editor-bench N` 一条命令输出分布 | 打印 `insert / paint / type / compose` 四组 p50/p95/p99/max/n |
+| C1 | `--editor-bench N` 一条命令输出分布 | 打印 `insert / repaint / type / compose` 四组 p50/p95/p99/max/n |
 | C2 | `scripts/measure-native-editor.ps1` 一条命令判预算 | 退出码 0 通过 / 1 超预算 / 0 SKIP（未构建） |
 | C3 | 样本归档 | `docs/releases/native-s2/editor-<label>-<ts>.json` 可 `ConvertFrom-Json` |
 | C4 | 主设计 §7.1 回填"原生 S2 键入实测"行 | 数值与归档一致 |
@@ -193,7 +193,7 @@ Batch A（宿主 + 几何 + 主题 + 像素证据） → Batch B（延迟 + 行�
 | GL 输出盖住子控件 | 先补 `WS_CLIPCHILDREN`；仍不行按 §4.1 退路改 owned popup，并在记录里写清是哪个环境显现 |
 | 中文 IME 候选窗定位异常 | 用 IMM32 手动 `ImmSetCandidateWindow` 定位；最差回退"WebView 编辑器作为临时退路"（主设计 §7 已声明）。本阶段先证明消息链路通 |
 | 1 万字退化 | 给两档分布而不是平均值；若退化 ≥ 2 倍，先关自动 URL/自动更正与 undo 深度，仍退化则 P3 引入分页载入 |
-| 16 ms 不可达 | 先看归属于 `insert` 还是 `paint`：`paint` 慢说明整窗重绘（记录脏区大小）。**不允许把门禁改成 33 ms**——改口径要先改文档并说明理由 |
+| 16 ms 不可达 | 先看归属于 `insert` 还是 `repaint`：`repaint` 慢说明发生了整窗重绘（记录脏区大小）。**不允许把门禁改成 33 ms**——改口径要先改文档并说明理由 |
 | 子类化吞掉消息 | 所有截获分支 `DefSubclassProc` 兜底；B7/B8 就是这条的回归测试 |
 | `CHARFORMATW` 尺寸写错导致静默失败 | A4 用像素采样验证，不靠"我觉得设上了" |
 
