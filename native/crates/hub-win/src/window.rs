@@ -20,8 +20,8 @@
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE,
-    SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
+    IsIconic, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_MINIMIZE, SW_RESTORE, SW_SHOWNOACTIVATE,
 };
 
 /// Far enough that no virtual desktop (including a 4-monitor 4K wall) reaches it.
@@ -140,6 +140,32 @@ pub fn current_focus() -> isize {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 
     unsafe { GetFocus() as isize }
+}
+
+/// Collapse a note into the taskbar (`Ctrl+Alt+H`).
+///
+/// `SW_MINIMIZE` rather than `SW_HIDE`: hiding a note would stop `WM_PAINT` for it
+/// (see the module comment), and the same trick that keeps the parked panel drawable
+/// is what makes "hide all" impossible to implement without freezing the editors.
+/// A minimized window is still a window: the island keeps its handle, the text stays
+/// in the control, and restoring is one `ShowWindow`.
+pub fn minimize(hwnd: isize) -> bool {
+    unsafe { ShowWindow(hwnd as HWND, SW_MINIMIZE) != 0 }
+}
+
+/// Bring a note back. `SW_RESTORE` both un-minimizes and activates; the activation is
+/// incidental -- callers decide separately which note gets the keyboard.
+pub fn restore(hwnd: isize) -> bool {
+    unsafe { ShowWindow(hwnd as HWND, SW_RESTORE) != 0 }
+}
+
+/// Whether the window is collapsed, as opposed to merely covered.
+///
+/// Used to pick the direction of `Ctrl+Alt+H`: the shipped toggle minimizes when any
+/// note is *active*, which `IsIconic` answers without guessing from visibility (our
+/// windows are always visible, they are just off-screen or behind something).
+pub fn is_minimized(hwnd: isize) -> bool {
+    unsafe { IsIconic(hwnd as HWND) != 0 }
 }
 
 /// Client area size in physical pixels.

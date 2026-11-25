@@ -14,6 +14,16 @@
 //!    keyboard hooks for the same combinations, so one physical press can arrive as
 //!    two or three messages; without this the panel opens and closes immediately.
 //! 3. **`MOD_NOREPEAT`.** Holding the key for 300 ms must not toggle a dozen times.
+//!
+//! ## Several combinations, one loop
+//!
+//! Batch 1b.3 needs four global keys. A thread per key would give four message
+//! queues and four debounce clocks for one user gesture, so [`HotkeySet`] registers
+//! them on one thread and tells them apart by `wParam`. The debounce is per slot on
+//! purpose: pressing `Ctrl+Alt+N` and then `Ctrl+Alt+D` inside 250 ms is two
+//! decisions, not an echo. [`Hotkey`] stays as the one-binding wrapper the spike
+//! uses, because its measurement is "one panel, one key" and it should keep failing
+//! loudly when that key cannot be registered -- which for a set is only a log line.
 
 use std::sync::Arc;
 use std::thread;
@@ -24,7 +34,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetMessageW, PostThreadMessageW, MSG, WM_HOTKEY, WM_QUIT,
 };
 
-/// Arbitrary but stable id; `RegisterHotKey` only needs it unique per thread.
+/// Arbitrary but stable base id; `RegisterHotKey` only needs it unique per thread.
 const HOTKEY_ID: i32 = 0xE1;
 
 const MOD_ALT: u32 = 0x0001;
@@ -35,9 +45,172 @@ const MOD_NOREPEAT: u32 = 0x4000;
 
 pub type PressHandler = Arc<dyn Fn() + Send + Sync>;
 
-/// A registered global hotkey and the thread serving it.
-pub struct Hotkey {
+/// One combination and what to run when it is pressed.
+pub struct Binding {
+    pub combo: String,
+    pub on_press: PressHandler,
+}
+
+impl Binding {
+    pub fn new(combo: impl Into<String>, on_press: PressHandler) -> Self {
+        Self {
+            combo: combo.into(),
+            on_press,
+        }
+    }
+}
+
+/// Several global combinations served by one thread.
+pub struct HotkeySet {
     thread_id: u32,
+    combos: Vec<String>,
+    failures: Vec<String>,
+}
+
+impl HotkeySet {
+    /// Register every binding that can be registered and start pumping messages.
+    ///
+    /// Returns `Err` only when the thread could not start at all. A combination that
+    /// another program already owns lands in [`HotkeySet::failures`] instead: the
+    /// remaining keys still work, and refusing to open a note because `Ctrl+Alt+M`
+    /// is taken would be a worse outcome than a missing shortcut.
+    pub fn spawn(bindings: Vec<Binding>, debounce: Duration) -> Result<Self, String> {
+        if bindings.is_empty() {
+            return Err("no bindings to register".to_string());
+        }
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<(u32, Vec<String>, Vec<String>)>();
+
+        thread::Builder::new()
+            .name("hub-hotkey".to_string())
+            .spawn(move || {
+                let mut slots: Vec<(i32, PressHandler)> = Vec::new();
+                let mut combos: Vec<String> = Vec::new();
+                let mut failures: Vec<String> = Vec::new();
+
+                for binding in bindings {
+                    let (modifiers, vk) = match parse_combo(&binding.combo) {
+                        Ok(parsed) => parsed,
+                        Err(error) => {
+                            failures.push(error);
+                            continue;
+                        }
+                    };
+                    let id = HOTKEY_ID + slots.len() as i32;
+                    let registered = unsafe {
+                        RegisterHotKey(std::ptr::null_mut(), id, modifiers | MOD_NOREPEAT, vk)
+                    };
+                    if registered == 0 {
+                        let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+                        failures.push(format!(
+                            "{}: RegisterHotKey failed (win32 error {code}); another program already owns it",
+                            binding.combo
+                        ));
+                        continue;
+                    }
+                    slots.push((id, binding.on_press));
+                    combos.push(binding.combo);
+                }
+
+                let thread_id = unsafe { GetCurrentThreadId() };
+                let _ = ready_tx.send((thread_id, combos, failures));
+
+                let mut last_press: Vec<Option<Instant>> = vec![None; slots.len()];
+                let mut msg = MSG::default();
+                loop {
+                    let got = unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) };
+                    if got <= 0 || msg.message == WM_QUIT {
+                        break;
+                    }
+                    if msg.message != WM_HOTKEY {
+                        continue;
+                    }
+                    let id = msg.wParam as i32;
+                    let Some(index) = slots.iter().position(|(slot, _)| *slot == id) else {
+                        continue;
+                    };
+
+                    let now = Instant::now();
+                    if let Some(previous) = last_press[index] {
+                        if now.duration_since(previous) < debounce {
+                            continue;
+                        }
+                    }
+                    last_press[index] = Some(now);
+                    (slots[index].1)();
+                }
+
+                for (id, _) in &slots {
+                    unsafe {
+                        UnregisterHotKey(std::ptr::null_mut(), *id);
+                    }
+                }
+            })
+            .map_err(|error| format!("failed to spawn hotkey thread: {error}"))?;
+
+        match ready_rx.recv() {
+            Ok((thread_id, combos, failures)) => Ok(Self {
+                thread_id,
+                combos,
+                failures,
+            }),
+            Err(_) => Err("hotkey thread died before registering".to_string()),
+        }
+    }
+
+    pub fn thread_id(&self) -> u32 {
+        self.thread_id
+    }
+
+    /// The combinations that are actually registered, in binding order.
+    pub fn combos(&self) -> &[String] {
+        &self.combos
+    }
+
+    pub fn failures(&self) -> &[String] {
+        &self.failures
+    }
+
+    /// Post `WM_HOTKEY` for slot `index`, as the OS would.
+    pub fn post_press(&self, index: usize) -> bool {
+        if index >= self.combos.len() {
+            return false;
+        }
+        let posted = unsafe {
+            PostThreadMessageW(self.thread_id, WM_HOTKEY, (HOTKEY_ID + index as i32) as usize, 0)
+        };
+        posted != 0
+    }
+
+    /// Post `count` presses `gap` apart, each a separate `WM_HOTKEY`.
+    ///
+    /// Used to prove the debounce: a screenshot tool echoing the same combination
+    /// produces exactly this pattern, and it must yield one action, not `count`.
+    pub fn post_presses(&self, index: usize, count: usize, gap: Duration) {
+        let thread_id = self.thread_id;
+        let id = HOTKEY_ID + index as i32;
+        thread::spawn(move || {
+            for step in 0..count {
+                if step > 0 {
+                    thread::sleep(gap);
+                }
+                unsafe {
+                    PostThreadMessageW(thread_id, WM_HOTKEY, id as usize, 0);
+                }
+            }
+        });
+    }
+
+    /// Ask the message loop to exit (used on the way out of the process).
+    pub fn shutdown(&self) {
+        unsafe {
+            PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
+        }
+    }
+}
+
+/// One registered global hotkey and the thread serving it.
+pub struct Hotkey {
+    set: HotkeySet,
 }
 
 impl Hotkey {
@@ -48,98 +221,29 @@ impl Hotkey {
     /// another process — Windows awards these first come, first served, so the
     /// caller is expected to surface it rather than retry silently.
     pub fn spawn(combo: &str, debounce: Duration, on_press: PressHandler) -> Result<Self, String> {
-        let (modifiers, vk) = parse_combo(combo)?;
-        let label = combo.to_string();
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<u32, String>>();
-
-        thread::Builder::new()
-            .name("hub-hotkey".to_string())
-            .spawn(move || {
-                let flags = modifiers | MOD_NOREPEAT;
-                let registered =
-                    unsafe { RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, flags, vk) };
-                if registered == 0 {
-                    let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
-                    let _ = ready_tx.send(Err(format!(
-                        "{label}: RegisterHotKey failed (win32 error {code}); another program already owns it"
-                    )));
-                    return;
-                }
-
-                let thread_id = unsafe { GetCurrentThreadId() };
-                let _ = ready_tx.send(Ok(thread_id));
-
-                let mut last_press: Option<Instant> = None;
-                let mut msg = MSG::default();
-                loop {
-                    let got = unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) };
-                    if got <= 0 || msg.message == WM_QUIT {
-                        break;
-                    }
-                    if msg.message != WM_HOTKEY || msg.wParam as i32 != HOTKEY_ID {
-                        continue;
-                    }
-
-                    let now = Instant::now();
-                    if let Some(previous) = last_press {
-                        if now.duration_since(previous) < debounce {
-                            continue;
-                        }
-                    }
-                    last_press = Some(now);
-                    on_press();
-                }
-
-                unsafe {
-                    UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
-                }
-            })
-            .map_err(|error| format!("failed to spawn hotkey thread: {error}"))?;
-
-        match ready_rx.recv() {
-            Ok(Ok(thread_id)) => Ok(Self { thread_id }),
-            Ok(Err(message)) => Err(message),
-            Err(_) => Err("hotkey thread died before registering".to_string()),
+        let set = HotkeySet::spawn(vec![Binding::new(combo, on_press)], debounce)?;
+        // The spike measures one panel revealed by one key; a combo that did not
+        // register is not "degraded", it is a measurement that cannot run.
+        if let Some(failure) = set.failures().first() {
+            return Err(failure.clone());
         }
+        Ok(Self { set })
     }
 
     pub fn thread_id(&self) -> u32 {
-        self.thread_id
+        self.set.thread_id()
     }
 
-    /// Post the same `WM_HOTKEY` the OS would, so a 200-cycle run needs no hands.
-    ///
-    /// This is what makes the measurement repeatable: it walks the real path
-    /// (debounce → closure → queue → reveal) and only skips driver and dispatch,
-    /// which no implementation can influence.
     pub fn post_test_press(&self) -> bool {
-        let posted = unsafe { PostThreadMessageW(self.thread_id, WM_HOTKEY, HOTKEY_ID as usize, 0) };
-        posted != 0
+        self.set.post_press(0)
     }
 
-    /// Post `count` presses `gap` apart, each a separate `WM_HOTKEY`.
-    ///
-    /// Used to prove the debounce: a screenshot tool echoing the same combination
-    /// produces exactly this pattern, and it must yield one reveal, not `count`.
-    pub fn post_presses(self: &std::sync::Arc<Self>, count: usize, gap: Duration) {
-        let thread_id = self.thread_id;
-        thread::spawn(move || {
-            for index in 0..count {
-                if index > 0 {
-                    thread::sleep(gap);
-                }
-                unsafe {
-                    PostThreadMessageW(thread_id, WM_HOTKEY, HOTKEY_ID as usize, 0);
-                }
-            }
-        });
+    pub fn post_presses(self: &Arc<Self>, count: usize, gap: Duration) {
+        self.set.post_presses(0, count, gap);
     }
 
-    /// Ask the message loop to exit (used when the spike shuts down on its own).
     pub fn shutdown(&self) {
-        unsafe {
-            PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
-        }
+        self.set.shutdown();
     }
 }
 
@@ -238,5 +342,22 @@ mod tests {
     #[test]
     fn rejects_unknown_key_names() {
         assert!(parse_combo("Ctrl+Nope").is_err());
+    }
+
+    #[test]
+    fn an_empty_set_is_an_error_rather_than_a_silent_no_op() {
+        assert!(HotkeySet::spawn(Vec::new(), Duration::from_millis(1)).is_err());
+    }
+
+    #[test]
+    fn post_press_rejects_slots_that_do_not_exist() {
+        // No thread is started here: the guard is what is being pinned, and index
+        // arithmetic must not post an id that belongs to no slot.
+        let set = HotkeySet {
+            thread_id: 0,
+            combos: vec!["Ctrl+Alt+N".to_string()],
+            failures: Vec::new(),
+        };
+        assert!(!set.post_press(1), "one combo means slot 0 is the only valid index");
     }
 }
