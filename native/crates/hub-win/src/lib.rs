@@ -12,6 +12,7 @@
 //!   layout is read once at startup (`MonitorCache`), because enumerating monitors
 //!   from a hotkey callback costs tens of milliseconds under mixed DPI.
 
+pub mod alpha;
 pub mod dpi;
 pub mod dwm;
 pub mod hotkey;
