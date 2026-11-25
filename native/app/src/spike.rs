@@ -25,7 +25,7 @@ use hub_core::{place, PanelSpec, PixelRect, Placement, Rect, SpikeSettings};
 use hub_editor::Editor;
 use hub_ui::PanelState;
 
-use crate::{bench, editor_bench, log::Log};
+use crate::{bench, editor_bench, esc, log::Log};
 
 pub const WINDOW_TITLE: &str = "easyflowhub-native-spike";
 
@@ -150,6 +150,9 @@ pub struct SpikeApp {
     /// Set by the island's subclass proc when Esc is pressed; consumed by `update`
     /// so the window code is never re-entered from inside the message handler.
     escape: Arc<std::sync::atomic::AtomicBool>,
+    /// How many presses the flag stands for. Logged when it is consumed, because
+    /// a press that arrives while no frame is scheduled is otherwise invisible.
+    esc_presses: Arc<std::sync::atomic::AtomicU32>,
     editor_bench: Option<usize>,
 }
 
@@ -253,6 +256,7 @@ impl SpikeApp {
             window_size: (placement.width, placement.height),
             editor: None,
             escape: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            esc_presses: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             editor_bench: config.editor_bench,
             config,
         }
@@ -372,10 +376,11 @@ impl SpikeApp {
         match self.editor.as_mut() {
             None => match Editor::create(self.hwnd, rect, &theme) {
                 Ok(mut editor) => {
-                    let escape = self.escape.clone();
-                    editor.on_escape(Box::new(move || {
-                        escape.store(true, std::sync::atomic::Ordering::SeqCst);
-                    }));
+                    editor.on_escape(esc::handler(
+                        self.escape.clone(),
+                        self.esc_presses.clone(),
+                        ctx.clone(),
+                    ));
                     editor.set_text(&editor_bench::corpus_text(120));
                     editor.caret_to_end();
                     // Focus is not cosmetic: `EM_SCROLLCARET` is a no-op while the
@@ -619,10 +624,30 @@ impl eframe::App for SpikeApp {
             .escape
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
-            hub_win::window::park(self.hwnd);
-            self.phase = Phase::Parked;
-            self.config.log.mark(0, "editor_esc", "panel parked");
-            return;
+            let presses = self
+                .esc_presses
+                .swap(0, std::sync::atomic::Ordering::SeqCst);
+            if matches!(self.phase, Phase::Shown { .. }) {
+                hub_win::window::park(self.hwnd);
+                self.phase = Phase::Parked;
+                // `presses` is the evidence for the report that closing took
+                // three attempts: one means the other two never reached the
+                // control (an IME eating Esc, typically with a candidate window
+                // open); more than one means they all arrived and were waiting
+                // for a frame. The two are fixed in different places, so they
+                // must not look identical in the log.
+                self.config.log.mark(
+                    0,
+                    "editor_esc",
+                    &format!("panel parked, presses={presses}"),
+                );
+                return;
+            }
+            // Parking keeps the window visible off-screen, so the island still
+            // has focus and still receives Esc while nobody can see it.
+            self.config
+                .log
+                .mark(0, "editor_esc_parked", &format!("presses={presses}"));
         }
 
         if !self.prewarm_done {
