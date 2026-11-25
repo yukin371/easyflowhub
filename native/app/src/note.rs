@@ -29,6 +29,7 @@ use hub_ui::quicknote::{self, StripState};
 use hub_ui::Palette;
 
 use crate::esc;
+use crate::keys;
 use crate::log::Log;
 
 pub const NOTE_TITLE: &str = "easyflowhub-note";
@@ -106,6 +107,9 @@ struct NoteShell {
     editor: Option<Editor>,
     escape: std::sync::Arc<std::sync::atomic::AtomicBool>,
     esc_presses: Arc<AtomicU32>,
+    /// Shortcuts pressed in the island's subclass proc or in egui, waiting for the
+    /// next `update`. See [`keys`] for why they cannot act where they are seen.
+    keys: keys::Bus,
     closing: bool,
     last_island: Option<PixelRect>,
     ppp_done: bool,
@@ -195,6 +199,7 @@ impl NoteShell {
             editor: None,
             escape: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             esc_presses: Arc::new(AtomicU32::new(0)),
+            keys: keys::Bus::new(),
             closing: false,
             last_island: None,
             ppp_done: false,
@@ -234,6 +239,7 @@ impl NoteShell {
                         self.esc_presses.clone(),
                         ctx.clone(),
                     ));
+                    editor.on_key(self.keys.handler(ctx.clone()));
                     // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,
                     // so the caret used to be parked at 0 and the first screenful
                     // was the only one that ever scrolled.
@@ -241,6 +247,14 @@ impl NoteShell {
                     editor.caret_to_end();
                     editor.scroll_caret();
                     editor.apply_caret_width(theme.caret_width);
+                    // Q19's criterion: focused on open, caret at the end. Logged
+                    // because "the first keystroke went somewhere else" is otherwise
+                    // indistinguishable from a key that was never delivered.
+                    self.log.mark(
+                        0,
+                        "editor_focus",
+                        &format!("focused={} caret={:?}", editor.is_focused(), editor.caret()),
+                    );
                     self.last_theme = Some(theme.clone());
                     self.log.mark(
                         0,
@@ -279,9 +293,76 @@ impl NoteShell {
         self.last_island = Some(rect);
     }
 
+    /// Run one shortcut. Split from the table so the table stays a pure function:
+    /// everything that touches a window handle or the control happens here.
+    fn act(&mut self, ctx: &egui::Context, action: keys::Action) {
+        self.log
+            .mark(0, "note_key", &format!("action={action:?}"));
+        match action {
+            keys::Action::Close => self.close(ctx, "shortcut"),
+            keys::Action::TogglePin => self.toggle_pin(ctx),
+            keys::Action::ToggleTools => self.toggle_tools(),
+            keys::Action::Undo => self.history(true),
+            keys::Action::Redo => self.history(false),
+        }
+    }
+
+    fn toggle_pin(&mut self, ctx: &egui::Context) {
+        self.strip.pinned = !self.strip.pinned;
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if self.strip.pinned {
+            egui::WindowLevel::AlwaysOnTop
+        } else {
+            egui::WindowLevel::Normal
+        }));
+        self.log
+            .mark(0, "note_pin", &format!("pinned={}", self.strip.pinned));
+    }
+
+    fn toggle_tools(&mut self) {
+        self.strip.tools_open = !self.strip.tools_open;
+        self.log.mark(
+            0,
+            "note_tools",
+            &format!("open={}", self.strip.tools_open),
+        );
+    }
+
+    /// Undo/redo through the control, not through a shadow history.
+    ///
+    /// `Ctrl+Z` used to be left to RichEdit; routing it through the table too is
+    /// what makes the egui path (focus on the title strip) behave like the island
+    /// path. `can=` is logged because a redo with nothing to redo would otherwise
+    /// look identical to a working one.
+    fn history(&self, undo: bool) {
+        let Some(editor) = self.editor.as_ref() else {
+            self.log.mark(0, "note_history", "editor=none");
+            return;
+        };
+        let available = if undo {
+            editor.can_undo()
+        } else {
+            editor.can_redo()
+        };
+        if available {
+            if undo {
+                editor.undo(1);
+            } else {
+                editor.redo(1);
+            }
+        }
+        self.log.mark(
+            0,
+            "note_history",
+            &format!(
+                "{} can={available} len={}",
+                if undo { "undo" } else { "redo" },
+                editor.text().chars().count()
+            ),
+        );
+    }
+
     /// Q5's criterion, logged from the first day it can be observed.
-    fn close(&mut self, ctx: &egui::Context, reason: &str) {
-        if self.closing {
+    fn close(&mut self, ctx: &egui::Context, reason: &str) {        if self.closing {
             return;
         }
         self.closing = true;
@@ -334,6 +415,20 @@ impl eframe::App for NoteShell {
             return;
         }
 
+        // Shortcuts seen on the egui side. While the island has focus these keys
+        // never reach winit, so the two paths cannot both fire for one press.
+        if let Some(press) = keys::egui_press(ctx) {
+            if let Some(action) = keys::resolve(press) {
+                self.keys.post(action, ctx);
+            }
+        }
+        if let Some(action) = self.keys.take() {
+            self.act(ctx, action);
+            if self.closing {
+                return;
+            }
+        }
+
         if !self.ppp_done {
             let native = ctx.pixels_per_point();
             if (native - self.scale).abs() > 0.01 {
@@ -359,22 +454,10 @@ impl eframe::App for NoteShell {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         if output.actions.toggle_pin {
-            self.strip.pinned = !self.strip.pinned;
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if self.strip.pinned {
-                egui::WindowLevel::AlwaysOnTop
-            } else {
-                egui::WindowLevel::Normal
-            }));
-            self.log
-                .mark(0, "note_pin", &format!("pinned={}", self.strip.pinned));
+            self.toggle_pin(ctx);
         }
         if output.actions.toggle_tools {
-            self.strip.tools_open = !self.strip.tools_open;
-            self.log.mark(
-                0,
-                "note_tools",
-                &format!("open={}", self.strip.tools_open),
-            );
+            self.toggle_tools();
         }
 
         // The island is a native child window: it must be told the hole's size in

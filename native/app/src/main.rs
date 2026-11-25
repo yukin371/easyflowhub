@@ -12,6 +12,7 @@ mod args;
 mod bench;
 mod editor_bench;
 mod esc;
+mod keys;
 mod log;
 mod note;
 mod probe_json;
