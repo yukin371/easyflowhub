@@ -96,7 +96,7 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | `--scale` 模拟多档 DPI | 本机只有一块 150% 屏 | Phase 1 用真实多屏/改缩放复核，不只跑模拟 |
 | 首帧不是"直接 blit 上一帧纹理" | eframe 不暴露目标帧缓冲 | 实测量不足 60 ms 时改 `egui_glow` 手动循环接管 swap + blit |
 | 面板内容是静态样例 | 只为预热真实字符集与布局，不代表最终 UI | Phase 2 换成真实动作/最近项 |
-| 无托盘、无中键钩子 | 都不在 60 ms 路径上，属 T0 parity | Phase 1 与功能一起落地 |
+| 无中键钩子 | 不在 60 ms 路径上，属 T0 parity | Phase 1 与功能一起落地（托盘已在 1b.3 落地，见计划文档 §8.6） |
 | 文本岛正文是内存文档、无保存 | 存储布局属 S3 | Phase 2 接 `notes.db`（S3 已验通，接线在 Phase 2） |
 | `store` 没有 schema 版本号，只有与 Tauri 同文的幂等列探测 | 现库 `user_version = 0`，单方面打版本号会让两套迁移体系分叉 | Phase 2 统一迁移器与版本号，原生与 Tauri 共用一份 |
 | `store` 只覆盖 notes / settings / 附件的写入，不含 Inbox 完整 capture 路径 | S3 只回答"文件还读不读得动"，capture 是产品逻辑 | Phase 2 随 Inbox 迁移一起搬 |

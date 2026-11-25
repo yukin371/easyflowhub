@@ -33,7 +33,7 @@ Q6 只做一半是**有意**的：百分比数字对不对（`opacity_label`）�
 | **1a**（本批） | 单窗口壳：几何 + 标题条 + 拖动 + 置顶 + 最小尺寸 | 全部可在**一个窗口**内验证，不需要改进程/窗口模型 |
 | **1b.1** | 键位与焦点：Esc / Ctrl+D 关闭、撤销重做、置顶、工具面板、打开即聚焦 | 验证前提与 1a 相同——**按键看结果**，不需要改窗口模型 |
 | **1b.2** | 多笔记窗口 + 关闭即销毁 + `Ctrl+Alt+N` 新建（✅ 见 §8.5） | 要引入 viewport-per-note，`Q5` 才能被真正满足 |
-| **1b.3** | 托盘常驻 + 其余全局键（`Ctrl+Alt+D/H/M`）+ 关完窗口不退进程 | 需要托盘生命周期；在此之前"关完最后一个笔记就退出"是唯一不自欺的选择 |
+| **1b.3** | 托盘常驻 + 其余全局键（`Ctrl+Alt+D/H/M`）+ 关完窗口不退进程（✅ 见 §8.6） | 需要托盘生命周期；在此之前"关完最后一个笔记就退出"是唯一不自欺的选择 |
 | **1c** | 整窗透明度 + 幽灵模式（Q28/Q29） | 需新增 `hub-win` 的合成路径；与 1a 的纯 UI 工作无耦合 |
 | **1d** | `Ctrl+K` 切换器（Q25–Q27） | 需要 `notes.db` 的最近列表，属 Phase 2 数据层前置 |
 
@@ -368,6 +368,76 @@ hub_exit reason=no_notes tray=pending hotkey=stops
 | `Ctrl+Alt+D/H/M`（Q18 其余三条） | 关闭全部 / 最小化全部需要托盘语义，打开工作台需要 launcher 面板 |
 | 新建窗口的级联偏移 | 旧版也没有：`cursor_anchored_position` 把每个笔记都锚在光标上，多个笔记完全重合是复刻行为，不是缺陷 |
 
+## 8.6 托盘与其余全局键（1b.3）
+
+一批里的三件事其实是同一件：**让"进程还在"成为一个用户能操作的状态**。托盘是入口，三个全局键是入口的快捷键形态，"关完不退"是前两者成立之后才能改的判断。
+
+### 托盘自己有一个消息窗口
+
+托盘可以让控制器窗口代收（一次 `SetWindowSubclass`），但那个窗口的生命周期归 winit：菜单一旦卡住不消失，排查要跨三个 crate。代价只是一个 `RegisterClassW` + 一个隐藏窗口，换来的是这个模块里所有句柄都归自己管。
+
+菜单 id 只有一张表（`command_for`），`TrackPopupMenu` 和外部直接投递的 `WM_COMMAND` 都走它——这既是 Win32 的正常写法，也让托盘在验证时可以被脚本驱动（下面"证据"里的三个菜单项就是这样点的）。
+
+### 三个细节看起来可选，其实不是
+
+| 细节 | 症状 |
+|---|---|
+| `SetForegroundWindow` 在前、`PostMessage(WM_NULL)` 在后 | 不做的话菜单在点别处后**留在屏幕上**：弹出菜单是独立窗口，只有 owner 是前台时才会被关掉（Win95 起的老问题） |
+| 退出前 `NIM_DELETE` | `Drop` 只能覆盖普通路径，而控制器是走 `std::process::exit` 离开的（不跑析构）。漏掉的图标会一直留在通知区，直到用户把鼠标移上去——看起来就像进程崩了 |
+| 延迟 250 ms 的防抖要**按槽位**计 | QQ/微信对同样的组合装了低级键盘钩子，一次物理按键会来两三条 `WM_HOTKEY`。共用一个时钟的话，先按 `Ctrl+Alt+N` 再按 `Ctrl+Alt+D` 的第二下会被当成回显丢掉 |
+
+### 这一批真正的 bug：关闭打到了根视口
+
+`NoteShell::close` 原来用 `ctx.send_viewport_cmd(Close)`，它的语义是"**这一趟 pass 的视口**"。从笔记自己的帧里调用时那正好是它自己，所以 Esc 和 `Ctrl+D` 一直是对的——对得纯属巧合。从托盘或 `Ctrl+Alt+D` 调用时，发起方是控制器，pass 跑在 ROOT 上，于是"关闭全部笔记"变成了"关闭 hub 窗口"，而 eframe 在根窗口关闭时结束进程。
+
+改前实测（日志到此为止，没有 `hub_exit`）：
+
+```
+note_destroyed id=1 open_notes=0 process_windows=5 notes=0
+hub_idle notes=0 tray=0x2201E0        ← 托盘还在，下一秒进程就退了
+```
+
+`close` 与 `toggle_pin` 都改成 `send_viewport_cmd_to(self.viewport, ...)`。这类 bug 不会在单窗口下出现，也不会在没有托盘时出现——1b.2 的"关完就退出"把它盖住了，是这一批把它挖出来的。
+
+### 最小化的笔记不再布岛
+
+最小化之后窗口的客户区是退化的（实测整窗 `190x31`，换算出来 `island_rect 237x1`）。把 RichEdit 按 1 px 高重排一次，既没人看得见，也可能让它丢掉滚动位置；恢复时又得再排一次。现在 `frame()` 在最小化时直接返回，岛保持原矩形，恢复后不需要重建——恢复路径显式请求一次重绘，不依赖 `SW_RESTORE` 是否产生 `WM_SIZE`。
+
+### 证据（125%，一次运行）
+
+```
+hotkey combo=Ctrl+Alt+N/D/H/M registered=true ×4    hotkeys registered=4 failed=0 thread=37104
+tray installed=true hwnd=0xAE01D8 icon=ico tip=EasyFlowHub · 快速笔记（Ctrl+Alt+N）
+hub_start notes=1 ... tray=on
+
+Ctrl+Alt+H → notes_visible action=minimize notes=2 → 外部 IsIconic=true ×2（整窗 190x31）
+Ctrl+Alt+H → notes_visible action=restore  notes=2 → IsIconic=false，回到 400x300
+Ctrl+Alt+D → note_close reason=all ×2 → note_destroyed open_notes=0 → hub_idle，进程存活
+Ctrl+Alt+N → note_spawn id=2 live=1   ← 空闲状态下仍可新建
+托盘右键   → #32768 菜单出现；WM_CANCELMODE 后消失
+托盘三项   → WM_COMMAND 1 新建、2 关闭全部、3 → hub_exit reason=tray notes=0，退出码 0
+Ctrl+Alt+M → note_manager reason=hotkey target=none phase=2
+```
+
+`icon=ico` 说明内嵌 `.ico` 的 32×32 帧被 `CreateIconFromResourceEx` 接受了（那些帧是 PNG 压缩的，Vista+ 可用但文档没对每种尺寸承诺），`IDI_APPLICATION` 的兜底没有触发——兜底仍然是真代码，不是 `unwrap`。
+
+### 与旧版的差异（有意）
+
+| 项 | 旧版 | 本批 | 为什么 |
+|---|---|---|---|
+| 托盘菜单首项 | 打开管理中心 | 关闭全部笔记 | 管理中心窗口属 Phase 2；托盘接管进程后，"关掉所有窗口"是唯一没有鼠标路径的命令（Esc 和 `Ctrl+D` 一次只关一个） |
+| 左键点图标 | 显示/隐藏管理中心 | 打开同一个菜单 | 没有管理中心可切，弹菜单比猜用户想新建一个更不意外。Phase 2 接上管理中心后这里改回"切换" |
+| `Ctrl+Alt+M` | 打开管理中心 | 注册 + 记日志 | 组合键必须由当前这份程序owns，否则旧版会接走它；目标窗口要等 Phase 2 |
+
+### 本批不做
+
+| 项 | 为什么 |
+|---|---|
+| 托盘气泡/通知 | 没有要通知的事件；旧版也没有 |
+| 开机自启、托盘双击、"关闭窗口时缩到托盘" | 旧版没有前三项，属 Phase 2 的设置层 |
+| 管理中心窗口（`Ctrl+Alt+M` 的目标） | 需要 launcher 面板，属 Phase 2 |
+| 多显示器下的托盘图标（`NIM_SETVERSION` / 高 DPI 变体） | `CreateIconFromResourceEx` 已按 32×32 建图标，Windows 自行缩放；没有第二个显示器上的实测，不写进结论 |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -379,3 +449,5 @@ hub_exit reason=no_notes tray=pending hotkey=stops
 | 2026-11-25 | 1a.3 标题条留白回到旧 UI 的两层 padding：标签 16、按钮框 8（图标可见 14），`SIDE_SLOT_WIDTH` 44 → 60；正文内边距 12/10 → 18/18 以对齐标签；记下最小窗宽下 `GHOST` 越槽 5 px 但让开三点 6 px（§8.3） |
 | 2026-11-25 | 1b 拆成 1b.1（键位，本批）与 1b.2（多窗口/托盘）；1b.1 落地键位表、两条输入路径、`EM_UNDO`/`EM_REDO` 统一、输入法改写 vk 的还原；记下 `Ctrl+.` 只能人工验证（§8.4） |
 | 2026-11-25 | 1b.2 落地 viewport-per-note：根视口改为屏外控制器，每笔记一个 deferred viewport；关闭只销毁该窗口，`Ctrl+Alt+N` 经全局热键新建；去掉全局 `set_zoom_factor`；托盘与其余全局键留 1b.3，关完最后一个笔记即退出并在日志写明 `tray=pending`（§8.5） |
+
+| 2026-11-25 | 1b.3 落地托盘常驻 + `Ctrl+Alt+D/H/M` + 关完不退：托盘自带隐藏消息窗口、菜单 id 单表、退出前 `NIM_DELETE`；修掉"关闭打到根视口"（`send_viewport_cmd` → `send_viewport_cmd_to`）；最小化的笔记跳过布岛（§8.6） |
