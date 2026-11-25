@@ -107,6 +107,13 @@ Invoke-Step -Name "Native architecture guard" -WorkingDirectory "." -Action {
     node (Join-Path $scriptRoot "check-native-architecture.mjs")
 }
 
+# A gate that has only ever been seen to pass is not evidence. This runs the
+# guard against fixture trees with one rule broken each, so a refactor that
+# silently disables a rule turns this red instead of quietly passing everything.
+Invoke-Step -Name "Native architecture guard self-check" -WorkingDirectory "." -Action {
+    node --test (Join-Path $scriptRoot "check-native-architecture.selfcheck.mjs")
+}
+
 # The 60 ms budget is judged on the native shell (measure-native-latency.ps1
 # below). This Tauri build is the control group and currently measures ~101 ms
 # p95, so it runs with -NoFail: it still prints "Verdict: FAIL" against the 60 ms

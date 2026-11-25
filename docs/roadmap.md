@@ -144,7 +144,14 @@
 
 ### Recent Progress
 
-- `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [plans/2026-11-25-notes-db-compat-spike.md](./plans/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。**G0 仍未过**：只剩 S4（门禁自检）。
+- `2026-11-25` **S4 通过：架构门禁从"能通过"变成"能失败"，并补上三个真实缺口**。设计与验收标准先落在 [plans/2026-11-25-native-architecture-gate-spike.md](./plans/2026-11-25-native-architecture-gate-spike.md)，再按 A/B/C 三批实现。**G0 的四项 spike（S1–S4）全部完成，待 G0 评审。**
+  - **绿不能证明规则有效**：从 S1 起 CI 每次都是绿的，但那时门禁的每一条规则都可以是空实现。S4 的实质是让它失败一次——23 项自检在 `os.tmpdir()` 的临时工作区里逐条打破规则（越界边含 `[dependencies.foo]` 表形式、两节点环、层符号泄漏、801 行、未登记 crate、两条 skip 分支），断言精确到条目文本而不是只看 `failed`。
+  - **自检本身也做了变异**：8 次故意改坏规则，8 次都被杀。其中 2 次第一轮**存活**，暴露的是自检的缺陷而不是规则的缺陷——尺寸用例拿被测的 `HARD_CAP` 自己算自己（改到 900 时 fixture 也跟着变 901 行，测试照样绿）；表形式依赖走的是与 kv 形式**不同的正则**，只测 kv 就等于没测。两处都补了用例，`HARD_CAP === 800` 现在被字面量钉死。
+  - **三个真实缺口，都是写测试时撞出来的**：①`hub-core` 里 `use windows_sys::…` 不报错——规则写的是 `windows::`，而本项目用的是 `windows-sys`，下划线让 `\b` 匹配不到；②manifest 声明 `egui` 但源码不 `use` 完全不报——而"声明了"距离"用了"只差一行；③`[target.'cfg(windows)'.dependencies]` 整段解析不到，**放在 cfg 后面就等于隐身**。禁表因此合成**一张** `BANNED_DEPS`，符号正则与 manifest 检查都从它派生，避免两侧漂移。
+  - **重构也要求证，不是声称**：把判断抽成 `analyzeNativeArchitecture(nativeRoot)` 时，成功路径与失败路径（种一个 `use egui::Context;`）都拿 HEAD 里的旧脚本对同一棵树跑 diff，输出**逐字节相同**。抽取过程中我一度把 `app` 的 `/tauri/` 收窄成 `/\btauri::/`，那是悄悄放宽，已改回。
+  - **未测**：注释内 `crate::` 的误报（**有意保留**：剥注释的剥离器出错会漏报，漏报比误报危险）、CI runner 上的实际耗时、规则集完整性（未穷举 `cfg_attr` / `include!`）、真实越界 PR 的拦截演练。
+
+- `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [plans/2026-11-25-notes-db-compat-spike.md](./plans/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。（当时 S4 未做。）
   - **双向兼容用真代码验，不自证**：native 写入后，读它的是 **Tauri 那份代码**（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽出的连接级函数），不是复制一遍 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，另一套 build，原生侧 bundled 是 3.46.0）与我们的读者对 **42 行逐字段一致**（`rows-identical 42`）。反向也验了：Tauri 写 → native 读回同一内容。
   - **"无 schema 破坏"是可 diff 的**：`sqlite_master` 全量 dump 写前写后**逐字节相同**；`journal_mode=delete` / `user_version=0` / `page_size=4096` / `encoding=UTF-8` 四项不动；`integrity_check` 在 native 写后、Tauri 写后、独立 CLI 三次全 `ok`。**刻意不切 WAL**：那会改文件头 write version 并留下 `-wal`/`-shm`，属产品级决定（备份/同步/"复制 db"的语义都变），不该由 spike 替用户定。
   - **真实数据不是造的**：live 库 `143,360 B`，**40 条笔记 / 9 个设置 / 待办箱**全部读出，字段与 CLI 逐项相等；排序（置顶优先 + `updated_at` 降序）与产品查询口径一致。
@@ -360,7 +367,7 @@
 
 ## Native Runtime Track（`accepted`，ADR-0009）
 
-> 状态：**S1 壳 + S2 文本岛 + S3 数据已完成（2026-11-25），G0 未过**。分阶段推进；Phase 0 先补齐度量与四项 spike，过 G0 后开始 Phase 1。剩余 **S4 门禁自检**。
+> 状态：**Phase 0 四项 spike（S1 壳 + S2 文本岛 + S3 数据 + S4 门禁）全部完成（2026-11-25），待 G0 评审**。分阶段推进；过 G0 后开始 Phase 1。
 >
 > - 设计：[plans/2026-11-24-native-runtime-redesign.md](./plans/2026-11-24-native-runtime-redesign.md)
 > - 决策：[decisions/ADR-0009-windows-native-runtime.md](./decisions/ADR-0009-windows-native-runtime.md)
@@ -398,7 +405,7 @@
 
 | Phase | Status | Goal | Gate |
 |---|---|---|---|
-| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ ~~计时契约~~（已完成）+ ~~S1 壳（含预热路径）~~（**已完成，p95 48.9 ms，见 §7.1**）+ ~~S2 编辑器~~（**已完成，键入 p95 4.95 ms，2 项人工未测**）+ ~~S3 数据~~（**已完成，39 项检查，双向兼容 + 无 schema 破坏**）+ S4 门禁；延迟是重点，RDP 回环可选 | `G0` |
+| P0. 度量与 Spike | `[partial]` | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ ~~计时契约~~（已完成）+ ~~S1 壳（含预热路径）~~（**已完成，p95 48.9 ms，见 §7.1**）+ ~~S2 编辑器~~（**已完成，键入 p95 4.95 ms，2 项人工未测**）+ ~~S3 数据~~（**已完成，39 项检查，双向兼容 + 无 schema 破坏**）+ ~~S4 门禁~~（**已完成，23 项自检 + 8 次变异，补 3 个真实缺口**）；延迟是重点，RDP 回环可选 | `G0` |
 | P0.5. 先行止血 | `[done]` 2026-11-24 | 现版本窗口生命周期改造：**manager 不预创建 + 关闭即销毁**、临时窗口关闭即销毁（launcher 仍预创建，不动主门禁）；**修复开机自启动失效**（偏好持久化 + 启动对账 + 写入校验）。实测静置 600 → 262–283 MB（−53% ~ −56%） | — |
 | P1. 常驻壳 | `[pending]` | 主题 token、托盘、热键、**预创建 Launcher**、快速笔记、待办卡片、`lite` 降级；Manager 暂由 Tauri 按需启动 | `G1` |
 | P2. 工作台 | `[pending]` | 笔记 / 收集箱 / 待办 / 脚本 / 设置 / 回收站原生，低频面板只留最小入口 | `G2` |

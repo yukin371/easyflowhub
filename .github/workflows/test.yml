@@ -119,6 +119,11 @@ jobs:
       - name: Native architecture guard (crate layers / symbol leaks / size)
         run: node scripts/check-native-architecture.mjs
 
+      # The guard's own tests: fixture trees with one rule broken each. Without
+      # this, every rule below could be deleted and CI would still be green.
+      - name: Native architecture guard self-check
+        run: node --test scripts/check-native-architecture.selfcheck.mjs
+
   native-windows:
     name: Native Tests (Windows)
     runs-on: windows-latest

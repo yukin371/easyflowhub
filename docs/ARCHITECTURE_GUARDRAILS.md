@@ -127,11 +127,12 @@ Recommended enforcement mechanisms:
 - PR review 检查是否出现新的 duplicate owner
 - 修改边界或 owner 后同步 `MODULE.md` / `roadmap` / `ADR`
 - 自动门禁：`node scripts/check-architecture.mjs`（import 环 / lib·features 反向依赖 / `lib/tauri` 外原始 invoke / 文件规模债，基线见 `scripts/architecture-baseline.json`）在 CI `architecture-gates` 与 Windows native `native-windows` 两个 PR 门禁中运行；schema-handler 配对由 `go test` 的 `TestStaticSchemasHaveRegisteredHandlers` 覆盖
-- 原生门禁：`node scripts/check-native-architecture.mjs`（本文件第 10 节；`native/` 未创建时 skip 并返回 0），已接入 `run-smoke.ps1` 与 CI `architecture-gates`
+- 原生门禁：`node scripts/check-native-architecture.mjs`（本文件第 10 节；`native/` 缺失时 skip 并返回 0），已接入 `run-smoke.ps1` 与 CI `architecture-gates`
+- 原生门禁的自检：`node --test scripts/check-native-architecture.selfcheck.mjs`（23 项，在临时工作区里逐条打破规则）。**只跑门禁不跑自检，等于假设规则永远不会被改坏**——两者同属 `architecture-gates`
 
-## 10. Native Runtime Layer Map（planned，ADR-0009）
+## 10. Native Runtime Layer Map（enforced，ADR-0009）
 
-> status: planned，`native/` 尚未创建。落地后本节与 `check-native-architecture.mjs` 共同构成硬约束。
+> status: enforced。`native/` 已于 2026-11-25 落地（S1–S4 完成）。本节与 `check-native-architecture.mjs` 共同构成硬约束；规则本身由 `check-native-architecture.selfcheck.mjs` 用 23 项 fixture 与 8 次变异验证（见 [S4 文档](./plans/2026-11-25-native-architecture-gate-spike.md) §9）。
 
 Native Runtime 采用单进程 Rust workspace，层级固定如下：
 
@@ -146,8 +147,8 @@ Native Runtime 采用单进程 Rust workspace，层级固定如下：
 
 硬规则：
 
-1. 依赖单向，禁止环；新增 crate 必须先登记到 `check-native-architecture.mjs` 的 `ALLOWED_EDGES`。
-2. 平台能力只经 `hub-win` 暴露的 trait；UI 层出现 `use windows::` 即违规。
+1. 依赖单向，禁止环；新增 crate 必须先登记到 `check-native-architecture.mjs` 的 `ALLOWED_EDGES` **和 `BANNED_DEPS`**（后者决定该 crate 不许声明/引用哪些外部 crate；漏登记会被 `unknown crates` 拦下，不会静默通过）。
+2. 平台能力只经 `hub-win` 暴露的 trait；UI 层出现 `use windows::` **或 `use windows_sys::`** 即违规——两者是同一家族，`windows` 与 `windows-sys` 都禁。
 3. 持久化只在 `hub-core`；UI 不持有连接、不拼 SQL。
 4. 网络只在 `hub-bridge`；worker 契约版本化 JSON。
 5. UI 与 core 只通过 DTO / 命令交互，不共享可变全局状态。

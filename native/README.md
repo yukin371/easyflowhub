@@ -16,6 +16,15 @@ native/
 
 依赖方向由 `scripts/check-native-architecture.mjs` 强制（`app → hub-ui/hub-win/hub-core/hub-editor`，`hub-ui → hub-core`，`hub-editor → hub-win/hub-core`，其余无内部边），并禁止 `hub-editor` 出现 `egui::`——文本岛只吃物理像素矩形、只吐文本，布局决策留在 app 侧。**持久化只在 `hub-core::store`**（设计 §5.7 规则 3）：UI 不持有连接、不拼 SQL，`rusqlite` 也只有这一个 crate 依赖。
 
+规则表在 `scripts/lib/native-arch-guard.mjs`（`ALLOWED_EDGES` 管内部边，`BANNED_DEPS` 管"这一层不许碰哪些外部 crate"，源码扫描与 `Cargo.toml` 检查都从同一张表派生）。这套规则自己有测试：
+
+```bash
+node scripts/check-native-architecture.mjs                      # 真实树
+node --test scripts/check-native-architecture.selfcheck.mjs      # 23 项：每条规则各打破一次
+```
+
+自检不是摆设：曾用 8 次"故意改坏规则"验证过它真的会红，其中两次第一轮没红，因此修掉了自检自身两个缺陷（拿被测常量自证、表形式依赖没覆盖）。改规则时请照做，否则改坏的规则不会被任何东西发现。
+
 ## 跑起来
 
 ```bash
