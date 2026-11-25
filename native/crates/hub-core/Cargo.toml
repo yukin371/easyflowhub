@@ -4,8 +4,16 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-# Deliberately dependency-light: layout maths and settings structs only.
-# scripts/check-native-architecture.mjs rejects egui/windows/rusqlite/reqwest here.
+# The design assigns persistence here (section 5.7 rule 3: "storage only in
+# hub-core::store"). What this crate must not touch is *platform* API: the guard
+# rejects egui/eframe/windows/tauri/reqwest. SQLite is a file format, not a
+# platform call, so it lives here and nowhere else -- the UI never holds a
+# connection and never builds SQL.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# Same major version as the Tauri crate so both link a comparable bundled SQLite.
+# `bundled` on purpose: a spike must not depend on the system's winsqlite3.dll
+# version, and the app already ships its own copy.
+rusqlite = { workspace = true, features = ["bundled"] }
+uuid.workspace = true
