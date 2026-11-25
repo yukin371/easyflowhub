@@ -26,7 +26,10 @@
 
 pub mod measure;
 pub mod keys;
+mod dispatch;
 mod theme;
+
+use dispatch::Callbacks;
 
 pub use keys::KeyPress;
 pub use theme::Theme;
@@ -41,14 +44,14 @@ use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, REC
 use windows_sys::Win32::Graphics::Gdi::UpdateWindow;
 use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus, VK_ESCAPE, VK_TAB};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
 use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, GetClassNameW, GetWindowLongPtrW, GetWindowTextLengthW,
     GetWindowTextW, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-    SystemParametersInfoW, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WM_CHAR, WM_KEYDOWN,
-    WM_PRINTCLIENT, WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
+    SystemParametersInfoW, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WM_KEYDOWN, WM_PRINTCLIENT,
+    WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
 };
 
 // --- RichEdit messages (not exported by windows-sys; values from richedit.h) ---
@@ -97,14 +100,6 @@ pub struct CharFormatEcho {
     pub face: String,
     pub height_twips: i32,
     pub color: COLORREF,
-}
-
-struct Callbacks {
-    on_escape: Option<Box<dyn Fn() + Send + Sync>>,
-    /// Returns `true` when the shell consumed the key. A `false` falls through to
-    /// `DefSubclassProc`, which is what keeps `Ctrl+Z` inside RichEdit's own undo
-    /// instead of reimplementing it one level up.
-    on_key: Option<Box<dyn Fn(KeyPress) -> bool + Send + Sync>>,
 }
 
 pub struct Editor {
@@ -173,6 +168,7 @@ impl Editor {
             let callbacks = Box::into_raw(Box::new(Callbacks {
                 on_escape: None,
                 on_key: None,
+                on_wheel: None,
             }));
 
             // ~800 lines of safety: keep the callback box reachable from the
@@ -653,6 +649,14 @@ impl Editor {
         }
     }
 
+    /// Install the `Ctrl+wheel` hook. Same rule as [`Editor::on_key`]: raise a flag,
+    /// do not touch the window from inside the message handler.
+    pub fn on_wheel(&mut self, callback: Box<dyn Fn(i32) -> bool + Send + Sync>) {
+        unsafe {
+            (*self.callbacks).on_wheel = Some(callback);
+        }
+    }
+
     pub fn parent(&self) -> isize {
         self.parent as isize
     }
@@ -685,35 +689,12 @@ unsafe extern "system" fn subclass_proc(
     _id: usize,
     refdata: usize,
 ) -> LRESULT {
-    if message == WM_KEYDOWN && refdata != 0 {
-        let callbacks = &*(refdata as *const Callbacks);
-        match wparam as u16 {
-            // Esc: RichEdit does nothing with it but would beep; the shell needs
-            // to see it so the panel closes instead of the editor swallowing it.
-            VK_ESCAPE => {
-                if let Some(callback) = callbacks.on_escape.as_ref() {
-                    callback();
-                }
-                return 0;
-            }
-            // Tab: insert a tab instead of moving focus out of the panel.
-            VK_TAB => {
-                SendMessageW(hwnd, WM_CHAR, 0x09, 1);
-                return 0;
-            }
-            // Everything else goes through the shell's shortcut table. Esc stays
-            // above it because closing is not a table entry: it must work even if
-            // the table is empty or the callback was never installed.
-            other => {
-                if let Some(callback) = callbacks.on_key.as_ref() {
-                    if callback(keys::modifiers(keys::original_key(hwnd, other, lparam))) {
-                        return 0;
-                    }
-                }
-            }
+    if refdata != 0 {
+        let callbacks = unsafe { &*(refdata as *const Callbacks) };
+        if let Some(claimed) = unsafe { dispatch::claim(hwnd, message, wparam, lparam, callbacks) } {
+            return claimed;
         }
     }
-
     DefSubclassProc(hwnd, message, wparam, lparam)
 }
 
@@ -766,9 +747,3 @@ pub(crate) fn now_us() -> u64 {
 const ES_MULTILINE: u32 = 0x0004;
 const ES_AUTOVSCROLL: u32 = 0x0040;
 const ES_WANTRETURN: u32 = 0x1000;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}
