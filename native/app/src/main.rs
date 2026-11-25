@@ -14,6 +14,7 @@ mod editor_bench;
 mod log;
 mod probe_json;
 mod spike;
+mod store_bench;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -48,6 +49,28 @@ fn main() {
         .clone()
         .unwrap_or_else(default_settings_path);
     let (settings, source) = SpikeSettings::load(&settings_path);
+
+    // S3 runs without a window: the question is about a file, and opening the
+    // event loop first would make "reads the database" depend on a GPU.
+    if let Some(hold_ms) = parsed.store_hold_ms {
+        let root = match parsed.store_root.clone() {
+            Some(root) => root,
+            None => {
+                eprintln!("--store-hold needs --store-root: it must never lock the live database");
+                std::process::exit(64);
+            }
+        };
+        std::process::exit(store_bench::hold_write_transaction(&root, hold_ms));
+    }
+
+    if parsed.store_bench {
+        let code = store_bench::run(
+            parsed.store_root.as_deref(),
+            parsed.store_artifacts.as_deref(),
+            parsed.store_write,
+        );
+        std::process::exit(code);
+    }
 
     if parsed.print_monitors {
         let cache = MonitorCache::refresh();
