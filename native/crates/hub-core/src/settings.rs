@@ -73,6 +73,13 @@ pub struct NoteAppearance {
     /// leading), and 1.35 put 32 px between glyphs — visibly airy for a scratch pad.
     pub line_spacing: f32,
     /// Inset between the island edge and the text, logical pixels.
+    ///
+    /// 18 is the shipped `EditorTextarea`'s `padding: 18` (`quick-note` variant),
+    /// and it is what makes the body line up with the strip: the opacity label
+    /// sits at 16, so the text starts 2 px to its right, which is the shipped
+    /// relationship. The 12/10 pair used earlier left the body 4 px *left* of
+    /// the label — a small misfit that reads as "unfinished" without being
+    /// nameable.
     pub padding_x: i32,
     pub padding_y: i32,
     /// Caret thickness in **logical** pixels. `0` leaves the system value alone.
@@ -91,8 +98,8 @@ impl Default for NoteAppearance {
             font_family: "Microsoft YaHei UI".to_string(),
             font_pt: 11.5,
             line_spacing: 1.0,
-            padding_x: 12,
-            padding_y: 10,
+            padding_x: 18,
+            padding_y: 18,
             caret_width: 2,
             colors: NoteColors::default(),
         }
@@ -259,9 +266,10 @@ mod tests {
         // The body palette is the shipped `--manager-*` set, composited once.
         assert_eq!(appearance.colors.panel, [13, 21, 34]);
         assert_eq!(appearance.colors.ink, [220, 230, 244]);
-        // 12 px keeps the body inset equal to the strip's label inset.
-        assert_eq!(appearance.padding_x, 12);
-        assert_eq!(appearance.padding_y, 10);
+        // The shipped textarea's `padding: 18`, which puts the body 2 px right of
+        // the strip label (16) instead of 4 px left of it.
+        assert_eq!(appearance.padding_x, 18);
+        assert_eq!(appearance.padding_y, 18);
         assert_eq!(appearance.caret_width, 2);
     }
 

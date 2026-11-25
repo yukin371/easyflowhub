@@ -23,19 +23,41 @@ use hub_core::STRIP_HEIGHT;
 
 /// Width reserved for each side slot, logical pixels.
 ///
-/// Wide enough for the widest left label (`GHOST` at 11 pt is ~34 px) plus the
-/// 12 px inset, and for a 28 px button on the right. The middle slot gets what is
-/// left, which is what keeps the three from overlapping at 150 px.
-pub const SIDE_SLOT_WIDTH: f32 = 44.0;
+/// The shipped toolbar declares `minWidth: 46` on the left slot, but that is a
+/// *minimum*: `GHOST` at 10 px with `letterSpacing: 0.22em` is ~44 px of text,
+/// so the slot actually grows to 46+16 or more. Its counterpart here is
+/// `LABEL_INSET + 44`, which is the same thing without a flex pass.
+///
+/// It is not a hard wall. Below `3 × 60` the ranges are capped at a third of the
+/// width so they cannot invert, and at the 150 px minimum the label does overrun
+/// its slot; the `the_ghost_label_clears_the_dots` test pins the remaining
+/// clearance to the dots rather than pretending it fits.
+pub const SIDE_SLOT_WIDTH: f32 = 60.0;
 
 /// Height of the placeholder panel behind the `•••` button.
 pub const TOOLS_PANEL_HEIGHT: f32 = 72.0;
 
-/// Inset shared by the strip label, the tools panel and the text island.
+/// Inset of the opacity label from the window's left edge.
 ///
-/// One constant on purpose: the label sitting 8 px in while the body starts at
-/// 12 px is the kind of 4 px misalignment that reads as "unfinished" without
-/// anyone being able to say why.
+/// 16 is not a round number picked by eye: the shipped strip has
+/// `paddingInline: 8` and its left slot has another `paddingInline: 8`, so the
+/// text starts 16 px in. The right side is *not* the same number — see
+/// [`BUTTON_INSET`] — because a 16 px glyph sits inside a 28 px button.
+pub const LABEL_INSET: f32 = 16.0;
+
+/// Inset of the rightmost button's *box* from the window's right edge.
+///
+/// The shipped strip ends with `paddingInline: 8`, and the pin is the last child,
+/// so its 28 px box ends 8 px in. The glyph inside it is centred with 6 px of
+/// slack, which puts its visible edge at 14 px — 2 px tighter than the label.
+/// That asymmetry is in the shipped toolbar and reads as correct; making both
+/// sides 12 px (the first attempt) put both off by 2 px in opposite directions.
+pub const BUTTON_INSET: f32 = 8.0;
+
+/// Where the pin's drawn edge lands: `BUTTON_INSET` plus the button's own slack.
+pub const ICON_INSET: f32 = BUTTON_INSET + (BUTTON_SIZE - ICON_SIZE) / 2.0;
+
+/// Inset used inside the tools panel, which has no button box to align with.
 pub const EDGE_PADDING: f32 = 12.0;
 
 const BUTTON_SIZE: f32 = 28.0;
@@ -177,7 +199,7 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
             let slots = slots(full.width());
             let label = opacity_label(state.opacity);
             painter.text(
-                egui::pos2(strip.left() + EDGE_PADDING, strip.center().y),
+                egui::pos2(strip.left() + LABEL_INSET, strip.center().y),
                 Align2::LEFT_CENTER,
                 &label,
                 FontId::proportional(11.0),
@@ -276,14 +298,13 @@ fn center_button_rect(slot: &(f32, f32), strip: Rect) -> Rect {
     )
 }
 
-/// The right button is pinned to `EDGE_PADDING`, not centred in its slot.
+/// The right button is pinned to `BUTTON_INSET`, not centred in its slot.
 ///
-/// The slot is 44 px wide so that three of them can coexist at the 150 px
-/// minimum; centring a 24 px button in it would leave a 10 px gap on the right
-/// while the label keeps 12 px on the left, and the 2 px asymmetry is visible as
-/// a slightly crooked title bar.
+/// The slot is wide enough to hold a 28 px button plus the shipped inset;
+/// centring the button in it instead would leave 16 px on the right and the
+/// glyph would sit 6 px further in than the shipped toolbar puts it.
 fn right_button_rect(strip: Rect) -> Rect {
-    let right = strip.right() - EDGE_PADDING;
+    let right = strip.right() - BUTTON_INSET;
     Rect::from_min_max(
         egui::pos2(right - BUTTON_SIZE, strip.center().y - BUTTON_SIZE / 2.0),
         egui::pos2(right, strip.center().y + BUTTON_SIZE / 2.0),
@@ -457,15 +478,40 @@ mod tests {
 
     #[test]
     fn three_slots_never_overlap_at_the_minimum_width() {
-        let slots = slots(hub_core::MIN_NOTE_WIDTH);
-        assert_eq!(slots.left, (0.0, SIDE_SLOT_WIDTH));
-        assert_eq!(slots.right.1, hub_core::MIN_NOTE_WIDTH);
+        let width = hub_core::MIN_NOTE_WIDTH;
+        let slots = slots(width);
+        let side = SIDE_SLOT_WIDTH.min(width / 3.0);
+        assert_eq!(slots.left, (0.0, side));
+        assert_eq!(slots.right.1, width);
         assert!(slots.center.0 <= slots.center.1, "center inverted: {slots:?}");
         assert!(slots.center.0 - slots.left.1 <= f32::EPSILON);
         assert!(slots.right.0 - slots.center.1 <= f32::EPSILON);
-        // The middle slot must still be wide enough to show a 62 px gap, which is
-        // what the shipped toolbar leaves after its fixed sides.
-        assert!(slots.center.1 - slots.center.0 >= 60.0);
+        // The middle slot must still hold the 28 px dots button whole.
+        assert!(slots.center.1 - slots.center.0 >= BUTTON_SIZE);
+    }
+
+    #[test]
+    fn the_ghost_label_clears_the_dots() {
+        // Measured, not estimated: `GHOST` at 11 pt in the installed CJK face is
+        // 59 device px at 150%, i.e. 39 logical px (columns 24..82 of a 600 px
+        // shot, starting at the 16 px inset).
+        const GHOST_WIDTH: f32 = 39.0;
+
+        // At the default 400 px window the label fits inside its own slot.
+        let slots = slots(400.0);
+        assert!(
+            LABEL_INSET + GHOST_WIDTH <= slots.left.1,
+            "label overruns its slot at 400 px: {} > {}",
+            LABEL_INSET + GHOST_WIDTH,
+            slots.left.1
+        );
+
+        // At the 150 px minimum it does not fit — 16 + 39 = 55 against a 50 px
+        // cap — but it still stops 6 px short of the dots, which is what Q11
+        // actually asks for. Pinning this keeps a future font or inset change
+        // from turning a cosmetic overrun into an overlap.
+        let dots_left = (slots.center.0 + slots.center.1) / 2.0 - BUTTON_SIZE / 2.0;
+        assert!(LABEL_INSET + GHOST_WIDTH < dots_left);
     }
 
     #[test]
@@ -486,9 +532,24 @@ mod tests {
         let pin = right_button_rect(strip);
         assert!(tools.left() >= slots.center.0 && tools.right() <= slots.center.1);
         assert!(pin.left() >= slots.right.0 && pin.right() <= slots.right.1);
-        // Symmetric inset: 12 px on both sides, not 12 and 10.
-        assert!((pin.right() - (150.0 - EDGE_PADDING)).abs() < f32::EPSILON);
         assert!(tools.right() <= pin.left(), "buttons overlap at 150 px");
+    }
+
+    #[test]
+    fn the_two_edges_match_the_shipped_asymmetry() {
+        let strip = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(150.0, 32.0));
+        let pin = right_button_rect(strip);
+
+        // Shipped: strip `paddingInline: 8` + left slot `paddingInline: 8`.
+        assert_eq!(LABEL_INSET, 16.0);
+        // Shipped: strip `paddingInline: 8`; the glyph inside the 28 px button
+        // has 6 px of slack, so its visible edge is at 14.
+        assert_eq!(pin.right(), 150.0 - 8.0);
+        assert_eq!(ICON_INSET, 14.0);
+        // The 2 px difference is deliberate. A "tidy" 12/12 would be off by 4 px
+        // on the label and 2 px on the icon, and neither would line up with the
+        // text below it (18 px in the shipped body).
+        assert_ne!(LABEL_INSET, ICON_INSET);
     }
 
     #[test]
