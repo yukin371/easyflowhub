@@ -1,29 +1,35 @@
-//! The quick-note shell (Phase 1, batch 1a).
+//! One quick-note window, hosted as an egui viewport.
 //!
-//! This is the product window under construction, **not** the spike. The spike
-//! measures a reveal path; this draws the chrome a user will actually see, and the
-//! two are kept apart so that "the title strip made the p95 worse" is a question
-//! with an answer instead of a guess. The spike is deleted at T-Gate 0; this file
-//! stays.
+//! Batch 1a drew this inside the event loop's only window. 1b.2 gives every note
+//! its own viewport so that closing one destroys one OS window and leaves the
+//! others alone (parity Q5). The process root moved to [`crate::hub`], which is
+//! why this file no longer owns `run_native`.
 //!
 //! ## Window creation order is copied from S1 on purpose
 //!
 //! `with_visible(false)` → find the handle → place in **physical** pixels → show
 //! without activation. That is the order the 48.9 ms p95 was measured in. Batch 1a
 //! changes content only, so if a reveal ever looks slower the window path is not
-//! the suspect.
+//! the suspect. 1b.2 keeps it for a second reason: a viewport's window only exists
+//! once eframe has created it, and `place_hidden` must run before the first frame
+//! is composited or the note appears for one frame at the wrong size.
 //!
 //! ## What "close" means here
 //!
-//! There is no tray yet, so closing the window ends the process (decision D7 in
-//! [the batch plan](../../../docs/plans/2026-11-25-phase1-quicknote-shell.md)).
-//! The log line already carries `windows_before/after` so batch 1b can switch to
-//! "destroy the viewport, keep the process" without touching the criterion.
+//! The note asks its viewport to close; the controller stops declaring the
+//! viewport on the next pass, eframe drops the window, and the log records the
+//! window count *after* the drop. Neither this file nor the controller keeps a
+//! shadow note around: Q5 says the window is gone, so there must be nothing left
+//! holding a handle to it.
 
-use std::sync::atomic::AtomicU32;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
-use hub_core::{place_note, NoteAppearance, NoteSpec, PixelRect, SpikeSettings, STRIP_HEIGHT};
+use hub_core::{
+    NoteAppearance, NotePlacement, NoteSpec, PixelRect, SpikeSettings, MIN_NOTE_HEIGHT,
+    MIN_NOTE_WIDTH,
+};
 use hub_editor::Editor;
 use hub_ui::quicknote::{self, StripState};
 use hub_ui::Palette;
@@ -32,70 +38,52 @@ use crate::esc;
 use crate::keys;
 use crate::log::Log;
 
-pub const NOTE_TITLE: &str = "easyflowhub-note";
+/// Prefix of every note window title. The suffix is the note id.
+///
+/// The title is also the only bridge from a viewport to its `HWND`: eframe 0.31
+/// exposes a raw handle on `Frame`, but a deferred viewport's callback only
+/// receives a `Context`. Titles are invisible here (no decorations, no taskbar
+/// entry), so the suffix costs nothing and keeps the lookup exact instead of
+/// "the nth window that looks like a note".
+pub const TITLE_PREFIX: &str = "easyflowhub-note";
 
-pub struct Config {
-    pub settings: SpikeSettings,
+pub fn title(id: u32) -> String {
+    format!("{TITLE_PREFIX}#{id}")
+}
+
+/// How many note windows this process has open right now.
+///
+/// `top_level_windows()` also returns three windows nobody asked for -- winit's
+/// 14×14 event target and the two IME hosts -- so a raw count would move for
+/// reasons unrelated to notes and make the Q5 evidence unreadable.
+pub fn open_notes() -> usize {
+    hub_win::window::top_level_windows()
+        .iter()
+        .filter(|window| window.title.starts_with(TITLE_PREFIX))
+        .count()
+}
+
+/// What the controller hands over when it spawns a note.
+pub struct Spawn {
+    pub id: u32,
+    pub spec: NoteSpec,
+    /// Resolved by the controller, because the cursor position belongs to the
+    /// moment the user asked for a note -- not to the frame the window appears.
+    pub placement: NotePlacement,
     pub scale: f32,
+    pub settings: Arc<SpikeSettings>,
     pub lite: bool,
     pub log: Arc<Log>,
 }
 
-/// Open the note shell and run until it is closed.
-pub fn run(config: Config) -> ! {
-    let spec = NoteSpec {
-        width: config.settings.quick_note.width as f32,
-        height: config.settings.quick_note.height as f32,
-        margin: config.settings.margin.max(0),
-    };
-
-    config.log.mark(
-        0,
-        "note_start",
-        &format!(
-            "logical={}x{} min={}x{} strip={} lite={} scale={:.2}",
-            spec.width,
-            spec.height,
-            hub_core::MIN_NOTE_WIDTH,
-            hub_core::MIN_NOTE_HEIGHT,
-            STRIP_HEIGHT,
-            config.lite,
-            config.scale
-        ),
-    );
-
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(NOTE_TITLE)
-            .with_inner_size([spec.width, spec.height])
-            .with_min_inner_size([hub_core::MIN_NOTE_WIDTH, hub_core::MIN_NOTE_HEIGHT])
-            .with_visible(false)
-            .with_decorations(false)
-            .with_resizable(true)
-            .with_taskbar(false)
-            .with_always_on_top(),
-        vsync: true,
-        ..Default::default()
-    };
-
-    let result = eframe::run_native(
-        NOTE_TITLE,
-        options,
-        Box::new(move |cc| Ok(Box::new(NoteShell::new(cc, config, spec)))),
-    );
-
-    match result {
-        Ok(()) => std::process::exit(0),
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
-    }
-}
-
-struct NoteShell {
+pub struct NoteShell {
+    id: u32,
+    title: String,
+    spec: NoteSpec,
+    placement: NotePlacement,
     log: Arc<Log>,
-    hwnd: isize,
+    lite: bool,
+    hwnd: Option<isize>,
     strip: StripState,
     palette: Palette,
     appearance: NoteAppearance,
@@ -105,106 +93,232 @@ struct NoteShell {
     /// hidden. Comparing first is what stops a 500 ms refresh from blinking it.
     last_theme: Option<hub_editor::Theme>,
     editor: Option<Editor>,
-    escape: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    escape: Arc<AtomicBool>,
     esc_presses: Arc<AtomicU32>,
     /// Shortcuts pressed in the island's subclass proc or in egui, waiting for the
-    /// next `update`. See [`keys`] for why they cannot act where they are seen.
+    /// next frame. See [`keys`] for why they cannot act where they are seen.
     keys: keys::Bus,
     closing: bool,
     last_island: Option<PixelRect>,
-    ppp_done: bool,
-    scale: f32,
+    /// Last `pixels_per_point` this note laid out at, for the transition log.
+    last_ppp: f32,
 }
 
 impl NoteShell {
-    fn new(cc: &eframe::CreationContext<'_>, config: Config, spec: NoteSpec) -> Self {
-        let ctx = cc.egui_ctx.clone();
-        let appearance = config.settings.quick_note.appearance.clone();
+    pub fn new(spawn: Spawn) -> Self {
+        let appearance = spawn.settings.quick_note.appearance.clone();
         let palette = Palette::from_colors(&appearance.colors);
-
-        match hub_ui::theme::install_fonts(&ctx) {
-            Some(font) => config.log.mark(0, "fonts", &format!("cjk={font}")),
-            None => config
-                .log
-                .mark(0, "fonts", "no CJK font found; text renders as tofu"),
-        }
-
-        let hwnd = match hub_win::window::find_by_title(NOTE_TITLE) {
-            Some(handle) => handle,
-            None => {
-                config.log.mark(0, "note_fatal", "window handle not found");
-                std::process::exit(1);
-            }
-        };
-        let dwm = hub_win::dwm::apply(hwnd, config.lite);
-        config.log.mark(0, "dwm", &format!("applied={dwm:?}"));
-
-        // Place before the first frame: a reveal must never have to catch up with
-        // a resize, and a window that appears at 0,0 for one frame is worse than
-        // one that appears 100 ms late.
-        let cursor = hub_win::cursor_pos().unwrap_or((0, 0));
-        let (work, monitor_scale) = {
-            let cache = hub_win::MonitorCache::refresh();
-            let monitor = cache.at(cursor.0, cursor.1);
-            (
-                hub_core::Rect::new(
-                    monitor.work.0,
-                    monitor.work.1,
-                    monitor.work.2,
-                    monitor.work.3,
-                ),
-                monitor.scale,
-            )
-        };
-        let placement = place_note(cursor, work, spec, monitor_scale);
-        hub_win::window::place_hidden(
-            hwnd,
-            placement.x,
-            placement.y,
-            placement.width,
-            placement.height,
-        );
-        hub_win::window::show_without_activation(hwnd);
-        config.log.mark(
+        spawn.log.mark(
             0,
-            "note_window",
+            "note_begin",
             &format!(
-                "{}x{}+{}+{} cursor={},{} monitor_scale={monitor_scale:.2} work={}x{} min={}x{}",
-                placement.width,
-                placement.height,
-                placement.x,
-                placement.y,
-                cursor.0,
-                cursor.1,
-                work.width(),
-                work.height(),
-                (hub_core::MIN_NOTE_WIDTH * monitor_scale).round() as i32,
-                (hub_core::MIN_NOTE_HEIGHT * monitor_scale).round() as i32,
+                "id={} logical={}x{} placement={}x{}+{}+{} scale={:.2}",
+                spawn.id,
+                spawn.spec.width,
+                spawn.spec.height,
+                spawn.placement.width,
+                spawn.placement.height,
+                spawn.placement.x,
+                spawn.placement.y,
+                spawn.scale
             ),
         );
 
-        // The zoom factor is applied on the first frame, not here: at creation
-        // `pixels_per_point` still reports the system default (1.0), so dividing
-        // by it would ask for 1.5 on top of a monitor that is already 1.5 and the
-        // island would be laid out at 2.25 -- measured 2026-11-25 as a 15000 px
-        // child window. `update` sees the real native scale.
-
         Self {
-            log: config.log,
-            hwnd,
+            id: spawn.id,
+            title: title(spawn.id),
+            spec: spawn.spec,
+            placement: spawn.placement,
+            log: spawn.log,
+            lite: spawn.lite,
+            hwnd: None,
             strip: StripState::default(),
             palette,
             appearance,
             last_theme: None,
             editor: None,
-            escape: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            escape: Arc::new(AtomicBool::new(false)),
             esc_presses: Arc::new(AtomicU32::new(0)),
             keys: keys::Bus::new(),
             closing: false,
             last_island: None,
-            ppp_done: false,
-            scale: monitor_scale,
+            last_ppp: 0.0,
         }
+    }
+
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.closing
+    }
+
+    /// True once the OS window was found and placed.
+    pub fn attached(&self) -> bool {
+        self.hwnd.is_some()
+    }
+
+    /// The viewport description, re-applied every pass.
+    ///
+    /// egui patches a builder by diffing it against the one it recorded, so a
+    /// constant builder is a no-op after the window exists -- which is what keeps
+    /// a user-resized window from snapping back to `spec` on the next frame.
+    pub fn builder(&self) -> egui::ViewportBuilder {
+        egui::ViewportBuilder::default()
+            .with_title(&self.title)
+            .with_inner_size([self.spec.width, self.spec.height])
+            .with_min_inner_size([MIN_NOTE_WIDTH, MIN_NOTE_HEIGHT])
+            .with_visible(false)
+            .with_decorations(false)
+            .with_resizable(true)
+            .with_taskbar(false)
+            .with_always_on_top()
+    }
+
+    /// One frame of this note. Called from the deferred viewport callback.
+    pub fn frame(&mut self, ctx: &egui::Context) {
+        if self.closing {
+            return;
+        }
+
+        // Alt+F4 and anything else that closes the OS window behind egui's back.
+        // Treated as a close request rather than an error: the window is already
+        // going away, and logging it is what keeps it distinguishable from Esc.
+        if ctx.input(|input| input.viewport().close_requested()) {
+            self.close(ctx, "os");
+            return;
+        }
+
+        if self.hwnd.is_none() && !self.attach() {
+            // eframe creates the window before the first callback, so a miss means
+            // the lookup raced the creation. Ask again instead of parking the note
+            // half-built: without a handle there is no island and no close.
+            self.log
+                .mark(0, "note_window", &format!("id={} waiting_for_handle", self.id));
+            ctx.request_repaint_after(Duration::from_millis(50));
+            return;
+        }
+
+        // Esc arrives through the island's subclass proc, which cannot re-enter
+        // window code; the flag defers it to here. The repaint request that comes
+        // with it is what makes closing take one press instead of three.
+        if self.escape.swap(false, Ordering::SeqCst) {
+            let presses = self.esc_presses.swap(0, Ordering::SeqCst);
+            self.log
+                .mark(0, "note_esc", &format!("id={} presses={presses}", self.id));
+            self.close(ctx, "esc");
+            return;
+        }
+
+        // Shortcuts seen on the egui side. While the island has focus these keys
+        // never reach winit, so the two paths cannot both fire for one press.
+        if let Some(press) = keys::egui_press(ctx) {
+            if let Some(action) = keys::resolve(press) {
+                self.keys.post(action, ctx);
+            }
+        }
+        if let Some(action) = self.keys.take() {
+            self.act(ctx, action);
+            if self.closing {
+                return;
+            }
+        }
+
+        // No zoom factor is applied here on purpose. `set_zoom_factor` is global to
+        // the `Context`, so one note would rescale every other note's window; with
+        // viewports on different monitors that is not a rounding difference, it is
+        // the wrong scale everywhere. winit reports the window's own
+        // `pixels_per_point` a frame or two after creation (the window is created
+        // while still parked on the old monitor), and every rectangle below is
+        // recomputed from it each frame, so the island corrects itself.
+        let ppp = ctx.pixels_per_point().max(0.1);
+        if (ppp - self.last_ppp).abs() > 0.01 {
+            self.log.mark(
+                0,
+                "note_ppp",
+                &format!(
+                    "id={} ppp={ppp:.2} (was {:.2})",
+                    self.id, self.last_ppp
+                ),
+            );
+            self.last_ppp = ppp;
+        }
+
+        let output = quicknote::draw(ctx, &mut self.strip, self.palette);
+
+        if output.actions.drag {
+            // Handing the drag to winit is what makes the whole strip a title bar
+            // without a per-slot hit region: the OS moves the window from here on.
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if output.actions.toggle_pin {
+            self.toggle_pin(ctx);
+        }
+        if output.actions.toggle_tools {
+            self.toggle_tools();
+        }
+
+        // The island is a native child window: it must be told the hole's size in
+        // physical pixels, or the strip's 32 px would be covered by text. The
+        // rectangle is clamped to the OS client area because egui's first frame
+        // reports a 10000 px placeholder screen rect; a child window built from
+        // that is not "a bit large", it is one the compositor has to clip.
+        let (client_w, client_h) = hub_win::window::client_size(self.hwnd.unwrap_or(0));
+        let client = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::Vec2::new(client_w as f32 / ppp, client_h as f32 / ppp),
+        );
+        let content = output.content.intersect(client);
+        let rect = PixelRect::from_logical(
+            [
+                content.min.x,
+                content.min.y,
+                content.width(),
+                content.height(),
+            ],
+            ppp,
+        );
+        self.sync_editor(ctx, rect);
+
+        // A shell must not spin: egui repaints on input, and the island paints
+        // itself. Without this the note would draw 60 fps of identical frames.
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
+    /// Find, place, show and focus this note's OS window -- once.
+    fn attach(&mut self) -> bool {
+        let Some(hwnd) = hub_win::window::find_by_title(&self.title) else {
+            return false;
+        };
+        let dwm = hub_win::dwm::apply(hwnd, self.lite);
+        hub_win::window::place_hidden(
+            hwnd,
+            self.placement.x,
+            self.placement.y,
+            self.placement.width,
+            self.placement.height,
+        );
+        hub_win::window::show_without_activation(hwnd);
+        // A second note is created while the user is still in the first one, so the
+        // foreground has to be moved explicitly. Q19 asks for the caret in the text
+        // on open; `SetFocus` on an inactive window fails and the first keystroke
+        // would go to the previous note.
+        let foreground = hub_win::window::focus(hwnd);
+        self.hwnd = Some(hwnd);
+        self.log.mark(
+            0,
+            "note_window",
+            &format!(
+                "id={} {}x{}+{}+{} dwm={dwm:?} foreground={foreground}",
+                self.id,
+                self.placement.width,
+                self.placement.height,
+                self.placement.x,
+                self.placement.y
+            ),
+        );
+        true
     }
 
     /// Translate the user's logical appearance into the editor's physical theme.
@@ -230,9 +344,10 @@ impl NoteShell {
 
     fn sync_editor(&mut self, ctx: &egui::Context, rect: PixelRect) {
         let theme = self.theme_for(ctx);
+        let hwnd = self.hwnd.unwrap_or(0);
 
         match self.editor.as_mut() {
-            None => match Editor::create(self.hwnd, rect, &theme) {
+            None => match Editor::create(hwnd, rect, &theme) {
                 Ok(mut editor) => {
                     editor.on_escape(esc::handler(
                         self.escape.clone(),
@@ -253,14 +368,20 @@ impl NoteShell {
                     self.log.mark(
                         0,
                         "editor_focus",
-                        &format!("focused={} caret={:?}", editor.is_focused(), editor.caret()),
+                        &format!(
+                            "id={} focused={} caret={:?}",
+                            self.id,
+                            editor.is_focused(),
+                            editor.caret()
+                        ),
                     );
                     self.last_theme = Some(theme.clone());
                     self.log.mark(
                         0,
                         "island_created",
                         &format!(
-                            "rect={}x{}+{}+{} ppp={:.2} pt={} pad={}x{} caret={}",
+                            "id={} rect={}x{}+{}+{} ppp={:.2} pt={} pad={}x{} caret={}",
+                            self.id,
                             rect.width,
                             rect.height,
                             rect.x,
@@ -285,7 +406,10 @@ impl NoteShell {
                     self.log.mark(
                         0,
                         "island_rect",
-                        &format!("{}x{}+{}+{}", rect.width, rect.height, rect.x, rect.y),
+                        &format!(
+                            "id={} {}x{}+{}+{}",
+                            self.id, rect.width, rect.height, rect.x, rect.y
+                        ),
                     );
                 }
             }
@@ -297,7 +421,7 @@ impl NoteShell {
     /// everything that touches a window handle or the control happens here.
     fn act(&mut self, ctx: &egui::Context, action: keys::Action) {
         self.log
-            .mark(0, "note_key", &format!("action={action:?}"));
+            .mark(0, "note_key", &format!("id={} action={action:?}", self.id));
         match action {
             keys::Action::Close => self.close(ctx, "shortcut"),
             keys::Action::TogglePin => self.toggle_pin(ctx),
@@ -314,8 +438,11 @@ impl NoteShell {
         } else {
             egui::WindowLevel::Normal
         }));
-        self.log
-            .mark(0, "note_pin", &format!("pinned={}", self.strip.pinned));
+        self.log.mark(
+            0,
+            "note_pin",
+            &format!("id={} pinned={}", self.id, self.strip.pinned),
+        );
     }
 
     fn toggle_tools(&mut self) {
@@ -323,7 +450,7 @@ impl NoteShell {
         self.log.mark(
             0,
             "note_tools",
-            &format!("open={}", self.strip.tools_open),
+            &format!("id={} open={}", self.id, self.strip.tools_open),
         );
     }
 
@@ -354,138 +481,79 @@ impl NoteShell {
             0,
             "note_history",
             &format!(
-                "{} can={available} len={}",
+                "id={} {} can={available} len={}",
+                self.id,
                 if undo { "undo" } else { "redo" },
                 editor.text().chars().count()
             ),
         );
     }
 
-    /// Q5's criterion, logged from the first day it can be observed.
-    fn close(&mut self, ctx: &egui::Context, reason: &str) {        if self.closing {
+    /// Q5's criterion, walked up to the point where only the OS can finish it.
+    ///
+    /// `open_notes` here still counts *this* window: the drop happens at the end of
+    /// the pass. The controller records the count after it (`note_destroyed`); one
+    /// line alone could not distinguish "asked to close" from "closed".
+    fn close(&mut self, ctx: &egui::Context, reason: &str) {
+        if self.closing {
             return;
         }
         self.closing = true;
-        let before = hub_win::window::top_level_windows().len();
         self.log.mark(
             0,
             "note_close",
             &format!(
-                "reason={reason} windows_before={before} windows_after={} island={}x{}+{}+{}",
-                before.saturating_sub(1),
+                "id={} reason={reason} open_notes={} island={}x{}+{}+{}",
+                self.id,
+                open_notes(),
                 self.last_island.map(|r| r.width).unwrap_or(0),
                 self.last_island.map(|r| r.height).unwrap_or(0),
                 self.last_island.map(|r| r.x).unwrap_or(0),
                 self.last_island.map(|r| r.y).unwrap_or(0),
             ),
         );
+        // Close destroys this viewport's window. The controller needs one more pass
+        // to stop declaring it and log the count after the drop, and the request
+        // below is what produces that pass instead of waiting for a mouse move.
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 }
 
-impl eframe::App for NoteShell {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        let color = self.palette.panel;
-        [
-            color.r() as f32 / 255.0,
-            color.g() as f32 / 255.0,
-            color.b() as f32 / 255.0,
-            1.0,
-        ]
+/// A note shell the viewport callback can reach.
+///
+/// `Context::show_viewport_deferred` requires its callback to be `Send + Sync`,
+/// so the shell is handed over behind a `Mutex`. Nothing actually crosses threads:
+/// eframe calls the callback from the event-loop thread, and every handle inside
+/// the shell is thread-affine to it. The `unsafe` impls assert exactly that, and
+/// [`Shared::lock`] checks it instead of trusting this comment.
+pub struct Shared {
+    thread: std::thread::ThreadId,
+    shell: Mutex<NoteShell>,
+}
+
+// SAFETY: `NoteShell` owns an `HWND` and a RichEdit subclass procedure, both only
+// valid from the thread that created them. `Shared` never hands the shell to
+// another thread -- `Send + Sync` exists only to satisfy egui's callback bound --
+// and `lock()` panics if it is ever called from somewhere else.
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+impl Shared {
+    pub fn new(shell: NoteShell) -> Arc<Self> {
+        Arc::new(Self {
+            thread: std::thread::current().id(),
+            shell: Mutex::new(shell),
+        })
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.closing {
-            return;
-        }
-
-        // Esc arrives through the island's subclass proc, which cannot re-enter
-        // window code; the flag defers it to here. The repaint request that comes
-        // with it is what makes closing take one press instead of three.
-        if self
-            .escape
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
-            let presses = self
-                .esc_presses
-                .swap(0, std::sync::atomic::Ordering::SeqCst);
-            self.log
-                .mark(0, "note_esc", &format!("presses={presses}"));
-            self.close(ctx, "esc");
-            return;
-        }
-
-        // Shortcuts seen on the egui side. While the island has focus these keys
-        // never reach winit, so the two paths cannot both fire for one press.
-        if let Some(press) = keys::egui_press(ctx) {
-            if let Some(action) = keys::resolve(press) {
-                self.keys.post(action, ctx);
-            }
-        }
-        if let Some(action) = self.keys.take() {
-            self.act(ctx, action);
-            if self.closing {
-                return;
-            }
-        }
-
-        if !self.ppp_done {
-            let native = ctx.pixels_per_point();
-            if (native - self.scale).abs() > 0.01 {
-                ctx.set_zoom_factor(self.scale / native);
-            }
-            self.log.mark(
-                0,
-                "set_ppp",
-                &format!(
-                    "native_ppp={native:.2} target={:.2} effective={:.2}",
-                    self.scale,
-                    ctx.pixels_per_point()
-                ),
-            );
-            self.ppp_done = true;
-        }
-
-        let output = quicknote::draw(ctx, &mut self.strip, self.palette);
-
-        if output.actions.drag {
-            // Handing the drag to winit is what makes the whole strip a title bar
-            // without a per-slot hit region: the OS moves the window from here on.
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
-        if output.actions.toggle_pin {
-            self.toggle_pin(ctx);
-        }
-        if output.actions.toggle_tools {
-            self.toggle_tools();
-        }
-
-        // The island is a native child window: it must be told the hole's size in
-        // physical pixels, or the strip's 32 px would be covered by text. The
-        // rectangle is clamped to the OS client area because egui's first frame
-        // reports a 10000 px placeholder screen rect; a child window built from
-        // that is not "a bit large", it is one the compositor has to clip.
-        let ppp = ctx.pixels_per_point().max(0.1);
-        let (client_w, client_h) = hub_win::window::client_size(self.hwnd);
-        let client = egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::Vec2::new(client_w as f32 / ppp, client_h as f32 / ppp),
+    pub fn lock(&self) -> MutexGuard<'_, NoteShell> {
+        assert_eq!(
+            std::thread::current().id(),
+            self.thread,
+            "a note shell is only valid on the event-loop thread that created its island"
         );
-        let content = output.content.intersect(client);
-        let rect = PixelRect::from_logical(
-            [
-                content.min.x,
-                content.min.y,
-                content.width(),
-                content.height(),
-            ],
-            ppp,
-        );
-        self.sync_editor(ctx, rect);
-
-        // A shell must not spin: egui repaints on input, and the island paints
-        // itself. Without this the note would draw 60 fps of identical frames.
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        self.shell.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

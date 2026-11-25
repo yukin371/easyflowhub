@@ -12,6 +12,7 @@ mod args;
 mod bench;
 mod editor_bench;
 mod esc;
+mod hub;
 mod keys;
 mod log;
 mod note;
@@ -94,8 +95,9 @@ fn main() {
     let scale = parsed
         .simulate_scale
         .unwrap_or_else(|| primary_scale(&monitors));
-    // Phase 1 batch 1a: the note shell is a product window, not a measurement,
-    // so it takes the same settings but its own size and its own log.
+    // Phase 1: the quick note is its own process model now -- a parked controller
+    // window owns the event loop and every note is a viewport of it (batch 1b.2),
+    // so closing one note no longer ends the process by accident.
     if parsed.note {
         let log_path = parsed
             .log_path
@@ -114,14 +116,13 @@ fn main() {
                 source.as_str()
             ),
         );
-        note::run(note::Config {
+        hub::run(hub::Config {
             settings,
             scale,
             lite,
             log,
         });
     }
-
     let spec = PanelSpec {
         desired_width: settings.panel_width * scale,
         desired_height: settings.panel_height * scale,
