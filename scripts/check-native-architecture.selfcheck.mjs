@@ -110,9 +110,10 @@ test("a workspace that follows the matrix produces no violations", (t) => {
   assert.deepEqual(r.edgeViolations, []);
   assert.deepEqual(r.cycles, []);
   assert.deepEqual(r.symbolViolations, []);
+  assert.deepEqual(r.dependencyViolations, []);
   assert.deepEqual(r.sizeViolations, []);
   assert.equal(r.failed, false);
-  assert.equal(r.sections.length, 5);
+  assert.equal(r.sections.length, 6);
 });
 
 test("the real native/ tree passes, so this self-check is not testing a fiction", () => {
@@ -205,6 +206,52 @@ test("known limitation: a crate:: path inside a doc comment is reported", (t) =>
   crateOf(spec, "hub-core").files["lib.rs"] = "//! never reach for egui::Context here\npub fn noop() {}\n";
   const r = check(t, spec);
   assert.equal(r.symbolViolations.length, 1);
+});
+
+// The three cases below were found by writing the tests above, not by reading
+// the rule: each one is a way to get a banned crate into a layer without ever
+// writing `banned::` in source, which is all the original scan looked at.
+test("class 2: hub-core importing windows_sys is reported (it is the same platform family)", (t) => {
+  const spec = clone();
+  crateOf(spec, "hub-core").deps.push("windows-sys");
+  crateOf(spec, "hub-core").files["lib.rs"] = "use windows_sys::Win32::Foundation::HWND;\n";
+  const r = check(t, spec);
+  assert.equal(r.symbolViolations.length, 1);
+  assert.match(r.symbolViolations[0], /windows_sys.*in hub-core$/);
+});
+
+test("class 2: a banned crate declared in Cargo.toml is reported even when unused", (t) => {
+  const spec = clone();
+  crateOf(spec, "hub-core").deps.push("egui");
+  const r = check(t, spec);
+  assert.equal(r.dependencyViolations.length, 1);
+  assert.match(r.dependencyViolations[0], /hub-core.*forbidden dependency "egui"/);
+});
+
+test("class 2: a banned crate under a target-specific table is still found", (t) => {
+  const spec = clone();
+  const core = crateOf(spec, "hub-core");
+  core.manifestExtra = "[target.'cfg(windows)'.dependencies]\nwindows-sys = \"*\"";
+  const r = check(t, spec);
+  assert.equal(r.dependencyViolations.length, 1);
+  assert.match(r.dependencyViolations[0], /hub-core.*forbidden dependency "windows-sys"/);
+});
+
+test("class 2: a banned crate in [target...dependencies.foo] table form is still found", (t) => {
+  const spec = clone();
+  const core = crateOf(spec, "hub-core");
+  core.manifestExtra = "[target.'cfg(windows)'.dependencies.windows-sys]\nversion = \"*\"";
+  const r = check(t, spec);
+  assert.equal(r.dependencyViolations.length, 1);
+  assert.match(r.dependencyViolations[0], /hub-core.*forbidden dependency "windows-sys"/);
+});
+
+test("class 2 must NOT fire: rusqlite in hub-core and workspace-level tables", (t) => {
+  const spec = clone();
+  // A workspace-level dependency table is not this crate's dependency list.
+  crateOf(spec, "hub-core").manifestExtra = "[workspace.dependencies]\negui = \"*\"";
+  const r = check(t, spec);
+  assert.deepEqual(r.dependencyViolations, []);
 });
 
 // ------------------------------------------------------- class 3: the size ---
