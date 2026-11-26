@@ -278,13 +278,13 @@ pub const TODO_INBOX_TITLE: &str = "待办箱";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{init_schema, DB_FILE};
+    use crate::store::{init_schema, Rebuild, DB_FILE};
     use rusqlite::Connection;
     use std::path::PathBuf;
 
     fn store() -> Store {
-        let conn = Connection::open_in_memory().expect("memory db");
-        init_schema(&conn).expect("schema");
+        let mut conn = Connection::open_in_memory().expect("memory db");
+        init_schema(&mut conn, Rebuild::Defer).expect("schema");
         Store {
             conn,
             path: PathBuf::from(DB_FILE),

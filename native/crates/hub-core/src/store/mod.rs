@@ -31,6 +31,7 @@
 
 mod attachments;
 mod notes;
+mod recent;
 mod schema;
 mod settings;
 
@@ -41,7 +42,8 @@ use rusqlite::Connection;
 
 pub use attachments::{StoredAttachment, ATTACHMENT_DIR};
 pub use notes::{NoteRow, NoteWrite};
-pub use schema::{init_schema, schema, Schema, NOTES_DDL, SCHEMA_VERSION, SETTINGS_DDL};
+pub use recent::{ensure_file_search_recent, FILE_SEARCH_RECENT_DDL};
+pub use schema::{init_schema, schema, Rebuild, Schema, NOTES_DDL, SCHEMA_VERSION, SETTINGS_DDL};
 pub use settings::SettingRow;
 
 /// The `identifier` from `easyflowhub-app/src-tauri/tauri.conf.json`.
@@ -120,9 +122,11 @@ impl Store {
     /// here, where the cause is still visible.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let conn = Connection::open(&path)?;
+        let mut conn = Connection::open(&path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
-        let report = init_schema(&conn)?;
+        // `Defer`: a shell that is here to read or write one note has no business
+        // renaming two Inbox tables. The legacy CHECK is reported, not rewritten.
+        let report = init_schema(&mut conn, Rebuild::Defer)?;
         if let Some(rung) = report.missing.first() {
             return Err(StoreError::Missing(format!(
                 "schema rung `{rung}` (at {} of {SCHEMA_VERSION} after migrating {})",
@@ -166,7 +170,7 @@ impl Store {
     /// migrate the file while we are running, and a cached "we are current" would
     /// then be a claim about a database that no longer exists.
     pub fn schema(&self) -> Result<Schema> {
-        schema::schema(&self.conn)
+        Ok(schema::schema(&self.conn)?)
     }
 
     /// Version of the SQLite actually linked into this binary. Archived on every
@@ -267,7 +271,7 @@ impl Store {
     }
 
     fn table_exists(&self, table: &str) -> Result<bool> {
-        schema::table_exists(&self.conn, table)
+        Ok(schema::table_exists(&self.conn, table)?)
     }
 }
 
@@ -301,9 +305,9 @@ mod tests {
     use super::*;
 
     fn memory() -> Store {
-        let conn = Connection::open_in_memory().expect("memory db");
+        let mut conn = Connection::open_in_memory().expect("memory db");
         conn.busy_timeout(BUSY_TIMEOUT).expect("timeout");
-        init_schema(&conn).expect("schema");
+        init_schema(&mut conn, Rebuild::Defer).expect("schema");
         Store {
             conn,
             path: PathBuf::from(":memory:"),
@@ -314,9 +318,9 @@ mod tests {
     fn schema_creation_is_idempotent() {
         // The product opens a connection per command, so this runs dozens of times
         // per session on an already-migrated file.
-        let store = memory();
-        init_schema(&store.conn).expect("second pass");
-        init_schema(&store.conn).expect("third pass");
+        let mut store = memory();
+        init_schema(&mut store.conn, Rebuild::Defer).expect("second pass");
+        init_schema(&mut store.conn, Rebuild::Defer).expect("third pass");
         assert!(store.integrity_ok().expect("integrity"));
     }
 
@@ -324,7 +328,7 @@ mod tests {
     fn a_legacy_table_without_tags_or_deleted_at_is_migrated_in_place() {
         // This is the shape a 0.1.x build left behind, taken from the migration
         // tests in notes.rs.
-        let conn = Connection::open_in_memory().expect("memory db");
+        let mut conn = Connection::open_in_memory().expect("memory db");
         conn.execute_batch(
             "CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
              content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
@@ -332,7 +336,7 @@ mod tests {
              INSERT INTO notes VALUES ('old', 'Old note', 'preserved', '2026-01-01', '2026-01-02', 0);",
         )
         .expect("legacy schema");
-        init_schema(&conn).expect("migrate");
+        init_schema(&mut conn, Rebuild::Defer).expect("migrate");
         let content: String = conn
             .query_row("SELECT content FROM notes WHERE id = 'old'", [], |row| row.get(0))
             .expect("row survives migration");

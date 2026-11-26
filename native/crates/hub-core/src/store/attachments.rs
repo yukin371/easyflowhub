@@ -161,12 +161,12 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{init_schema, DB_FILE};
+    use crate::store::{init_schema, Rebuild, DB_FILE};
     use rusqlite::Connection;
 
     fn store() -> Store {
-        let conn = Connection::open_in_memory().expect("memory db");
-        init_schema(&conn).expect("schema");
+        let mut conn = Connection::open_in_memory().expect("memory db");
+        init_schema(&mut conn, Rebuild::Defer).expect("schema");
         // A per-process directory so the two tests below cannot see each other's
         // `.pending` files: the assertion "no pending file remains" is only
         // meaningful when the directory is not shared.

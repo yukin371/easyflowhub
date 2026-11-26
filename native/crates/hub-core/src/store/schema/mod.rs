@@ -1,13 +1,14 @@
-//! The schema as a ladder of rungs, with the version *derived* from the file.
+//! The schema is a ladder of rungs, with the version *derived* from the file.
 //!
 //! The obvious thing to do here is `PRAGMA user_version = 6` and be done. Three
 //! measurements say no, and each one is a failure mode that shows up weeks later:
 //!
-//! * **`user_version` is somebody else's field.** The live database is at
-//!   `user_version = 0` because the Tauri build never wrote it, and the S3 gate
-//!   asserts it is still 0 after a native write. Stamping it here would be a silent
-//!   contract change: the next person would write a `user_version`-driven migration
-//!   for a database whose actual migrator is a column probe.
+//! * **`user_version` is a read path write.** The live database is at
+//!   `user_version = 0` and the S3 gate asserts it is still 0 after a native write.
+//!   Stamping it here would be a silent contract change: the next person would write
+//!   a `user_version`-driven migration for a database whose actual migrator is a
+//!   column probe -- and the number would only be right if every writer maintained
+//!   it, including the ones that predate it.
 //! * **A stamped number is a cache with two writers.** If Tauri adds a rung and the
 //!   native store keeps the old stamp, the number is worse than nothing -- it says
 //!   "you are current" on a file that is not. A fact that only one of the two
@@ -36,18 +37,33 @@
 //!   columns), so this is a report, not a refusal; the point is that a downgrade is
 //!   visible instead of being guessed at.
 //!
-//! The one Tauri migration this module does **not** run is the `CHECK`-constraint
-//! rebuild of the Inbox tables (`inbox/schema.rs::migrate_capture_kinds_schema`).
-//! SQLite cannot alter a `CHECK` in place, so that migration renames both tables,
+//! The one migration that is not a rung is the `CHECK`-constraint rebuild of the
+//! Inbox tables: SQLite cannot alter a `CHECK` in place, so it renames both tables,
 //! recreates them and copies the data -- the most dangerous DDL in the product. It
-//! is detected ([`Schema::legacy_capture_kinds`]) rather than attempted: a native
-//! shell that rewrote two tables on open would be taking a risk the Tauri build
-//! already takes on its own next launch, and taking it in the process that only
-//! wanted to read a note is the wrong trade.
+//! lives in [`rebuild`] and the caller decides whether it runs ([`Rebuild::Run`, the
+//! Tauri build's startup path) or is only reported ([`Rebuild::Defer`, the native
+//! shell, which may have opened the file to read a single note and has no business
+//! rewriting two tables).
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, Result};
 
-use super::Result;
+mod rebuild;
+
+/// Whether the caller wants the Inbox `CHECK` rebuild done, or only reported.
+///
+/// The probe is cheap and always runs ([`Schema::legacy_capture_kinds`]); the choice
+/// is whether a file that still carries the pre-audio `CHECK` gets rewritten in this
+/// process. [`Rebuild::Run`] is the Tauri build's startup path, which already owns
+/// that migration. [`Rebuild::Defer`] is everything else -- a native shell that
+/// opened the file to read one note must not rename two tables to do it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rebuild {
+    /// Report `legacy_capture_kinds`, change nothing.
+    Defer,
+    /// Rebuild both Inbox tables in place, copying every column that exists on both
+    /// sides. A file that fails the copy rolls back whole and stays legacy.
+    Run,
+}
 
 /// The highest rung this build knows how to build.
 ///
@@ -127,7 +143,17 @@ pub const INBOX_ATTACHMENT_COLUMNS: &[&str] = &[
 /// written, so opening a database dozens of times per session (one connection per
 /// command is the product's own pattern) costs a handful of `pragma_table_info`
 /// calls and no page writes.
-pub fn init_schema(conn: &Connection) -> Result<Schema> {
+///
+/// The rebuild runs **before** the rungs. It recreates both Inbox tables from
+/// [`INBOX_TABLES_DDL`], i.e. with every column this build knows; the rungs that
+/// follow then find their probes already satisfied and only add the indexes the
+/// rebuild could not create while the renamed tables still held them. The other
+/// order also converges, but it leaves the rebuild responsible for re-creating the
+/// `deleted_at` index it just dropped along with the legacy table.
+pub fn init_schema(conn: &mut Connection, rebuild: Rebuild) -> Result<Schema> {
+    if rebuild == Rebuild::Run {
+        rebuild::capture_kinds(conn)?;
+    }
     for rung in RUNGS {
         if !(rung.probe)(conn)? {
             (rung.apply)(conn)?;
@@ -241,17 +267,22 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 "#;
 
-/// Inbox tables, as `inbox/schema.rs` creates them -- `source_path` included, in the
-/// same position, so a fresh file has the column order the Tauri rebuild's
-/// positional `INSERT ... SELECT` expects.
-const INBOX_DDL: &str = r#"
+/// The two Inbox tables in the shape a fresh file gets: every column this build
+/// knows, `deleted_at` included.
+///
+/// This is also what the rebuild copies into, and that is why `deleted_at` is here
+/// rather than only in its rung's `ALTER`: a rebuilt file must be current without a
+/// second pass, and the copy names its columns, so a table that is missing one
+/// simply does not receive it.
+const INBOX_TABLES_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS inbox_items (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file', 'audio')),
     title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
     captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL,
-    converted_note_id TEXT DEFAULT NULL
+    converted_note_id TEXT DEFAULT NULL,
+    deleted_at TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS inbox_attachments (
@@ -262,7 +293,13 @@ CREATE TABLE IF NOT EXISTS inbox_attachments (
     size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL,
     source_path TEXT
 );
+"#;
 
+/// Kept apart from the tables on purpose: `ALTER TABLE ... RENAME` carries the
+/// index along to the renamed table, so a rebuild cannot create a same-named index
+/// while the legacy table still holds it. The rebuild drops the legacy tables first
+/// and calls this afterwards.
+const INBOX_INDEXES_DDL: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_inbox_items_captured_at ON inbox_items(captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_inbox_items_archived_at ON inbox_items(archived_at, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_inbox_attachments_item_id ON inbox_attachments(item_id, created_at);
@@ -316,7 +353,8 @@ fn inbox_tables_exist(conn: &Connection) -> Result<bool> {
 }
 
 fn inbox_tables(conn: &Connection) -> Result<()> {
-    conn.execute_batch(INBOX_DDL)?;
+    conn.execute_batch(INBOX_TABLES_DDL)?;
+    conn.execute_batch(INBOX_INDEXES_DDL)?;
     Ok(())
 }
 
@@ -434,20 +472,20 @@ mod tests {
     use super::*;
 
     fn memory() -> Connection {
-        let conn = Connection::open_in_memory().expect("memory db");
-        init_schema(&conn).expect("schema");
+        let mut conn = Connection::open_in_memory().expect("memory db");
+        init_schema(&mut conn, Rebuild::Defer).expect("schema");
         conn
     }
 
     #[test]
     fn a_fresh_file_is_at_the_current_version() {
-        let conn = Connection::open_in_memory().expect("memory db");
+        let mut conn = Connection::open_in_memory().expect("memory db");
         // Before init there is nothing, and "nothing" is version 0 -- not an error.
         let empty = schema(&conn).expect("measure");
         assert_eq!(empty.version, 0);
         assert!(!empty.is_current());
 
-        let current = init_schema(&conn).expect("schema");
+        let current = init_schema(&mut conn, Rebuild::Defer).expect("schema");
         assert_eq!(current.version, SCHEMA_VERSION);
         assert!(current.missing.is_empty(), "missing: {:?}", current.missing);
         assert!(current.ahead.is_empty(), "ahead: {:?}", current.ahead);
@@ -457,7 +495,7 @@ mod tests {
     #[test]
     fn a_legacy_file_ends_with_the_same_columns_as_a_fresh_one() {
         // The 0.1.x shape: no `tags`, no `deleted_at`, no Inbox tables at all.
-        let conn = Connection::open_in_memory().expect("memory db");
+        let mut conn = Connection::open_in_memory().expect("memory db");
         conn.execute_batch(
             "CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
              content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
@@ -483,7 +521,7 @@ mod tests {
         assert_eq!(before.version, 1, "notes exists, nothing else: {:?}", before.missing);
         assert!(before.legacy_capture_kinds, "the old CHECK was not noticed");
 
-        let after = init_schema(&conn).expect("migrate");
+        let after = init_schema(&mut conn, Rebuild::Defer).expect("migrate");
         assert_eq!(after.version, SCHEMA_VERSION);
         assert!(after.missing.is_empty(), "missing: {:?}", after.missing);
         // The same columns as a fresh file -- compared as a set for `notes` and
@@ -499,27 +537,68 @@ mod tests {
             expected.sort();
             assert_eq!(migrated, expected, "column set of {table} differs after migrating");
         }
-        // `inbox_attachments` is the exception worth pinning in order: the Tauri
-        // rebuild copies it with a positional `INSERT ... SELECT`, so the column a
-        // migration adds has to land in the slot that statement expects.
+        // `inbox_attachments` is compared in order rather than as a set: a 0.1.x file
+        // gets `source_path` from an `ALTER` (appended last) and a fresh one from the
+        // DDL, which also lists it last. Keeping them equal means a rebuilt file and
+        // an altered one are indistinguishable, which is what the rebuild test asserts.
         assert_eq!(
             columns(&conn, "inbox_attachments").expect("migrated columns"),
             columns(&fresh, "inbox_attachments").expect("fresh columns"),
-            "inbox_attachments must keep the order the positional copy relies on"
+            "inbox_attachments: a migrated file must look like a fresh one"
         );
         let content: String = conn
             .query_row("SELECT content FROM notes WHERE id = 'old'", [], |row| row.get(0))
             .expect("row survives migration");
         assert_eq!(content, "preserved");
-        // The rebuild stays Tauri's job: reporting it is the whole contract here.
-        assert!(after.legacy_capture_kinds, "the CHECK is not this module's to rewrite");
+        // The caller deferred the rebuild, so the old CHECK is reported and left
+        // alone even though the additive rungs did run.
+        assert!(after.legacy_capture_kinds, "a Deferring caller must not rewrite the CHECK");
+    }
+
+    #[test]
+    fn a_legacy_attachment_gains_source_path_without_losing_its_row() {
+        // The F10 column arrived after the Inbox tables existed; a file without it
+        // must get it back without a rebuild, and the rows must survive.
+        let mut conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(
+            "CREATE TABLE inbox_items (
+                 id TEXT PRIMARY KEY,
+                 kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file', 'audio')),
+                 title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
+                 source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
+                 captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL,
+                 converted_note_id TEXT DEFAULT NULL, deleted_at TEXT DEFAULT NULL);
+             CREATE TABLE inbox_attachments (
+                 id TEXT PRIMARY KEY,
+                 item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
+                 kind TEXT NOT NULL CHECK (kind IN ('image', 'file', 'audio', 'transcript')),
+                 name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
+                 size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL);
+             INSERT INTO inbox_items (id, kind, captured_at) VALUES ('legacy', 'file', '2026-01-01T00:00:00Z');
+             INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at)
+                 VALUES ('att', 'legacy', 'file', 'a.txt', 'text/plain', 'a.txt', 4, '2026-01-01T00:00:00Z');",
+        )
+        .expect("pre-F10 schema");
+
+        init_schema(&mut conn, Rebuild::Defer).expect("additive migration");
+
+        let source: Option<String> = conn
+            .query_row("SELECT source_path FROM inbox_attachments WHERE id = 'att'", [], |row| row.get(0))
+            .expect("column exists and the row survived");
+        assert!(source.is_none(), "a legacy attachment has no canonical source");
+        conn.execute(
+            "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type, filename, size_bytes, created_at, source_path) \
+             VALUES ('att2', 'legacy', 'file', 'b.txt', 'text/plain', 'b.txt', 4, '2026-01-01T00:00:00Z', 'C:/docs/b.txt')",
+            [],
+        )
+        .expect("new rows can carry a source");
     }
 
     #[test]
     fn a_rung_whose_index_went_missing_is_rebuilt_on_open() {
         // A tool that dropped the index used to leave this module permanently
         // behind: the index was only created in the branch that added the column.
-        let conn = memory();
+        let mut conn = memory();
         conn.execute_batch("DROP INDEX idx_notes_deleted_at; DROP INDEX idx_inbox_items_deleted_at;")
             .expect("drop");
 
@@ -527,7 +606,7 @@ mod tests {
         assert_eq!(broken.version, 2, "rung 3 is missing: {:?}", broken.missing);
         assert_eq!(broken.missing, ["notes.deleted_at", "inbox_items.deleted_at"]);
 
-        let repaired = init_schema(&conn).expect("repair");
+        let repaired = init_schema(&mut conn, Rebuild::Defer).expect("repair");
         assert!(repaired.is_current(), "version {} / {:?}", repaired.version, repaired.missing);
         assert!(index_exists(&conn, "idx_notes_deleted_at").expect("probe"));
         assert!(index_exists(&conn, "idx_inbox_items_deleted_at").expect("probe"));
@@ -535,7 +614,7 @@ mod tests {
 
     #[test]
     fn a_column_this_build_does_not_know_is_reported_rather_than_dropped() {
-        let conn = memory();
+        let mut conn = memory();
         conn.execute_batch("ALTER TABLE notes ADD COLUMN color TEXT;")
             .expect("newer build");
 
@@ -546,7 +625,7 @@ mod tests {
 
         // Opening it again must leave the stranger alone: dropping user data to
         // force the file back to "our" shape is not a migration.
-        init_schema(&conn).expect("reopen");
+        init_schema(&mut conn, Rebuild::Defer).expect("reopen");
         assert_eq!(columns(&conn, "notes").expect("columns").last().map(String::as_str), Some("color"));
     }
 
@@ -554,10 +633,10 @@ mod tests {
     fn opening_a_current_file_writes_nothing() {
         // The fingerprint is `sqlite_master`, which is what a byte-level comparison
         // of two databases actually moves; a no-op open must not touch it.
-        let conn = memory();
+        let mut conn = memory();
         let before = schema_fingerprint(&conn);
-        init_schema(&conn).expect("reopen");
-        init_schema(&conn).expect("reopen again");
+        init_schema(&mut conn, Rebuild::Defer).expect("reopen");
+        init_schema(&mut conn, Rebuild::Defer).expect("reopen again");
         assert_eq!(before, schema_fingerprint(&conn));
     }
 
