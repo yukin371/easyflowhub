@@ -40,7 +40,7 @@ G1 门禁写着"T0 功能 parity"，但仓库里一直没有 parity 的对象—
 |---|---|---|---|
 | Q1 | 无系统边框、无系统标题栏 | 看窗口四边：没有系统标题栏，没有系统边框 | ◐ `with_decorations(false)` + `dwm applied=["dark","round","mica"]`；待目视 |
 | Q2 | 默认 400×300 逻辑像素，尺寸取自设置 `quick_note.width/height` | 首次启动为 400×300；把设置改成 500×400 后新建，窗口随之变化 | ✓ 实测默认 `600x450` 物理、改 `500x400` 后 `750x600` 物理（@150%） |
-| Q3 | 最小尺寸 150×60，不允许更小 | 拖到最小仍可点标题条三个按钮、仍可输入 | ◐ `with_min_inner_size(150×60)`，日志 `min=225x90` 物理；待拖动目视 |
+| Q3 | 最小尺寸 150×60，不允许更小 | 拖到最小仍可点标题条三个按钮、仍可输入 | ✓ 2k：`scripts/check-native-edge.py`（23 项，连跑 3 次）用真实拖动判——左右/底边/右下角各改自己那条边（右边缘拖动时原点不动、左边缘拖动时右边缘是常量）；拖过下限停在 225×90 物理（150×60 × 1.5），原点不被拖走；岛跟随（`island_rect` 宽 == 客户区宽、高 == 客户区高 − 条高）。**先补的前提**：无边框窗口 `WM_NCHITTEST` 全回 `HTCLIENT`，系统没有 resize 边框，所以边缘是自己画的（`note/edge.rs`，见 [§8.16](./2026-11-25-phase1-quicknote-shell.md#816-边缘-resize一条边要自己画因为系统没有那条边2k2026-11-26)） |
 | Q4 | 出现在光标所在显示器，四边夹紧在工作区内 | 两台显示器各触发一次，窗口不跨屏、不越界 | ◐ 算法与 7 个单测就绪；本机只触发过单屏（`+1524+1361` 为上翻结果），双屏待验 |
 | Q5 | 关闭即销毁，新建是全新窗口 | 关掉后进程树窗口数回落；新建后滚动位置在顶部 | ✓ 1b.2：每笔记一个 viewport，关闭后外部 `EnumWindows` 只剩其余笔记（`note_close id=1 open_notes=2` → `note_destroyed id=1 open_notes=1`）；新建 `note_begin id=1` → `island_created id=1 caret=(0,0)`，是新的空文档。1b.3 起关完最后一个窗口进程也留着（`hub_idle notes=0 tray=<hwnd>`），窗口数照样回落到 0，只是进程不随之结束 |
 
@@ -190,6 +190,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | 2026-11-26 | 2h Q24 数据恢复回填（✓）：草稿写 `{store_root}/autosave/{id}.json`（与现版同形），`save` 在写库前落盘、成功后删除；打开时按"与行不同且不比行旧"判定，`hub-ui/recover` 手绘三按钮卡片、`note/recover` 执行三种回答。`check-native-recover.py` 15/15（连跑 3 次）。**与现版不互通（`localStorage` vs 文件）**，且"保留当前"会删文件（现版只关对话框、下次再问）。实施记录见 §8.13 |
 | 2026-11-26 | 2i 光标落点（Q19 的"末尾"修正）：带标签的笔记打开时光标停在标签行里，续写的字进了标签（§8.13 的遗留）。`note_text::caret_offset` 给出正文末尾，`hub-editor::caret.rs` 的 `position_of` 把字节换算成 RichEdit 的**字符位置**——`EM_SETSEL` 里一对 `CRLF` 只算 1，按 UTF-16 换算会正好落在标签行开头（实测 `at=8 of=17` vs 对的 `at=7 of=15`）。打开/切换/恢复草稿共用 `park_caret`。`check-native-notes.py` 25/25、`check-native-recover.py` 16/16、`check-native-switcher.py` 22/22、`cargo test` 212 项。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.14 |
 | 2026-11-26 | 2j C5 尺寸记忆（✓）+ `quick_note.schema`：拖动结束后静默 400 ms 才写盘（`note/size.rs`，读改写文件、`sized()` 夹到 150×60…8000×8000），同一进程靠 `Arc<Mutex<(u32,u32)>>`、下次启动靠文件；2 px 容差用来吸收 `逻辑→物理→逻辑` 的取整。`schema` 缺失按 1 处理，遇到更高版本不降级。`check-native-size.py` 11/11。**顺带实测出一个 Q3 的问题**：无边框窗口边缘的 `WM_NCHITTEST` 全返回 `HTCLIENT`（`style=0x16cf0000` 有 `WS_THICKFRAME`），鼠标拖边缘改不了尺寸，门禁因此记 `drag=programmatic`。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.15 |
+| 2026-11-26 | 2k Q3 边缘 resize（✓）：§8.15 挖出的"系统没有 resize 边框"由应用自己补——`note/edge.rs` 的 `Grip`/`grip_at`/`resized` 是纯函数（7 个单测），`Signal` 同时喂 `WM_LBUTTONDOWN` 认领与 `WM_SETCURSOR` 光标；`hub-win` 加 `set_frame`/`window_rect`/`left_button_down`。五条边各改各的、左边缘拖动时右边缘是常量、下限 150×60 自己夹（OS 只拒尺寸不拒移动，否则窗口会边滑边不变窄）。`check-native-edge.py` 23/23（连跑 3 次）。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.16 |
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
 同一轮对话里发现采集脚本把**已启用**的搜狗与微信输入法报成"未安装"。两个独立原因，都已在脚本里修掉：

@@ -1061,7 +1061,7 @@ hit_test inset=1..12 at=right-1..right-12 -> 1 (HTCLIENT)
 
 样式里有 `WS_THICKFRAME`，但 `WM_NCHITTEST` 对窗口边缘一律返回 `HTCLIENT`——所以 OS 的调整大小循环根本没有入口。这不是 C5 的缺陷（尺寸从哪来变，C5 都记），但它让 Q3 判据里的"拖到最小仍可点标题条三个按钮"少了前提：**鼠标拖边缘改不了尺寸**。
 
-修法有两条路，都不在 C5 内：一是像 `note/drag.rs` 那样自绘（边缘 4 px 内按下 → 每帧按光标增量 `SetWindowPos`，可被注入测到）；二是把边缘 hit test 交回 `DefWindowProc`（发 `WM_NCLBUTTONDOWN` 让 OS 接管，但 Q10 已经证明本机注入下 OS 移动/调整循环不接管，测不到）。**这条单独立项**，与 Q3 目视一起做。
+修法有两条路，都不在 C5 内：一是像 `note/drag.rs` 那样自绘（边缘 5 px 内按下 → 每帧按光标增量 `SetWindowPos`，可被注入测到）；二是把边缘 hit test 交回 `DefWindowProc`（发 `WM_NCLBUTTONDOWN` 让 OS 接管，但 Q10 已经证明本机注入下 OS 移动/调整循环不接管，测不到）。**2k 走了第一条**，见 §8.16；`check-native-size.py` 因此从 `drag=programmatic` 变成 `drag=real`。
 
 ### 改在哪
 
@@ -1086,19 +1086,102 @@ hit_test inset=1..12 at=right-1..right-12 -> 1 (HTCLIENT)
 | 窗口不被弹回 | 写盘后客户区宽度 == 拖动后的宽度 |
 | 下一个进程接着用 | 重启后客户区 = 记住的宽度 × scale，且文件没被再写一次 |
 
-`drag=real|programmatic` 记在报告里，如实说明这次是哪种输入改的尺寸。
+`drag=real|programmatic` 记在报告里，如实说明这次是哪种输入改的尺寸。2k 之前边缘拖不动，一直是 `programmatic`；Q3 补上自绘边缘后是真拖（`drag=real 600 -> 360`）。
 
 ### 证据
 
 | 门禁 | 结果 |
 |---|---|
-| `scripts/check-native-size.py` | 11/11（`drag=programmatic`，原因见上） |
+| `scripts/check-native-size.py` | 11/11（2k 之前 `drag=programmatic`，之后 `drag=real`） |
 | `scripts/check-native-notes.py` | 25/25 |
 | `scripts/check-native-switcher.py` | 22/22 |
 | `scripts/check-native-recover.py` | 16/16 |
 | `scripts/check-native-tools.py` / `pin` / `drag` / `manager` | 8/8、11/11、9/9、19/19 |
 | `cargo test --release --workspace` | 220 项（新增 3 项设置、5 项 `Sizer`） |
 | `scripts/check-native-architecture.mjs` | 通过（5 crates，`note.rs` 779 行） |
+
+## 8.16 边缘 resize：一条边要自己画，因为系统没有那条边（2k，2026-11-26）
+
+§8.15 顺带测出来的事，Q3 必须自己收尾：无边框窗口没有系统调整边框。样式里有 `WS_THICKFRAME`，但 `WM_NCHITTEST` 对每条边都回 `HTCLIENT`，OS 的 resize 循环根本没有入口。所以"拖到最小仍可点标题条三个按钮"这句话里的"拖"，得由应用自己实现。
+
+### 一条边，两个窗口
+
+笔记是两扇窗口，按下位置不同，消息落点也不同：
+
+| 按住哪里 | 消息到哪 | 怎么看见 |
+|---|---|---|
+| 标题条（含左上/右上角） | egui 的 strip 拖拽面 | `quicknote::draw` 给出 `actions.drag`，用 `pointer.press_origin()` 判是不是落在左右band里 |
+| 正文区（左右边、底边、右下角） | RichEdit 子窗口 | `hub-editor` 新增的 press 钩子：`WM_LBUTTONDOWN` 先问外壳"这是你的吗" |
+
+第二条的关键是**能认领**（`on_press` 回 `true` 时消息不再往下传）。不认领的话，一次边缘按下会同时做三件事：窗口开始变大、光标被放到按下点、文本开始被框选——而框选会跟着手指跑，松手后还得再点一下才能取消。
+
+### 每帧跟一次，而不是交给模态循环
+
+和 `note/drag.rs` 同构：没有模态循环可以托付，所以每帧问一次窗口在哪儿、光标走了多远，然后 `SetWindowPos` 一次同时改位置和尺寸。按钮状态用 `GetAsyncKeyState`——边缘拖动期间鼠标消息在 RichEdit 那边，egui 的 `pointer.primary_down()` 只认落进 egui 自己窗口的按下。
+
+三条约束写进纯函数 `resized()`，由 7 个单测钉住：
+
+- **没按住的边不动**：拖左边只改 `x` 与 `width`，右边缘必须是常量；
+- **下限自己夹**：`with_min_inner_size` 由 `WM_GETMINMAXINFO` 生效，但 OS 只拒绝尺寸、不会拒绝移动——不自己夹就会出现"窗口一边往左滑、一边变不窄"的抖动。夹到 150×60 时，左边缘拖动要把 `x` 钉在 `右边缘 - 150`；
+- **一次调用两轴都改**：左边缘是"移动 + 缩放"，分两次 `SetWindowPos` 会有一帧只生效一半。
+
+### band 是 5 逻辑像素，且没有上边
+
+- 5 px：原生 resize 边框是 `SM_CXSIZEFRAME + SM_CXPADDEDBORDER`（100% 下 8 px），但这扇窗没有边框可躲，band 就是可见的边缘本身，5 px 比 8 px 更"对得上眼睛"。
+- 没有上边：上边是标题条，按住它就等于移动窗口（Q10）。同 5 px 两个含义会让最常用的手势在条顶失效。
+- 窗口太窄时（小于 4 个 band）一律不认：创建期有一帧客户区是 1 px，那时"左右都算"会让两个分支互相抵消。
+
+### 光标也要跟着改
+
+一条只有按下去才知道存在的边，等于没有。两扇窗口各答一次：
+
+- 子窗口：`WM_SETCURSOR` 里问同一个 band，命中就 `SetCursor(IDC_SIZEWE / IDC_SIZENS / IDC_SIZENWSE / IDC_SIZENESW)` 并认领消息，没命中就交给 RichEdit 保留 I 形；
+- 标题条：egui 侧 `ctx.set_cursor_icon(ResizeHorizontal)`，否则同一条边在 y<32 的地方变成箭头。
+
+### 改在哪
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/note/edge.rs`（新） | `Grip` / `grip_at()`（纯函数）、`resized()`（纯函数）、`Signal`（press + hover 两个钩子共用一次计算）、`Resize`（每帧跟光标）；7 个单测 |
+| `crates/hub-editor/src/dispatch.rs` | `Press`/`Shape`；`WM_LBUTTONDOWN` 先问 `on_press`（可认领），`WM_SETCURSOR` 走 `on_hover`；7 个回调安装方法搬到这里（`lib.rs` 撞 800 行）；新增 3 个单测 |
+| `crates/hub-win/src/window.rs` | `set_frame`（移动+缩放，`SWP_NOZORDER|SWP_NOACTIVATE`）、`window_rect`、`left_button_down`（`GetAsyncKeyState`） |
+| `app/src/note.rs` | `mod edge`、`Resize`/`Signal` 字段、strip 上的 band 判定与光标、每帧 `resize_frame` |
+| `app/src/note/island.rs` | 装 `on_press` / `on_hover` 两个钩子 |
+
+### 门禁
+
+`scripts/check-native-edge.py`，23 项，全部真实输入（`SendInput` 按住边拖）：
+
+| 判什么 | 怎么判 |
+|---|---|
+| 右边拖 120 | 宽度 +120、高度不变、原点不变 |
+| 左边拖 -90 | 原点 -90、宽度 +90、**右边缘常量** |
+| 底边拖 70 | 高度 +70，位置与宽度不变 |
+| 右下角拖 (60,40) | 两轴同时变 |
+| 标题条里的左边 band | 走的是 resize 不是移动（原点 +80、宽度 -80） |
+| 光标 | 右/下/右下/条内 band 各是 `IDC_SIZEWE/SIZENS/SIZENWSE/SIZEWE`，正文是 I 形（`0x10005`） |
+| 边缘按下不是正文点击 | 先开工具面板，再拖边 → 面板仍开（认领生效）；点正文 → `note_tools open=false reason=body`（对照） |
+| 下限 | 宽度夹到 225 物理（150×1.5）、高度夹到 90（60×1.5），原点不被拖走 |
+| 岛跟随 | 最后一次 `island_rect` 宽 == 客户区宽，高 == 客户区高 − 条高 |
+| 与 C5 合流 | 停稳后设置文件里的宽高 == 当前客户区 ÷ scale |
+| 日志 | 每次手势一对 `note_resize phase=begin/end`，`grip=` 覆盖 right/left/bottom/bottom-right |
+
+### 证据
+
+| 门禁 | 结果 |
+|---|---|
+| `scripts/check-native-edge.py` | 23/23（连跑 3 次） |
+| `scripts/check-native-notes.py` | 25/25 |
+| `scripts/check-native-tools.py` / `pin` / `drag` / `size` | 8/8、11/11、9/9、11/11 |
+| `scripts/check-native-switcher.py` / `recover` / `manager` | 22/22、16/16、19/19 |
+| `cargo test --release --workspace` | 230 项（新增 7 项 band/夹取、3 项消息路径） |
+| `scripts/check-native-architecture.mjs` | 通过（`note.rs` 752、`lib.rs` 733、`dispatch.rs` 603） |
+
+### 没做的
+
+- **双击标题条最大化**：不属于 Q3，也不在原版行为里。
+- **上边缘 resize**：见上，条就是"移动"。
+- **贴边吸附 / 多屏交界**：Q4 的目视项，与 resize 无关。
 
 ## 9. 变更记录
 
@@ -1123,3 +1206,4 @@ hit_test inset=1..12 at=right-1..right-12 -> 1 (HTCLIENT)
 | 2026-11-26 | 2f Q9：置顶走 `hub_win::window::set_topmost`（`ViewportCommand::WindowLevel` 会按 winit 缓存的 `WindowFlags` 重写整套样式，把 `with_visible(false)` 建、`move_on_screen` 显示的笔记窗口直接抹掉——Q16 只读日志所以一直显示正常）；新增 `scripts/lib/winshot.py`（`PrintWindow` 取像素）与 `scripts/check-native-pin.py`（11/11，连跑 3 次）。`toggle_pin` 移入 `note/panel.rs`（§8.11） |
 | 2026-11-26 | 2i 光标落点：`hub-core::note_text::caret_offset` 把光标放在正文末尾而非标签行内；`hub-editor::caret.rs`（从 `lib.rs` 拆出）加 `set_caret`/`position_of`——`EM_SETSEL` 数的是字符位置，`CRLF` 只算 1，按 UTF-16 换算会正好落到标签行开头（实测）。打开、切换、恢复草稿三条路径共用 `park_caret`。`check-native-notes.py` 25/25（Q-L 改判"字进正文、标签不动"）、`check-native-recover.py` 16/16；`cargo test` 212 项（§8.14） |
 | 2026-11-26 | 2j C5 + schema：`note/size.rs`（每帧读客户区、静默 400 ms 才写、2 px 容差、读改写设置文件、`Arc<Mutex<(u32,u32)>>` 供同进程下一扇窗）；`hub-core::settings` 加 `QUICK_NOTE_SCHEMA`/`sized()`/`normalized()`（缺号按 1、更高版本不降级）。`check-native-size.py` 11/11；`cargo test` 220 项。**顺带实测**：无边框窗口边缘 `WM_NCHITTEST` 全返回 `HTCLIENT`（`style=0x16cf0000`），鼠标拖边缘改不了尺寸——属 Q3，另立一项（§8.15） |
+| 2026-11-26 | 2k Q3 边缘 resize：`note/edge.rs`（`Grip`/`grip_at`/`resized` 三个纯函数 + `Resize` 每帧跟光标）、`hub-editor` 的 `Press`/`Shape` 与可认领的 `WM_LBUTTONDOWN`、`WM_SETCURSOR` 光标、`hub-win::set_frame`/`window_rect`/`left_button_down`；回调安装方法搬进 `dispatch.rs`（`lib.rs` 撞 800 行）。`check-native-edge.py` 23/23（连跑 3 次）；回归 25/25、8/8、11/11、9/9、11/11、22/22、16/16、19/19；`cargo test` 230 项（§8.16） |
