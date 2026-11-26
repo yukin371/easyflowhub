@@ -622,7 +622,7 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 |---|---|
 | 工作台（列表 / 搜索 / 收件箱 / 待办 / 脚本 / 设置 / 回收站） | Phase 2 其余批次；`Ctrl+Alt+M` 仍只记 `note_manager target=none phase=2` |
 | `Ctrl+K` 切换器（Q25–Q27）与数据恢复（Q24） | 依赖列表与查询，属工作台批次 |
-| 每窗口记住透明度 | 要 `settings` 表的一行一窗口键；与窗口尺寸记忆（parity C5）一起做 |
+| 每窗口记住透明度 | 要 `settings` 表的一行一窗口键；与窗口尺寸记忆（parity C5）一起做。裁定不做——调透明度是临时动作，C5 本身也刻意不按窗口记 |
 | `store` 的 schema 版本号 | 仍与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉 |
 | 正文长度上限 / 图片与 Markdown | 属 P3，与 1c 的结论无关 |
 
@@ -701,7 +701,6 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | 每窗口记住透明度 | `QuickNotePage` 的 `opacity` 是 `useState`，旧版同样不持久化；原生侧只保留"新笔记初值"（`appearance.window_alpha`）。真要记，与窗口尺寸记忆（parity C5）一起做，别单独给 `settings` 表造一行一窗口的键 |
 | `store` 的 schema 版本号 | 现库与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉。等两边共用一份迁移器时再定 |
 | 工作台按钮的端到端点按 / 改键的写盘方向 | 点一下要在 egui 布局里猜坐标，布局一改门禁就红、且红的原因与行为无关。写路径由 store 与 `manager` 的 `Action` 单测覆盖，窗口行为由 `check-native-manager.py` 覆盖 |
-| 数据恢复（Q24） | 三选一对话框依赖"检测未合并备份"，属 P3 |
 | 收件箱与脚本分区 | 依赖 capture 与执行链路，属 P3；待办分区只读正文里的 `- [ ]` 行，不写回 |
 
 ## 8.10 工具面板：点得到的按钮，点得掉的浮层（2e，2026-11-26）
@@ -874,6 +873,93 @@ Q10 的代码一直"看起来做了"：`quicknote::draw` 在拖拽面上报 `dra
 
 `note.rs` 拆出 `note/drag.rs` 后是 786 行（`drag.rs` 105 行）。§8.10 里"按在按钮上不启动 `StartDrag`"的判断没有变，变的只是"接下来由谁搬窗口"。
 
+## 8.13 数据恢复：一份草稿，三个回答（2h，2026-11-26）
+
+Q24 一直是 `✗`，而且它是唯一一条与"数据安全"直接相关的 parity。这一批把它连起来：写草稿（`save`）、判草稿（`backup`）、问草稿（`note/recover` + `hub-ui/recover`）。
+
+### 草稿从哪来，和现版为什么不同
+
+现版把草稿放在 WebView 的 `localStorage`，键 `easyflowhub_note_autosave_{id}`，值是 `{title, content, tags, timestamp}`（毫秒）。原生窗口没有 origin，也读不到 WebView 的 profile，所以同样的记录写到 `{store_root}/autosave/{id}.json`，**字段逐个相同**（`easyflowhub-app/src/hooks/useBackupRestore.ts` 的 `BackupDraft`）。
+
+字段相同不是为了互通——**两边永远读不到对方的草稿**，这一点写进了 README 的"已知捷径"。相同是为了：门禁能手工造一份与现版同形的文件，以及草稿将来搬进表时列名已经对齐。
+
+写入时机是 `save::Saver::stash`：在 `tick` 决定"要保存"之后、真正写库之前落一次盘，因为**写库失败时这份文件是唯一的副本**。写库成功后 `clear_stash` 删掉它——先删后写会开一个"两份都不存在"的窗口。`Skipped("unchanged")` 也清：光标/段落标记造成的伪差异会让 `tick` 误判一次 dirty，留下的草稿与行完全相同，白白换来下一次打开的一条 `removed=identical`。
+
+### 什么时候问
+
+`backup::inspect` 照抄 `useBackupRestore` 的两个条件，**两个都是"删除而不问"**：
+
+| 情况 | 处理 | 为什么 |
+|---|---|---|
+| 草稿与行相同 | 删除 | 上一次保存已经成功，只是删除没来得及；问它是问"要不要保留你已经有的东西" |
+| `timestamp` 早于 `updated_at` | 删除 | 草稿写在一次已经入库的编辑之前，恢复它会倒退 |
+| `updated_at` 读不出来 | 问 | 宽松方向：宁可多问，也不删一份只是没看懂的文件 |
+| JSON 读不出来 | 不问也不删 | 半写的文件可能还能手工抢救，删了就没了 |
+
+"保留当前"**删除文件**，这一点比现版更彻底：现版的 `clearBackupDraft` 只关对话框，同一个问题下次打开会再问一遍，用户每次都要点一次"使用当前版本"。按钮写着"使用当前版本"，那就应该把它执行掉。
+
+### 三个回答各自写什么
+
+| 按钮 | 编辑器 | 库 | 草稿 |
+|---|---|---|---|
+| 使用当前版本 | 不动 | 不动 | 删除 |
+| 合并到当前内容 | 当前正文 + `\n--- 备份内容 ---\n` + 备份正文；标签取并集；标题不动 | `flush` 立即写 | 成功后删除 |
+| 恢复备份版本 | 备份的显示文本 | `flush` 立即写 | 成功后删除 |
+
+合并的文本与 `useNotesArchive.ts::onMergeDraft` 逐字相同（`[当前, '', '--- 备份内容 ---', 备份].filter(Boolean).join('\n')`，注意 `filter` 之后是**单**换行）。恢复/合并都走 `flush` 而不是等 900 ms：用户刚点完"恢复我的备份"就关窗，不能把刚恢复的文字再丢一次。
+
+### 卡片：手画矩形，因为门禁要点它
+
+`hub-ui::recover::draw` 不排版，所有矩形是卡片尺寸的算术结果，并把三个按钮的 `Rect` 随 `Shown` 返回。看着像在重造布局引擎，实际是：门禁必须点中按钮，而**唯一可靠的坐标来源是画它的那个函数**。若在脚本里硬编码坐标，padding 改 2 px 门禁就红，红的理由与行为无关；更糟的是按钮被画到够不着的地方时，硬编码的点击落在空白处，**同样没有日志**——门禁分不出"没点中"和"点了没反应"。
+
+`note/recover.rs` 把这三个矩形以物理像素写进 `recover_rect`（`card=` / `screen=` 一并记，便于看失败），门禁从日志读坐标再点。
+
+三个实测的坑：
+
+- **egui 第一帧的 `screen_rect` 是占位值**：实测 216×356，而真实客户区是 400×268 逻辑。按它居中会把"使用当前版本"画到 `x = -45`（窗口外）。现在 `recover_frame` 在 area 小于卡片下限时直接跳过并请求下一帧——晚一帧，换来坐标有意义。
+- **按钮行会溢出**：固定 126 px 一个时，卡片被 clamp 到 280 宽而三个按钮要 398 px。现在按钮宽度是"卡片可用宽度除以三"与 126 的较小值。
+- **卡片必须是模态的**：scrim 用 `ctx.screen_rect()`（整窗）而不是正文矩形，并注册一个 `Sense::click` 的交互面。否则标题条的 `•••`、置顶、关闭仍然可点——一个能点掉标题条的"模态"不是模态。门禁直接量这一点：浮层期间点在 `•••` 上，`note_tools` 行数不变。
+
+编辑器是子窗口，卡片画在它下面等于没画——所以浮层出现时 `editor.hide()`，回答后 `show()` + `focus()`。门禁顺手验了这一条（`IsWindowVisible(control)`），因为"点完按钮发现打不了字"是这类浮层最常见的毛病。
+
+### 门禁
+
+`scripts/check-native-recover.py`（15 项）。它自己往临时库插一条内容已知的笔记，再手写草稿文件，所以每个场景的期望文本是常量：
+
+| 判什么 | 怎么判 |
+|---|---|
+| 草稿比行新 → 出卡片 | `note_recover ask=true` 恰好 1 行，且 `recover_rect` 给出三个按钮 |
+| 三个按钮在窗口内 | 用 `client_box` 的宽高逐边比较 |
+| 模态 | 点 `•••` 后 `note_tools` 行数不变 |
+| 恢复 | 行变成草稿的 title/content/tags；草稿文件消失 |
+| 合并 | 正文等于 `当前正文\n--- 备份内容 ---\n备份正文`；标签 `当前 备份`；文件消失 |
+| 保留当前 | `updated_at` 与点击前完全相同；文件消失 |
+| 编辑器回来了 | `IsWindowVisible(RichEdit)` 为真 |
+| 答完不再问 | 重启后 `ask=true` 为 0，`note_recover` 只有 `found=false` 一行 |
+| 陈旧草稿 | `removed=older`，文件消失，无 `ask` |
+| 相同草稿 | `removed=identical`，文件消失，无 `ask` |
+| 打字仍写草稿 | 新进程里输入"再写一行"，2 秒内文件出现且含这三个字 |
+
+两个注入层的新事实（已写进脚本注释）：
+
+- **三个 `WM_CHAR` 连发会丢最后一个**：三次运行里失败两次，草稿只拿到"再写"。改成两次发送、中间停 0.15 s 后稳定；重试条件也从"文件存在"改成"文件内容含目标文字"——`stash` 可能写不止一次，第一个文件不是"按键到了"的证据。
+- 关闭后立刻重启时，**上一次的输入还在 debounce 里**，所以门禁在答完"保留当前"后等 1.4 s 让 autosave 落库，否则下一次打开会（正确地）问起那条未保存的行。
+
+### 证据
+
+| 门禁 | 结果 |
+|---|---|
+| `scripts/check-native-recover.py` | 15/15（连跑 3 次稳定） |
+| `scripts/check-native-tools.py` / `check-native-pin.py` / `check-native-drag.py` | 8/8、11/11、9/9 |
+| `scripts/check-native-notes.py` / `check-native-manager.py` / `check-native-switcher.py` | 24/24、19/19、22/22 |
+| `cargo test --release --workspace` | 205 项 |
+
+### 顺带与遗留
+
+`save.rs` 长到 866 行，按守卫拆成 `save/mod.rs`（570）与 `save/tests.rs`（294）；`note.rs` 加完 Q24 是 805 行，把"打开时的判定"收进 `recover::start` 并压掉三处注释后 798。
+
+**遗留一个真问题**：光标停在文档末尾，而带标签的笔记末尾是 `# …` 行——用户想续写正文，字却进了标签。`check-native-notes.py` 的 Q-L 已经把这件事当成现状断言了（`tags == 旧 tags + "尾"`）。它不是 Q24 的一部分，但这属于"打开笔记就想接着写"的日常路径，应单独立项。
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -893,4 +979,5 @@ Q10 的代码一直"看起来做了"：`quicknote::draw` 在拖拽面上报 `dra
 | 2026-11-26 | 2a–2d 落地交互层：`hub-core::shortcuts` 一张表（11 命令 / 2 作用域 / 冲突先者胜）、`hub-ui` 的 `hint`（功能名 + 键位）、`switcher`、`manager` 与 `keys`，`app` 的 `note/panel.rs`、`manager.rs`、`hub/commands.rs`；新建笔记改成立刻 `flush(reason=seed)`（门禁实测缺陷）。Q13/Q16/Q25–Q27 由 `check-native-switcher.py`（22/22）与 `check-native-manager.py`（19/19）判（§8.9） |
 | 2026-11-26 | 2e Q7：`hub-editor::on_click`（`WM_LBUTTONDOWN` 上报不吞）、`app::click`、`note/panel.rs::set_tools`；修掉拖拽区盖住按钮的真 bug（顺序 + `StartDrag` 守卫，附 z-order 单测）。`scripts/check-native-tools.py` 8/8（§8.10） |
 | 2026-11-26 | 2g Q10：`note/drag.rs` 每帧按 `GetCursorPos` 的位移 `SetWindowPos`（`StartDrag` 在本环境不动窗口，普通窗口探针同样不动）；`check-native-drag.py` 9/9（连跑 4 次），按钮上起拖不动也不误触（§8.12） |
+| 2026-11-26 | 2h Q24：`app/src/backup.rs`（草稿读写、判定、合并）+ `save::Saver::stash`/`clear_stash` + `hub-ui/src/recover.rs`（手绘卡片，返回按钮矩形）+ `note/recover.rs`（隐藏编辑器、三种回答）。`check-native-recover.py` 15/15，`save.rs` 拆成 `save/mod.rs` + `save/tests.rs`（§8.13） |
 | 2026-11-26 | 2f Q9：置顶走 `hub_win::window::set_topmost`（`ViewportCommand::WindowLevel` 会按 winit 缓存的 `WindowFlags` 重写整套样式，把 `with_visible(false)` 建、`move_on_screen` 显示的笔记窗口直接抹掉——Q16 只读日志所以一直显示正常）；新增 `scripts/lib/winshot.py`（`PrintWindow` 取像素）与 `scripts/check-native-pin.py`（11/11，连跑 3 次）。`toggle_pin` 移入 `note/panel.rs`（§8.11） |

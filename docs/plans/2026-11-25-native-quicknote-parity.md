@@ -93,7 +93,7 @@ Q11 不是凑数：现版专门为此重排过一次（`QuickNoteToolbar.tsx` �
 
 | ID | 行为 | 判定方式 | 现状 |
 |---|---|---|---|
-| Q24 | 检测到未合并备份时给三选一（保留当前 / 恢复备份 / 合并） | 手工造一条备份草稿，打开窗口出对话框，三个按钮行为各自正确 | ✗ |
+| Q24 | 检测到未合并备份时给三选一（保留当前 / 恢复备份 / 合并） | 手工造一条备份草稿，打开窗口出对话框，三个按钮行为各自正确 | ✓ 2h：草稿落 `{root}/autosave/{id}.json`（与现版同形的四个字段），打开时与行比较，比行新且不同才问；三个按钮各自写库/删文件。`check-native-recover.py` 15/15。卡片是模态的（`•••` 点不动）。**与现版不互通**：现版在 `localStorage`，原生读不到 |
 
 ### 3.6 透明度与幽灵模式（C2 裁决"留"，2026-11-25 补入）
 
@@ -187,6 +187,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | 2026-11-26 | 2a–2d 交互层回填：Q13 ✓、Q16 ✓、Q25 ✓、Q26 ✓、Q27 ✓（`scripts/check-native-switcher.py` 22/22、`check-native-manager.py` 19/19）。快捷键收成一张表（`hub-core::shortcuts`）+ 设置文件稀疏覆盖 + 每个带键位按钮的悬浮提示；工作台（笔记/回收站/待办/设置）与切换器落地。Q18 仍 ◐（`Ctrl+Alt+M` 被 shipped 版占着，门禁改用改键后的 `Ctrl+Alt+J` 验通）。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.9。**Q24 数据恢复、收件箱与脚本分区仍未做** |
 | 2026-11-26 | 2f Q9 置顶回填（✓）：`check-native-pin.py` 11/11，判 OS 的 `WS_EX_TOPMOST` 位与图标的填充/空心两态。**Q16 的 ✓ 是虚的**——同一函数发的 `WindowLevel` 会把窗口隐藏（winit 按缓存样式重算 `WS_VISIBLE`），键盘路径此前只验了日志；改走 `hub_win::window::set_topmost` 后两条路径一并修好。实施记录见 §8.11。Q10 拖动已排下一项 |
 | 2026-11-26 | 2g Q10 拖动回填（✓）：`check-native-drag.py` 9/9（连跑 4 次）。`ViewportCommand::StartDrag` 在本环境不发车（`GetWindowRect` 不动，普通窗口探针同样不动），改由 `note/drag.rs` 每帧按光标位移 `SetWindowPos`，光标位置取 `GetCursorPos`（egui 的客户区坐标会跟着窗口跑，用它算位移恒为 0）。左/中/右槽位移逐轴精确、按钮起拖不动。实施记录见 §8.12 |
+| 2026-11-26 | 2h Q24 数据恢复回填（✓）：草稿写 `{store_root}/autosave/{id}.json`（与现版同形），`save` 在写库前落盘、成功后删除；打开时按"与行不同且不比行旧"判定，`hub-ui/recover` 手绘三按钮卡片、`note/recover` 执行三种回答。`check-native-recover.py` 15/15（连跑 3 次）。**与现版不互通（`localStorage` vs 文件）**，且"保留当前"会删文件（现版只关对话框、下次再问）。实施记录见 §8.13 |
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
 同一轮对话里发现采集脚本把**已启用**的搜狗与微信输入法报成"未安装"。两个独立原因，都已在脚本里修掉：
