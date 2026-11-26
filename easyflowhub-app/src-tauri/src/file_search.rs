@@ -635,11 +635,11 @@ pub fn file_search_preview(
 }
 
 fn recent_connection(app: &AppHandle) -> Result<rusqlite::Connection, String> {
-    let connection = crate::notes::get_connection(app)?;
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS file_search_recent (path TEXT PRIMARY KEY, opened_at INTEGER NOT NULL);",
-        )
+    let connection = crate::db::connection(app)?;
+    // The one definition of this table lives in `hub-core`; it is created on first
+    // use rather than on open, because a connection that only reads a note must not
+    // add a table to the file (the S3 gate compares the file byte for byte).
+    hub_core::store::ensure_file_search_recent(&connection)
         .map_err(|error| format!("初始化最近文件记录失败: {error}"))?;
     Ok(connection)
 }

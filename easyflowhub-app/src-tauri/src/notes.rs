@@ -3,7 +3,6 @@ use rusqlite::{Connection, OptionalExtension, Result as SqliteResult, Transactio
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use tauri::Manager;
 use uuid::Uuid;
 
@@ -80,94 +79,22 @@ pub struct SearchNotesResponse {
 // Database Management
 // ============================================================================
 
-/// Get the database file path
-fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    fs::create_dir_all(&app_data).map_err(|e| format!("Failed to create app data dir: {}", e))?;
-    Ok(app_data.join("notes.db"))
+/// Bring a connection to the schema this build expects.
+///
+/// The DDL and every migration live in `hub-core::store` now, because the native
+/// shell opens the same file. This stays as a named seam for the in-memory databases
+/// the unit tests build, so no test has to know the ladder's module path.
+///
+/// Test-only: production connections come from `crate::db::connection`, which runs
+/// the same ladder plus the connection policy a bare `init_db` would not.
+#[cfg(test)]
+pub(crate) fn init_db(conn: &mut Connection) -> SqliteResult<()> {
+    hub_core::store::init_schema(conn, hub_core::store::Rebuild::Run).map(|_| ())
 }
 
-/// Initialize the database schema
-pub(crate) fn init_db(conn: &Connection) -> SqliteResult<()> {
-    // 首先创建表（如果不存在）
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS notes (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL DEFAULT '',
-            content TEXT NOT NULL DEFAULT '',
-            tags TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            is_pinned INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_notes_pinned ON notes(is_pinned DESC);
-        CREATE INDEX IF NOT EXISTS idx_notes_title ON notes(title);
-        "#,
-    )?;
-
-    // 迁移：为已存在的表添加 tags 列
-    // 检查 tags 列是否存在
-    let has_tags_column: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'tags'",
-            [],
-            |row| row.get::<_, i32>(0).map(|count| count > 0),
-        )
-        .unwrap_or(false);
-
-    if !has_tags_column {
-        // 添加 tags 列
-        conn.execute(
-            "ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
-            [],
-        )?;
-        println!("Database migration: added tags column");
-    }
-
-    // 在确认 tags 列存在后，创建索引
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_notes_tags ON notes(tags)",
-        [],
-    )?;
-
-    // 迁移：为已存在的表添加 deleted_at 列（软删除）
-    let has_deleted_at_column: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'deleted_at'",
-            [],
-            |row| row.get::<_, i32>(0).map(|count| count > 0),
-        )
-        .unwrap_or(false);
-
-    if !has_deleted_at_column {
-        conn.execute(
-            "ALTER TABLE notes ADD COLUMN deleted_at TEXT DEFAULT NULL",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notes_deleted_at ON notes(deleted_at)",
-            [],
-        )?;
-        println!("Database migration: added deleted_at column");
-    }
-
-    Ok(())
-}
-
-/// Get or create a database connection
+/// Get or create a database connection.
 pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let path = db_path(app)?;
-    let conn = Connection::open(&path).map_err(|e| format!("Failed to open database: {}", e))?;
-    conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| format!("Failed to configure database lock timeout: {}", e))?;
-    init_db(&conn).map_err(|e| format!("Failed to initialize database: {}", e))?;
-    Ok(conn)
+    crate::db::connection(app)
 }
 
 // ============================================================================
@@ -887,10 +814,11 @@ pub fn cleanup_old_trash(app: &tauri::AppHandle, retention_days: u32) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn memory_db() -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory database");
-        init_db(&conn).expect("notes schema");
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
+        init_db(&mut conn).expect("notes schema");
         conn
     }
 
@@ -1027,8 +955,8 @@ mod tests {
         use std::thread;
 
         let path = std::env::temp_dir().join(format!("easyflowhub-notes-{}.db", Uuid::new_v4()));
-        let setup = Connection::open(&path).expect("open setup database");
-        init_db(&setup).expect("setup schema");
+        let mut setup = Connection::open(&path).expect("open setup database");
+        init_db(&mut setup).expect("setup schema");
         drop(setup);
         let shared_path = Arc::new(path.clone());
 
@@ -1075,10 +1003,10 @@ mod tests {
     fn reads_and_writes_a_database_produced_by_the_native_shell() {
         let path = std::env::var("EFH_S3_DB")
             .expect("EFH_S3_DB must point at the copy written by the native bench");
-        let conn = Connection::open(&path).expect("open the native database");
+        let mut conn = Connection::open(&path).expect("open the native database");
 
         // 1. The real migrations must accept the file without changing it.
-        init_db(&conn).expect("migrations run against a native-written database");
+        init_db(&mut conn).expect("migrations run against a native-written database");
 
         // 2. A row the native shell inserted is readable through the product's own
         //    helper, field for field. `PROBE_BODY` plus the native-side update suffix.

@@ -1,9 +1,6 @@
 use chrono::Utc;
-use rusqlite::{Connection, Result as SqliteResult};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use tauri::Manager;
 
 // ============================================================================
 // Types
@@ -213,37 +210,13 @@ pub struct UpdateSettingsResponse {
 // Database Management
 // ============================================================================
 
-/// Get the database file path (shared with notes module)
-fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    fs::create_dir_all(&app_data).map_err(|e| format!("Failed to create app data dir: {}", e))?;
-    Ok(app_data.join("notes.db"))
-}
-
-/// Initialize the settings table
-fn init_settings_table(conn: &Connection) -> SqliteResult<()> {
-    conn.execute(
-        r#"
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        "#,
-        [],
-    )?;
-    Ok(())
-}
-
-/// Get or create a database connection
+/// Get or create a database connection.
+///
+/// Settings live in the same file as notes and the Inbox, so this goes through the
+/// one connection policy in `db` rather than creating the `settings` table itself --
+/// the table is created by the shared ladder, once, for every caller.
 pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let path = db_path(app)?;
-    let conn = Connection::open(&path).map_err(|e| format!("Failed to open database: {}", e))?;
-    init_settings_table(&conn).map_err(|e| format!("Failed to initialize settings table: {}", e))?;
-    Ok(conn)
+    crate::db::connection(app)
 }
 
 /// Read one raw `settings` row and deserialize it.
@@ -507,8 +480,13 @@ mod tests {
     use rusqlite::{Connection, Result as SqliteResult};
 
     fn settings_conn() -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory database");
-        super::init_settings_table(&conn).expect("settings schema");
+        // The `settings` table is a rung-less part of the shared schema: it is created
+        // by the same ladder every other table comes from, so a settings test gets it
+        // exactly the way the app does. `Defer` skips the Inbox rebuild, which a fresh
+        // in-memory database never needs.
+        let mut conn = Connection::open_in_memory().expect("in-memory database");
+        hub_core::store::init_schema(&mut conn, hub_core::store::Rebuild::Defer)
+            .expect("settings schema");
         conn
     }
 

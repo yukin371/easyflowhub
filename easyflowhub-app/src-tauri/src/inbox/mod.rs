@@ -3,7 +3,8 @@
 //! The Inbox stays the single owner of capture persistence inside the shared
 //! `notes.db`. Internally it is split by responsibility:
 //!
-//! - `schema`: table creation and additive migrations
+//! - `schema`: the test seam onto the shared ladder (tables are created by
+//!   `hub-core::store`, not here)
 //! - `attachments`: attachment identity, staged file storage, transcripts
 //! - `repository`: every `inbox_items` / `inbox_attachments` row access
 //! - `service`: capture / conversion / trash / recovery / purge use cases and transactions
@@ -17,6 +18,7 @@
 mod attachments;
 pub(crate) mod commands;
 mod repository;
+#[cfg(test)]
 mod schema;
 mod service;
 

@@ -13,6 +13,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# The schema of the shared `notes.db`. The native shell opens the same file, so the
+# DDL and every migration live in that workspace and this crate only calls them --
+# one ladder, one owner. The workspace root still resolves the version/edition it
+# inherits from `native/Cargo.toml`.
+hub-core = { path = "../../native/crates/hub-core" }
 tauri = { version = "2", features = ["protocol-asset", "unstable", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"

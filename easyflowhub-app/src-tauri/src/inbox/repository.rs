@@ -25,12 +25,13 @@ pub struct InboxItem {
     pub attachments: Vec<InboxAttachment>,
 }
 
-/// Open the shared notes database connection with the Inbox schema applied.
+/// Open the shared notes database connection.
+///
+/// The Inbox tables are part of that file's schema, so the connection policy in
+/// `crate::db` is enough -- there is no Inbox-specific migration step left to run
+/// here.
 pub(crate) fn get_connection(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let mut conn = crate::notes::get_connection(app)?;
-    super::schema::init_db(&mut conn)
-        .map_err(|error| format!("Failed to initialize inbox storage: {error}"))?;
-    Ok(conn)
+    crate::db::connection(app)
 }
 
 /// Internal accessor for sibling native owners (transcription) that read or

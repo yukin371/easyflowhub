@@ -16,6 +16,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 mod app_windows;
 mod autostart;
 mod clipboard;
+mod db;
 mod download;
 mod external_apps;
 mod appearance;
