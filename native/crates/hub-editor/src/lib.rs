@@ -26,6 +26,7 @@
 
 pub mod measure;
 pub mod keys;
+mod caret;
 mod dispatch;
 mod theme;
 
@@ -33,6 +34,9 @@ use dispatch::Callbacks;
 
 pub use keys::KeyPress;
 pub use theme::Theme;
+// `position_of` is the bridge between a byte offset in the document and the
+// number `EM_SETSEL` wants; a caller that computed an offset needs it.
+pub use caret::position_of;
 
 use std::ptr;
 use std::sync::OnceLock;
@@ -55,8 +59,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 // --- RichEdit messages (not exported by windows-sys; values from richedit.h) ---
-const EM_GETSEL: u32 = 0x00B0;
-const EM_SETSEL: u32 = 0x00B1;
+pub(crate) const EM_GETSEL: u32 = 0x00B0;
+pub(crate) const EM_SETSEL: u32 = 0x00B1;
 const EM_SETRECT: u32 = 0x00B3;
 const EM_REPLACESEL: u32 = 0x00C2;
 const EM_SCROLLCARET: u32 = 0x00B7;
@@ -414,35 +418,8 @@ impl Editor {
         self.text().chars().count()
     }
 
-    pub fn caret_to_end(&self) {
-        unsafe {
-            let end = GetWindowTextLengthW(self.hwnd) as usize;
-            SendMessageW(self.hwnd, EM_SETSEL, end, end as isize);
-        }
-    }
-
-    /// Select the whole document. `lParam = -1` means "end of text" to RichEdit.
-    pub fn select_all(&self) {
-        unsafe {
-            SendMessageW(self.hwnd, EM_SETSEL, 0, -1);
-        }
-    }
-
-    pub fn caret(&self) -> (usize, usize) {        unsafe {
-            let mut start: u32 = 0;
-            let mut end: u32 = 0;
-            // EM_GETSEL packs both positions into the return value, but passing
-            // pointers is unambiguous and works on every RichEdit version.
-            SendMessageW(
-                self.hwnd,
-                EM_GETSEL,
-                &mut start as *mut u32 as usize,
-                &mut end as *mut u32 as isize,
-
-            );
-            (start as usize, end as usize)
-        }
-    }
+    // The selection lives in `caret.rs`: `set_caret`, `caret_to_end`, `select_all`
+    // and `caret`.
 
     pub fn undo(&self, times: usize) -> bool {
         unsafe {

@@ -113,6 +113,48 @@ pub fn format_for_display(content: &str, tags: &str) -> String {
     }
 }
 
+/// Where the caret belongs when a stored note is opened, as a byte offset.
+///
+/// The tag line is put back on the body for editing ([`format_for_display`]), so
+/// "the end of the text" is *inside* the tags. Parking the caret there made the
+/// next keystroke part of the tag list -- `# 工作 重要` became `# 工作 重要续`, which
+/// [`parse`] then read as a single tag, and the note that had two tags had one.
+///
+/// The answer is the end of the body: the offset of the line break that separates
+/// it from the tag line. Typing there appends to the last body line and leaves the
+/// tag line where the parser needs it, last.
+///
+/// A note whose text is *only* a tag line has no body to append to, so the end of
+/// the text is the answer -- typing extends the tag list, the only thing that note
+/// has. The same applies when the last line is not a tag line at all (the common
+/// case), including a trailing empty line, which [`parse`] also refuses to read as
+/// tags.
+pub fn caret_offset(text: &str) -> usize {
+    let Some(start) = tag_line_start(text) else {
+        return text.len();
+    };
+    // One line break sits between the body and the tag line. `\r\n` counts as one,
+    // and the caret goes before it: an offset *after* the break is the start of the
+    // tag line, where typing would push the `#` right and break the parse.
+    let before = &text[..start];
+    let body = if before.ends_with("\r\n") {
+        start - 2
+    } else {
+        start.saturating_sub(1)
+    };
+    // No body line at all -- the tag line is the whole note.
+    if body == 0 {
+        return text.len();
+    }
+    body
+}
+
+/// Byte offset where the last line starts, when that line is a tag line.
+fn tag_line_start(text: &str) -> Option<usize> {
+    let start = text.rfind('\n').map_or(0, |break_at| break_at + 1);
+    is_tag_line(&text[start..]).then_some(start)
+}
+
 /// Deduplicated, `#`-stripped, space-joined tags.
 ///
 /// The separators are the shipped `normalizeTags` set, which includes the full-width
@@ -307,6 +349,51 @@ mod tests {
         assert_eq!(format_for_display("a", "工作:重要"), "a\n:工作:重要");
         assert_eq!(format_for_display("a", "工作 重要"), "a\n# 工作 重要");
         assert_eq!(format_for_display("a", ""), "a");
+    }
+
+    #[test]
+    fn the_caret_goes_before_the_tag_line_not_into_it() {
+        // The bug this exists for: reopening a tagged note parked the caret after
+        // the tags, so the next keystroke edited the tag list.
+        let body = "买菜清单\n鸡蛋";
+        assert_eq!(caret_offset(&format!("{body}\n# 工作 重要")), body.len());
+        assert_eq!(caret_offset(&format!("{body}\r\n# 工作 重要")), body.len());
+        assert_eq!(caret_offset(&format!("{body}\n:工作:重要")), body.len());
+        // The shipped parser also accepts a tag line after a word on the same line.
+        assert_eq!(caret_offset(&format!("{body}\n标题 # 工作")), body.len());
+    }
+
+    #[test]
+    fn the_caret_stays_at_the_end_when_there_is_no_tag_line_to_protect() {
+        // No tags, a hash in the middle, or a trailing empty line: in each case the
+        // last line is content, and `parse` says so too.
+        for text in [
+            "买菜清单\n鸡蛋",
+            "# 周三\n# 不是标签\n正文",
+            "正文\n# 工作\n",
+            "",
+        ] {
+            assert_eq!(caret_offset(text), text.len(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_note_that_is_only_a_tag_line_keeps_the_caret_at_its_end() {
+        // Nothing to append to above it: typing here extends the tags, which is all
+        // the note contains. A caret at offset 0 would put the text *before* the
+        // `#` and turn the line into content.
+        for text in ["# 工作 重要", ":工作:重要", "\n# 工作"] {
+            assert_eq!(caret_offset(text), text.len(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_caret_lands_on_the_empty_line_between_body_and_tags() {
+        // `正文\n\n# 工作`: the blank line is the last body line, so the caret goes at
+        // its end and typing fills it in rather than reflowing the paragraph above.
+        let text = "正文\n\n# 工作";
+        assert_eq!(caret_offset(text), 7);
+        assert_eq!(&text[..caret_offset(text)], "正文\n");
     }
 
     #[test]

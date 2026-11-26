@@ -191,9 +191,10 @@ impl NoteShell {
             editor.set_text(&text);
             // The switch must not be undoable back into the previous note.
             editor.clear_undo();
-            editor.caret_to_end();
-            editor.scroll_caret();
         }
+        // The picked note is opened the same way as one loaded at startup: caret at
+        // the end of its body, before the tag line (Q19/Q27).
+        self.park_caret();
         let shown = self
             .editor
             .as_ref()

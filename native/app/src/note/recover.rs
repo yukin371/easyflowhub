@@ -248,8 +248,9 @@ impl NoteShell {
         // keeps a future `set_text` that preserves history from making this answer
         // undoable into a half-restored state.
         editor.clear_undo();
-        editor.caret_to_end();
-        editor.scroll_caret();
+        // A draft carries the tag line too, so restoring one has the same "caret at
+        // the end means inside the tags" problem as opening a note does.
+        self.park_caret();
         let shown = editor.text();
         // `flush` stashes first and clears the draft on success: if the write fails,
         // the same question comes back instead of the text vanishing.

@@ -13,11 +13,13 @@
 //! shell share the note's identity, log, viewport and save pump, and threading six
 //! arguments through every call would only move the coupling into the signatures.
 
+use hub_core::note_text;
 use hub_core::PixelRect;
 use hub_editor::Editor;
 
 use super::NoteShell;
 use crate::esc;
+use crate::log::Log;
 use crate::save;
 
 impl NoteShell {
@@ -93,8 +95,7 @@ impl NoteShell {
                         self.save.rebase(&shown);
                         loaded = Some(chars);
                     }
-                    editor.caret_to_end();
-                    editor.scroll_caret();
+                    park(&editor, self.id, &self.log);
                     editor.apply_caret_width(theme.caret_width);
                     // Logged *after* the caret is parked, not before: the gate (and
                     // any later script) types as soon as it sees this line, and a
@@ -162,6 +163,45 @@ impl NoteShell {
         }
         self.last_island = Some(rect);
     }
+
+    /// Park the caret where the next keystroke belongs: the end of the body.
+    ///
+    /// Q19 was written as "caret at the end", and the end of the *text* is inside
+    /// the tag line on any note that has tags -- so the first thing typed after
+    /// reopening was appended to the tags (`# 工作 重要` became one tag,
+    /// `工作 重要续`). `note_text::caret_offset` finds the end of the body instead;
+    /// its byte offset then goes through `hub_editor::position_of`, because the
+    /// control counts character positions, not bytes and not UTF-16 units.
+    pub(super) fn park_caret(&self) {
+        if let Some(editor) = self.editor.as_ref() {
+            park(editor, self.id, &self.log);
+        }
+    }
+}
+
+/// The same placement for a control the shell does not own yet: the island is
+/// built as a local and only moved into `self.editor` after the text is in it.
+fn park(editor: &Editor, id: u32, log: &Log) {
+    let text = editor.text();
+    let at = note_text::caret_offset(&text);
+    // Bytes from the parser, character positions for the control: `CRLF` counts
+    // once there and twice in UTF-16. The two numbers differ by exactly the number
+    // of line breaks above the caret, which is the whole tag-line bug.
+    let positions = hub_editor::position_of(&text, at);
+    let end = hub_editor::position_of(&text, text.len());
+    editor.set_caret(positions);
+    editor.scroll_caret();
+    // The script's readiness marker is `editor_focus`, which now carries the real
+    // caret; this line says *why* it is not at the end, so a note that reopened
+    // into its tags again would be visible in the log alone.
+    log.mark(
+        0,
+        "note_caret",
+        &format!(
+            "id={id} at={positions} of={end} tag_line={}",
+            at < text.len()
+        ),
+    );
 }
 
 /// egui stores RGB; Windows colour values are `0x00BBGGRR`.
