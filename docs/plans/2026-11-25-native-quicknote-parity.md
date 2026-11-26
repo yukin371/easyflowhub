@@ -54,7 +54,7 @@ G1 门禁写着"T0 功能 parity"，但仓库里一直没有 parity 的对象—
 | Q7 | 中槽 `•••` 开/关工具面板 | 点一次开、再点一次关；点面板外部也关 | ✓ 2e：`scripts/check-native-tools.py`（8 项）用真实鼠标点击判——点 `•••` 得 `note_tools open=true reason=button` 且岛从 y=48 让到 156；再点同一位得 `open=false reason=button`；点正文得 `open=false reason=body` 且窗口不关。附带修掉一个真 bug：拖拽区注册在按钮之后，egui 把点击给了最后注册的控件，**两个按钮对鼠标完全无响应**（键盘仍可用）；见 §8.10 |
 | Q8 | ~~右槽预览按钮：编辑 ↔ 预览切换~~ | **挂起**：C3 延后到 Phase 3，T0 不实现，编号保留不复用 | — |
 | Q9 | 右槽置顶按钮：**可开可关**，激活时高亮 | 初始置顶（与现版一致，图标是实心书签）；点一次窗口被其他窗口压住、图标变空心灰；再点恢复 | ✓ 2f：`scripts/check-native-pin.py`（11 项，连跑 3 次）用真实点击判——起始 `WS_EX_TOPMOST` 在、图标实心（图标中心 11 px 框里 116 个亮点、中心像素 `(134,171,220)`）；点一次得 `note_pin pinned=false topmost=true`、OS 位清掉、同框只剩 6 个亮点、中心回到条底色 `(31,46,68)`；再点全部恢复，且窗口位置不变。**修掉一个吞窗口的真 bug**：`ViewportCommand::WindowLevel` 让 winit 按缓存的 `WindowFlags` 重建整套样式，本窗口是 `with_visible(false)` 建、`move_on_screen` 显示的，于是"取消置顶"把 `WS_VISIBLE` 一并抹掉，窗口从桌面消失（Q16 只读日志，所以一直显示 ✓）；改走 `hub_win::window::set_topmost`，见 [§8.11](./2026-11-25-phase1-quicknote-shell.md#811-置顶按钮一次成功的置顶把窗口弄没了2f2026-11-26) |
-| Q10 | 标题条任意位置按住可拖动窗口 | 在左/中/右三个槽位分别拖动，窗口跟随；点在按钮上不拖动 | ◐ `ViewportCommand::StartDrag` + 按钮区排除；待拖动目视 |
+| Q10 | 标题条任意位置按住可拖动窗口 | 在左/中/右三个槽位分别拖动，窗口跟随；点在按钮上不拖动 | ✓ 2g：`scripts/check-native-drag.py`（9 项，连跑 4 次）用真实拖动判——左/中/右槽各拖 96 px，`GetWindowRect` 的位移逐轴等于光标行程（容差 1 px）；从 `•••` 与置顶按钮起拖时窗口不动、也不误触开关（拖动不是点击）。**`ViewportCommand::StartDrag` 在这个环境里不动窗口**（同一套注入下普通 `WS_OVERLAPPEDWINDOW` 也不动，是 OS 移动循环没跑），改为每帧按光标位移 `SetWindowPos`（`note/drag.rs`，见 [§8.12](./2026-11-25-phase1-quicknote-shell.md#812-拖动标题条自己搬窗口比等-os-移动循环可靠2g2026-11-26)） |
 | Q11 | 三段永不重叠 | 缩到 150 逻辑宽，三个槽位逐个点击都命中预期（左槽文本不可压住中槽按钮） | ✓ `slots()` 单测钉住 150 宽下三段有序、按钮不重叠；`GHOST` 实测 39 px 宽，左缘 16 + 39 = 55 < 三点左缘 61，余 6 px（§8.3） |
 
 Q11 不是凑数：现版专门为此重排过一次（`QuickNoteToolbar.tsx` 的 `STRIP_STYLE` 注释写明工具按钮曾绝对居中、窄窗时压住眼睛图标）。
@@ -186,6 +186,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | 2026-11-26 | 2e Q7 收尾：`•••`/置顶按钮的点击路径修好（拖拽区必须在下、按钮在上，且按在按钮上不启动 `StartDrag`）；点正文关闭面板（`hub-editor` 新增 `on_click`，`app::click` 计数并唤醒本窗口）。`check-native-tools.py` 8/8。**§8.9 里"按钮点不动未验"由此变成已验** |
 | 2026-11-26 | 2a–2d 交互层回填：Q13 ✓、Q16 ✓、Q25 ✓、Q26 ✓、Q27 ✓（`scripts/check-native-switcher.py` 22/22、`check-native-manager.py` 19/19）。快捷键收成一张表（`hub-core::shortcuts`）+ 设置文件稀疏覆盖 + 每个带键位按钮的悬浮提示；工作台（笔记/回收站/待办/设置）与切换器落地。Q18 仍 ◐（`Ctrl+Alt+M` 被 shipped 版占着，门禁改用改键后的 `Ctrl+Alt+J` 验通）。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.9。**Q24 数据恢复、收件箱与脚本分区仍未做** |
 | 2026-11-26 | 2f Q9 置顶回填（✓）：`check-native-pin.py` 11/11，判 OS 的 `WS_EX_TOPMOST` 位与图标的填充/空心两态。**Q16 的 ✓ 是虚的**——同一函数发的 `WindowLevel` 会把窗口隐藏（winit 按缓存样式重算 `WS_VISIBLE`），键盘路径此前只验了日志；改走 `hub_win::window::set_topmost` 后两条路径一并修好。实施记录见 §8.11。Q10 拖动已排下一项 |
+| 2026-11-26 | 2g Q10 拖动回填（✓）：`check-native-drag.py` 9/9（连跑 4 次）。`ViewportCommand::StartDrag` 在本环境不发车（`GetWindowRect` 不动，普通窗口探针同样不动），改由 `note/drag.rs` 每帧按光标位移 `SetWindowPos`，光标位置取 `GetCursorPos`（egui 的客户区坐标会跟着窗口跑，用它算位移恒为 0）。左/中/右槽位移逐轴精确、按钮起拖不动。实施记录见 §8.12 |
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
 同一轮对话里发现采集脚本把**已启用**的搜狗与微信输入法报成"未安装"。两个独立原因，都已在脚本里修掉：

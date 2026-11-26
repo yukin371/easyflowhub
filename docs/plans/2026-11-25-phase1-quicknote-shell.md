@@ -819,6 +819,61 @@ Q9 的另一半是"图标变空心灰"。这属于画出来的东西，日志答
 
 `note.rs` 又长到 806 行，`toggle_pin` 移到 `note/panel.rs`（和 `toggle_tools` 同一个出口），回到 782 行。移动只改了 `pub(super)` 与文件位置，日志格式不变。
 
+## 8.12 拖动标题条：自己搬窗口，比等 OS 移动循环可靠（2g，2026-11-26）
+
+Q10 的代码一直"看起来做了"：`quicknote::draw` 在拖拽面上报 `drag`，`note.rs` 收到就发 `ViewportCommand::StartDrag`。补门禁时量了 `GetWindowRect`——**窗口一动不动**。
+
+### 先确认不是笔记特有的毛病
+
+三步排除，每步都量窗口矩形：
+
+1. `StartDrag` 确实发了（`note_drag phase=begin` 有日志），窗口仍不动；
+2. winit 的做法是 `PostMessage(WM_NCLBUTTONDOWN, HTCAPTION)`（`platform_impl/windows/window.rs` 的 `handle_os_dragging`），我绕过 winit 直接给笔记窗口投这条消息：不动；
+3. 用 ctypes 现建一个普通 `WS_OVERLAPPEDWINDOW`，`SetForegroundWindow` 后同样投 `WM_NCLBUTTONDOWN`（还试了 `SendMessage` 版本），鼠标按住并移动十二步：**还是不动**。
+
+所以不是笔记的 no-activate/popup 样式，也不是 winit 的封装——这套注入环境里 OS 的模态移动循环根本没接管。真实鼠标拖动很可能没事（真实拖动的移动来自硬件队列），但这条路径在本机无法用它验证，而且它对无激活窗口本来就依赖"系统愿意替你搬"。
+
+### 改法：每帧按光标位移搬窗口
+
+`app/src/note/drag.rs`：
+
+- 按下时记下 `GetCursorPos()`；之后每帧取一次当前光标，算出与上一帧的差，`client_origin + 差` 交给 `hub_win::window::move_to`（`SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE`）；
+- 松开由 egui 的 `pointer.primary_down()` 判——它知道这次按压起于本窗口，窗口外松手也能正常收尾，不会把窗口粘在光标上。
+
+**光标必须来自屏幕坐标。** 第一版若用 egui 的 `interact_pos`，位移恒为 0：窗口一动，光标在客户区里的位置就跟着回到原处，差值永远是零。`GetCursorPos` 是那个"窗口在动、它不动"的参照系。
+
+**为什么是逐帧增量而不是"按下点 + 总位移"。** 第一版按 `起点 + (光标 − 按下时光标)` 算，逻辑上更直接，但它把锚点的误差一次性算进结果：有一次实测 96 px 的手势把窗口搬了 107 px，因为锚点读在光标到达按下点之前。改成逐帧增量后误差不累积，锚点晚一帧只表现为起步慢一帧。
+
+### 门禁
+
+`scripts/check-native-drag.py`（9 项）：
+
+| 判什么 | 怎么判 |
+|---|---|
+| 左/中/右槽各拖一次，窗口跟随 | 每轴位移与光标行程相等（容差 1 px）。中槽取 `width*0.35`（不是正中——正中是 `•••`），右槽取置顶按钮左侧 30 px 的空隙 |
+| 每次拖动都有始有终 | `note_drag phase=begin` / `phase=end` 各 +3 |
+| 按在置顶按钮上拖 | 窗口原地不动，且 `note_pin` 行数不变（拖动不是点击） |
+| 按在 `•••` 上拖 | 窗口原地不动，`note_tools` 行数不变 |
+| 收尾 | 进程活着、窗口可见、位置与拖动结果一致 |
+
+两个来自实测的门禁细节：
+
+- **进程的第一次按压有时会被吞**（Q9 的门禁也栽过），所以先做一次结果不计的"热身拖动"，再开始量；某次测量若位移为 0 才重试一次，**位移不对不重试**——107 px 那个 bug 正是"位移不对"，重试会把它盖掉。
+- 拖动的方向按窗口在屏幕上的位置选（朝桌面中心），三次同向拖动不会撞到屏幕边缘。真撞上时 `SetWindowPos` 不夹紧，位移会小一截，门禁报的是"没跟上"，不是"窗口飞了"。
+
+### 证据
+
+| 门禁 | 结果 |
+|---|---|
+| `scripts/check-native-drag.py` | 9/9（连跑 4 次稳定） |
+| `scripts/check-native-pin.py` / `check-native-tools.py` | 11/11、8/8（同一套点击路径回归） |
+| `scripts/check-native-notes.py` / `check-native-manager.py` / `check-native-switcher.py` | 24/24、19/19、22/22 |
+| `cargo test --release --workspace` | 193 项 |
+
+### 顺带
+
+`note.rs` 拆出 `note/drag.rs` 后是 786 行（`drag.rs` 105 行）。§8.10 里"按在按钮上不启动 `StartDrag`"的判断没有变，变的只是"接下来由谁搬窗口"。
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -837,4 +892,5 @@ Q9 的另一半是"图标变空心灰"。这属于画出来的东西，日志答
 | 2026-11-26 | 1d 落地正文写库：`hub-core` 加 `clock` / `note_text` / `save_note_body`，`app` 加 `save.rs`（900 ms 防抖 + 2 s 扫描 + 关闭 flush + 失败退避）与 `--note-id`；`note.rs` 拆出 `note/island.rs` 回到 800 行内。Q20–Q23 由 `scripts/check-native-notes.py` 判（24/24）。工作台、切换器、每窗口透明度记忆留给后续批次（§8.8） |
 | 2026-11-26 | 2a–2d 落地交互层：`hub-core::shortcuts` 一张表（11 命令 / 2 作用域 / 冲突先者胜）、`hub-ui` 的 `hint`（功能名 + 键位）、`switcher`、`manager` 与 `keys`，`app` 的 `note/panel.rs`、`manager.rs`、`hub/commands.rs`；新建笔记改成立刻 `flush(reason=seed)`（门禁实测缺陷）。Q13/Q16/Q25–Q27 由 `check-native-switcher.py`（22/22）与 `check-native-manager.py`（19/19）判（§8.9） |
 | 2026-11-26 | 2e Q7：`hub-editor::on_click`（`WM_LBUTTONDOWN` 上报不吞）、`app::click`、`note/panel.rs::set_tools`；修掉拖拽区盖住按钮的真 bug（顺序 + `StartDrag` 守卫，附 z-order 单测）。`scripts/check-native-tools.py` 8/8（§8.10） |
+| 2026-11-26 | 2g Q10：`note/drag.rs` 每帧按 `GetCursorPos` 的位移 `SetWindowPos`（`StartDrag` 在本环境不动窗口，普通窗口探针同样不动）；`check-native-drag.py` 9/9（连跑 4 次），按钮上起拖不动也不误触（§8.12） |
 | 2026-11-26 | 2f Q9：置顶走 `hub_win::window::set_topmost`（`ViewportCommand::WindowLevel` 会按 winit 缓存的 `WindowFlags` 重写整套样式，把 `with_visible(false)` 建、`move_on_screen` 显示的笔记窗口直接抹掉——Q16 只读日志所以一直显示正常）；新增 `scripts/lib/winshot.py`（`PrintWindow` 取像素）与 `scripts/check-native-pin.py`（11/11，连跑 3 次）。`toggle_pin` 移入 `note/panel.rs`（§8.11） |
