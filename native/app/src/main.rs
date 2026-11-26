@@ -9,6 +9,7 @@
 //! thread wakes up, the target rectangle is already known.
 
 mod args;
+mod backup;
 mod bench;
 mod click;
 mod editor_bench;

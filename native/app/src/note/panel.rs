@@ -19,7 +19,7 @@ use std::sync::MutexGuard;
 use hub_core::Store;
 use hub_ui::switcher;
 
-use super::NoteShell;
+use super::{recover, NoteShell};
 
 impl NoteShell {
     /// `Ctrl+.` or the `•••` button: flip the tools panel (Q7/Q17).
@@ -200,6 +200,10 @@ impl NoteShell {
             .map(|editor| editor.text())
             .unwrap_or_default();
         self.save.rebase(&shown);
+        // Q24: the note this window now shows may have a draft from the last time
+        // it was open. Checked after the text is in place, so the card compares
+        // against what is actually on screen.
+        self.recover = recover::inspect(&self.store, &row, &self.log);
         self.log.mark(
             0,
             "note_switch",
@@ -232,6 +236,9 @@ impl NoteShell {
             self.save.flush(&text, "switch", &self.log);
         }
         self.save.restart();
+        // A brand-new id has no draft under it, and whatever the previous note was
+        // asking about it is not this one.
+        self.recover = recover::State::Done;
         if let Some(editor) = self.editor.as_ref() {
             editor.set_text(title);
             editor.clear_undo();

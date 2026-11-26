@@ -44,6 +44,7 @@ use crate::wheel;
 mod drag;
 mod island;
 mod panel;
+mod recover;
 
 /// Prefix of every note window title. The suffix is the note id.
 ///
@@ -139,6 +140,8 @@ pub struct NoteShell {
     /// Clicks in the body, reported by the island because egui cannot see them.
     /// Dismisses the tools panel (Q7). See [`click`].
     clicks: click::Clicks,
+    /// Q24: a draft newer than the row, waiting for one of three answers.
+    recover: recover::State,
     /// Q10: the window follows the cursor while the strip is held. See [`drag`].
     drag: drag::Drag,
     /// Alpha last handed to the compositor. `None` until the window is attached, so
@@ -177,6 +180,8 @@ impl NoteShell {
         // found again by its window ordinal is not persisted, it is a scratch pad.
         let store = spawn.store.clone();
         let save = save::Pump::new(spawn.store, spawn.existing.as_ref());
+        // Q24: decided here, drawn on the first frame that has a content rectangle.
+        let recover = recover::start(&store, spawn.existing.as_ref(), &spawn.log);
         spawn.log.mark(
             0,
             "note_begin",
@@ -231,6 +236,7 @@ impl NoteShell {
             last_alpha: None,
             save,
             store,
+            recover,
             switcher: switcher::State::default(),
             switcher_open: false,
             items: Vec::new(),
@@ -494,6 +500,12 @@ impl NoteShell {
             ppp,
         );
         self.sync_editor(ctx, rect);
+
+        // Q24: an unanswered draft owns the frame -- after the editor exists (the
+        // card needs something to hide), before the switcher and the save tick.
+        if self.recover_frame(ctx, output.content) {
+            return;
+        }
 
         // Autosave. The pump decides whether this frame has to read the document at
         // all, and returns when it next needs a look -- asking for a fixed interval

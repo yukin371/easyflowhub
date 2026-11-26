@@ -10,6 +10,7 @@ pub mod keys;
 pub mod manager;
 pub mod panel;
 pub mod quicknote;
+pub mod recover;
 pub mod switcher;
 pub mod theme;
 
