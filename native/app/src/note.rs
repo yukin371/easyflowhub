@@ -23,15 +23,16 @@
 //! holding a handle to it.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
 use hub_core::{
-    NoteAppearance, NotePlacement, NoteRow, NoteSpec, PixelRect, SpikeSettings, Store,
-    MIN_NOTE_HEIGHT, MIN_NOTE_WIDTH,
+    Command, NoteAppearance, NotePlacement, NoteRow, NoteSpec, PixelRect, SpikeSettings, Store,
+    Table, MIN_NOTE_HEIGHT, MIN_NOTE_WIDTH,
 };
 use hub_editor::Editor;
 use hub_ui::quicknote::{self, StripState};
+use hub_ui::switcher;
 use hub_ui::Palette;
 
 use crate::keys;
@@ -40,6 +41,7 @@ use crate::save;
 use crate::wheel;
 
 mod island;
+mod panel;
 
 /// Prefix of every note window title. The suffix is the note id.
 ///
@@ -93,6 +95,10 @@ pub struct Spawn {
     pub store: Option<Arc<Mutex<Store>>>,
     /// The row to open, for a note that already exists. `None` starts a new one.
     pub existing: Option<NoteRow>,
+    /// The resolved shortcut table. Shared *by reference* with the controller and
+    /// the workbench: a rebind has to reach the windows that are already open, so
+    /// this is a lock rather than a copy taken at spawn time.
+    pub shortcuts: Arc<RwLock<Table>>,
 }
 
 pub struct NoteShell {
@@ -121,6 +127,9 @@ pub struct NoteShell {
     /// Shortcuts pressed in the island's subclass proc or in egui, waiting for the
     /// next frame. See [`keys`] for why they cannot act where they are seen.
     keys: keys::Bus,
+    /// Which key means which command, including the user's overrides. Also what
+    /// the strip's hover hints are built from.
+    shortcuts: Arc<RwLock<Table>>,
     /// Notches from the island's `WM_MOUSEWHEEL`, plus the 50 ms floor shared with
     /// the egui path. See [`wheel`].
     wheel: wheel::Wheel,
@@ -130,6 +139,16 @@ pub struct NoteShell {
     last_alpha: Option<u8>,
     /// Autosave: debounce, dirty tracking, and the write itself. See [`crate::save`].
     save: save::Pump,
+    /// Kept next to the pump rather than inside it: the switcher reads the list
+    /// without touching the save state, and a window that had to ask its own
+    /// autosave for a query would couple two unrelated lifetimes.
+    store: Option<Arc<Mutex<Store>>>,
+    /// `Ctrl+K`. While open the island is hidden and this gets the keys.
+    switcher: switcher::State,
+    switcher_open: bool,
+    /// The list the switcher filters, loaded when it opens, not per frame: a
+    /// query keystroke must not become a database read.
+    items: Vec<switcher::Item>,
     closing: bool,
     last_island: Option<PixelRect>,
     /// Last `pixels_per_point` this note laid out at, for the transition log.
@@ -149,6 +168,7 @@ impl NoteShell {
         };
         // The id in the log is the database id from here on: a note that cannot be
         // found again by its window ordinal is not persisted, it is a scratch pad.
+        let store = spawn.store.clone();
         let save = save::Pump::new(spawn.store, spawn.existing.as_ref());
         spawn.log.mark(
             0,
@@ -196,10 +216,15 @@ impl NoteShell {
             escape: Arc::new(AtomicBool::new(false)),
             esc_presses: Arc::new(AtomicU32::new(0)),
             keys: keys::Bus::new(viewport_id(spawn.id)),
+            shortcuts: spawn.shortcuts,
             wheel: wheel::Wheel::new(viewport_id(spawn.id)),
             gate: wheel::Gate::default(),
             last_alpha: None,
             save,
+            store,
+            switcher: switcher::State::default(),
+            switcher_open: false,
+            items: Vec::new(),
             closing: false,
             last_island: None,
             last_ppp: 0.0,
@@ -208,6 +233,11 @@ impl NoteShell {
 
     pub fn id(&self) -> u32 {
         self.id
+    }
+
+    /// The shortcut table, as a snapshot of this instant.
+    fn table(&self) -> RwLockReadGuard<'_, Table> {
+        self.shortcuts.read().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn is_closing(&self) -> bool {
@@ -307,17 +337,31 @@ impl NoteShell {
             return;
         }
 
-        // Shortcuts seen on the egui side. While the island has focus these keys
-        // never reach winit, so the two paths cannot both fire for one press.
-        if let Some(press) = keys::egui_press(ctx) {
-            if let Some(action) = keys::resolve(press) {
-                self.keys.post(action, ctx);
+        // The switcher owns the keyboard while it is open. `Ctrl+K` is the same
+        // key that opened it (Q25), and `Esc` must close *only* the switcher
+        // (Q13) -- so while it is open the table below is not consulted at all,
+        // rather than consulted and then overruled.
+        if self.switcher_open {
+            let toggle = keys::egui_press(ctx)
+                .map(|press| keys::resolve(&self.table(), press))
+                .is_some_and(|command| command == Some(Command::Switcher));
+            if toggle {
+                self.close_switcher(ctx);
             }
-        }
-        if let Some(action) = self.keys.take() {
-            self.act(ctx, action);
-            if self.closing {
-                return;
+        } else {
+            // Shortcuts seen on the egui side. While the island has focus these keys
+            // never reach winit, so the two paths cannot both fire for one press.
+            if let Some(press) = keys::egui_press(ctx) {
+                let table = self.table();
+                if let Some(command) = keys::resolve(&table, press) {
+                    self.keys.post(command, ctx);
+                }
+            }
+            if let Some(command) = self.keys.take() {
+                self.act(ctx, command);
+                if self.closing {
+                    return;
+                }
             }
         }
 
@@ -363,7 +407,12 @@ impl NoteShell {
             return;
         }
 
-        let output = quicknote::draw(ctx, &mut self.strip, self.palette);
+        // A snapshot, not a guard: the draw call needs `&mut self` for the strip and
+        // the switcher, and a read guard held across that is a borrow the compiler
+        // is right to refuse. Eleven chords of `String` once per frame is cheaper
+        // than the alternative of threading the table through every call.
+        let table = self.table().clone();
+        let output = quicknote::draw(ctx, &mut self.strip, self.palette, &table);
 
         if output.actions.drag {
             // Handing the drag to winit is what makes the whole strip a title bar
@@ -375,6 +424,38 @@ impl NoteShell {
         }
         if output.actions.toggle_tools {
             self.toggle_tools();
+        }
+
+        if self.switcher_open {
+            let action = switcher::draw(
+                ctx,
+                self.palette,
+                &mut self.switcher,
+                &self.items,
+                output.content,
+            );
+            match action {
+                switcher::Action::Close => self.close_switcher(ctx),
+                switcher::Action::Pick(id) => {
+                    self.close_switcher(ctx);
+                    self.switch_to(&id);
+                }
+                switcher::Action::New(title) => {
+                    self.close_switcher(ctx);
+                    self.start_new(&title);
+                }
+                switcher::Action::None => {}
+            }
+            // The document is untouched while the panel is open, but a debounce
+            // armed before it opened still has to fire: the panel must not become
+            // a way to postpone a save indefinitely.
+            let wait = self.save.tick(
+                Instant::now(),
+                || self.editor.as_ref().map(|editor| editor.text()).unwrap_or_default(),
+                &self.log,
+            );
+            ctx.request_repaint_after(wait);
+            return;
         }
 
         // The island is a native child window: it must be told the hole's size in
@@ -514,16 +595,33 @@ impl NoteShell {
 
     /// Run one shortcut. Split from the table so the table stays a pure function:
     /// everything that touches a window handle or the control happens here.
-    fn act(&mut self, ctx: &egui::Context, action: keys::Action) {
-        self.log
-            .mark(0, "note_key", &format!("id={} action={action:?}", self.id));
-        match action {
-            keys::Action::Close => self.close(ctx, "shortcut"),
-            keys::Action::TogglePin => self.toggle_pin(ctx),
-            keys::Action::ToggleTools => self.toggle_tools(),
-            keys::Action::ToggleGhost => self.toggle_ghost(),
-            keys::Action::Undo => self.history(true),
-            keys::Action::Redo => self.history(false),
+    fn act(&mut self, ctx: &egui::Context, command: keys::Command) {
+        self.log.mark(
+            0,
+            "note_key",
+            &format!(
+                "id={} command={} key={}",
+                self.id,
+                command.id(),
+                self.table().hint(command)
+            ),
+        );
+        match command {
+            keys::Command::Switcher => self.open_switcher(ctx),
+            keys::Command::CloseNote => self.close(ctx, "shortcut"),
+            keys::Command::TogglePin => self.toggle_pin(ctx),
+            keys::Command::ToggleTools => self.toggle_tools(),
+            keys::Command::ToggleGhost => self.toggle_ghost(),
+            keys::Command::Undo => self.history(true),
+            keys::Command::Redo => self.history(false),
+            // The rest are global commands: the table never yields them from a
+            // window keystroke, and reaching one here would mean the scope check
+            // was skipped. Logged rather than silently ignored.
+            other => self.log.mark(
+                0,
+                "note_key_unhandled",
+                &format!("id={} command={}", self.id, other.id()),
+            ),
         }
     }
 
@@ -630,7 +728,7 @@ impl NoteShell {
         // moment the viewport closes.
         let text = self.editor.as_ref().map(|editor| editor.text());
         if let Some(text) = text {
-            self.save.flush(&text, &self.log);
+            self.save.flush(&text, "close", &self.log);
         }
         self.log.mark(
             0,

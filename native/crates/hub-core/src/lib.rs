@@ -19,6 +19,7 @@ pub mod island;
 pub mod layout;
 pub mod note_text;
 pub mod settings;
+pub mod shortcuts;
 pub mod store;
 
 pub use island::PixelRect;
@@ -29,4 +30,5 @@ pub use layout::{
 pub use settings::{
     NoteAppearance, NoteColors, QuickNoteSettings, Rgb, SettingsSource, SpikeSettings,
 };
+pub use shortcuts::{Chord, Command, Scope, Table};
 pub use store::{new_note_id, Counts, NoteRow, NoteWrite, SettingRow, Store, StoreError};

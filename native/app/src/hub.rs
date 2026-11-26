@@ -30,32 +30,24 @@
 //! a spawn.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use hub_core::{place_note, NoteRow, NoteSpec, Rect, SpikeSettings, Store};
+use hub_core::{
+    place_note, Command, NoteRow, NoteSpec, Rect, SpikeSettings, Store, Table,
+};
 use hub_win::hotkey::{Binding, HotkeySet, PressHandler};
 use hub_win::tray::{Tray, TrayCommand};
 use hub_win::MonitorCache;
 
 use crate::log::Log;
+use crate::manager;
 use crate::note::{self, NoteShell, Shared};
+
+mod commands;
 
 /// Title of the controller window. Never shown, never activated.
 pub const HUB_TITLE: &str = "easyflowhub-hub";
-
-/// The shipped global shortcuts (parity Q18), in the order they are registered.
-///
-/// `Ctrl+Alt+M` is here and has nowhere to go until Phase 2 -- see
-/// [`Hub::handle`]. Registering it anyway is deliberate: the combination has to be
-/// owned by whichever build is running, or the old app answers it and the new one
-/// looks like it ate the key.
-const HOTKEYS: [(&str, Request); 4] = [
-    ("Ctrl+Alt+N", Request::NewNote),
-    ("Ctrl+Alt+D", Request::CloseAll),
-    ("Ctrl+Alt+H", Request::ToggleVisible),
-    ("Ctrl+Alt+M", Request::Manager),
-];
 
 /// Same debounce the spike uses: QQ/WeChat hook the same combinations, so one
 /// physical press can arrive as two or three `WM_HOTKEY` messages.
@@ -68,7 +60,13 @@ const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(250);
 /// an unreadable asset falls back to the system icon and says so in the log.
 const APP_ICON: &[u8] = include_bytes!("../assets/icon.ico");
 
-const TRAY_TOOLTIP: &str = "EasyFlowHub · 快速笔记（Ctrl+Alt+N）";
+/// The tray's hover text.
+///
+/// It deliberately does **not** name a combination. The tooltip is set once, when
+/// the icon is installed, so any key printed here would be the key in force at
+/// startup -- and after a rebind it would be a lie the user cannot fix without a
+/// restart. The workbench shows the live table.
+const TRAY_TOOLTIP: &str = "EasyFlowHub · 快速笔记";
 
 /// Work that has to be executed on the event-loop thread.
 ///
@@ -76,13 +74,18 @@ const TRAY_TOOLTIP: &str = "EasyFlowHub · 快速笔记（Ctrl+Alt+N）";
 /// egui's `Context` must be driven from the loop), and the tray's window proc runs
 /// *inside* message dispatch, where re-entering the controller would run a frame
 /// inside a frame. Both append here and wake the loop instead.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Request {
     NewNote,
     CloseAll,
     ToggleVisible,
-    /// `Ctrl+Alt+M`. No target yet: the manager window is Phase 2.
+    /// `Ctrl+Alt+M`: the workbench window.
     Manager,
+    /// Open an existing note in a new window -- the manager's "打开".
+    OpenNote(String),
+    /// A key was rebound. Handled here because the table, the settings file and
+    /// the OS registrations all belong to the controller.
+    Rebind { command: Command, chord: String },
     Quit,
 }
 
@@ -99,6 +102,9 @@ pub struct Config {
     pub store_root: Option<PathBuf>,
     /// `--note-id`: open an existing note instead of a new one.
     pub note_id: Option<String>,
+    /// Where the settings file lives. Needed by the workbench to persist a
+    /// rebind; the notes only ever read the values loaded at startup.
+    pub settings_path: PathBuf,
 }
 
 /// Create the controller and run until the user quits from the tray.
@@ -148,6 +154,10 @@ struct Hub {
     inbox: Arc<Mutex<Vec<Request>>>,
     next_id: u32,
     spawned: u32,
+    /// Which key means which command, including the user's overrides. One table
+    /// for the process, behind a lock so a rebind in the workbench reaches the
+    /// notes that are already open.
+    shortcuts: Arc<RwLock<Table>>,
     /// Kept alive for the process lifetime: dropping the handle would not stop the
     /// message loop, and an owned field is what makes that visible.
     _hotkeys: Option<HotkeySet>,
@@ -155,6 +165,15 @@ struct Hub {
     /// notification area, which is exactly what would happen by accident if this
     /// field were dropped when the last note closed.
     tray: Option<Tray>,
+    /// The workbench, while it is open. `None` means the window does not exist:
+    /// closing it drops the shell, which is what makes a later `Ctrl+Alt+M`
+    /// create a fresh one instead of revealing a stale list.
+    manager: Option<manager::Shell>,
+    /// Where a rebind is written. Read-modify-write on the file rather than on the
+    /// in-memory settings: the notes hold their own copy of the geometry and
+    /// appearance, and a second source of truth for keys is the thing this batch
+    /// exists to remove.
+    settings_path: PathBuf,
     /// Id whose window is expected to be gone, and how many notes were left.
     /// Logged one pass later, because the OS destroys the window at the end of the
     /// pass that stops declaring it.
@@ -197,6 +216,7 @@ impl Hub {
                 .mark(0, "hub_window", "parked=false reason=handle_not_found"),
         }
 
+        let table = build_shortcuts(&config);
         let store = open_store(&config);
         // Resolved before the first window exists: a note that cannot find its row
         // must open as a new note and say so, not open empty and overwrite the id.
@@ -223,15 +243,23 @@ impl Hub {
             lite: config.lite,
             scale: config.scale,
             store,
+            shortcuts: Arc::new(RwLock::new(table)),
+            settings_path: config.settings_path,
             notes: Vec::new(),
             inbox: Arc::new(Mutex::new(Vec::new())),
             next_id: 0,
             spawned: 0,
             _hotkeys: None,
             tray: None,
+            manager: None,
             released: None,
         };
-        hub._hotkeys = register_hotkeys(hub.inbox.clone(), ctx.clone(), &hub.log);
+        hub._hotkeys = register_hotkeys(
+            hub.inbox.clone(),
+            ctx.clone(),
+            &hub.log,
+            &hub.shortcuts.read().unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
         hub.tray = install_tray(hub.inbox.clone(), ctx.clone(), &hub.log);
         hub.log.mark(
             0,
@@ -292,6 +320,7 @@ impl Hub {
             log: self.log.clone(),
             store: self.store.clone(),
             existing,
+            shortcuts: self.shortcuts.clone(),
         })));
         self.log.mark(
             0,
@@ -334,12 +363,9 @@ impl Hub {
             Request::NewNote => self.spawn(ctx, None),
             Request::CloseAll => self.close_all(ctx),
             Request::ToggleVisible => self.toggle_visible(ctx),
-            // The honest version of "not implemented": the key is registered and
-            // owned, the log says which target is missing. Silently doing nothing
-            // would look like a broken shortcut.
-            Request::Manager => self
-                .log
-                .mark(0, "note_manager", "reason=hotkey target=none phase=2"),
+            Request::Manager => self.open_manager(ctx),
+            Request::OpenNote(id) => self.open_note(ctx, &id),
+            Request::Rebind { command, chord } => self.rebind(ctx, command, &chord),
             Request::Quit => self.quit(),
         }
     }
@@ -465,6 +491,19 @@ impl eframe::App for Hub {
 
         self.prune();
 
+        // The workbench is an immediate child viewport: it has no island and no
+        // per-window state that has to survive a pass, so a deferred viewport
+        // would only add a frame of latency to its own clicks.
+        if let Some(shell) = self.manager.as_mut() {
+            let builder = shell.builder();
+            ctx.show_viewport_immediate(manager::viewport_id(), builder, |ctx, _class| {
+                shell.frame(ctx);
+            });
+        }
+        if self.manager.as_ref().is_some_and(|shell| shell.closing()) {
+            self.manager = None;
+        }
+
         for handle in &self.notes {
             let (id, builder) = {
                 let shell = handle.lock();
@@ -481,6 +520,45 @@ impl eframe::App for Hub {
         if self.notes.iter().any(|handle| !handle.lock().attached()) {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
+    }
+}
+
+/// Resolve the shortcut table from the settings file and say what it resolved to.
+///
+/// Logged line by line because this is the only place the effective binding of
+/// anything is knowable: the tooltips show it too, but a support question ("my
+/// key does nothing") needs the table that was actually in force, including the
+/// overrides that were rejected and the conflicts.
+fn build_shortcuts(config: &Config) -> Table {
+    let table = Table::build(&config.settings.shortcuts);
+    for (command, chord) in table.globals() {
+        config.log.mark(
+            0,
+            "shortcut",
+            &format!("scope=global command={} key={}", command.id(), chord.display()),
+        );
+    }
+    for (command, chord) in table.window() {
+        config.log.mark(
+            0,
+            "shortcut",
+            &format!("scope=window command={} key={}", command.id(), chord.display()),
+        );
+    }
+    for note in table.notes() {
+        config.log.mark(0, "shortcut_rejected", note);
+    }
+    table
+}
+
+/// The queue entry a global command posts.
+fn request_for(command: Command) -> Option<Request> {
+    match command {
+        Command::NewNote => Some(Request::NewNote),
+        Command::CloseAll => Some(Request::CloseAll),
+        Command::ToggleVisible => Some(Request::ToggleVisible),
+        Command::OpenManager => Some(Request::Manager),
+        _ => None,
     }
 }
 
@@ -526,20 +604,51 @@ fn open_store(config: &Config) -> Option<Arc<Mutex<Store>>> {
 /// context's "current viewport" is whatever ran last, and waking a note would leave
 /// the request sitting in the queue until that note's own 500 ms tick.
 fn press_handler(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, request: Request) -> PressHandler {
+    // A press handler is an `Fn`, so it runs many times and cannot move its
+    // payload out. `Request` gained a `String` variant in 2c (opening a note by
+    // id), which is what ended the `Copy` it used to have.
+    let request = Arc::new(request);
     Arc::new(move || {
         inbox
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(request);
+            .push((*request).clone());
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     })
 }
 
-fn register_hotkeys(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, log: &Log) -> Option<HotkeySet> {
-    let bindings: Vec<Binding> = HOTKEYS
-        .iter()
-        .map(|(combo, request)| Binding::new(*combo, press_handler(inbox.clone(), ctx.clone(), *request)))
-        .collect();
+fn register_hotkeys(
+    inbox: Arc<Mutex<Vec<Request>>>,
+    ctx: egui::Context,
+    log: &Log,
+    table: &Table,
+) -> Option<HotkeySet> {
+    let mut bindings: Vec<Binding> = Vec::new();
+    for (command, chord) in table.globals() {
+        let Some(request) = request_for(command) else {
+            log.mark(
+                0,
+                "hotkey_skipped",
+                &format!("command={} reason=no_request", command.id()),
+            );
+            continue;
+        };
+        if table.shadowed().contains(&command) {
+            // Two commands on one combination cannot both be registered; the
+            // table already decided which one owns the key, so registering the
+            // loser would only produce a second `RegisterHotKey` failure.
+            log.mark(
+                0,
+                "hotkey_skipped",
+                &format!("command={} key={} reason=conflict", command.id(), chord.display()),
+            );
+            continue;
+        }
+        bindings.push(Binding::new(
+            chord.display(),
+            press_handler(inbox.clone(), ctx.clone(), request),
+        ));
+    }
 
     match HotkeySet::spawn(bindings, HOTKEY_DEBOUNCE) {
         Ok(set) => {
@@ -570,7 +679,11 @@ fn register_hotkeys(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, log: &L
     }
 }
 
-fn install_tray(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, log: &Log) -> Option<Tray> {
+fn install_tray(
+    inbox: Arc<Mutex<Vec<Request>>>,
+    ctx: egui::Context,
+    log: &Log,
+) -> Option<Tray> {
     let sink = Arc::new(move |command: TrayCommand| {
         let request = match command {
             TrayCommand::NewNote => Request::NewNote,

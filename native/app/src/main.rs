@@ -15,6 +15,7 @@ mod esc;
 mod hub;
 mod keys;
 mod log;
+mod manager;
 mod note;
 mod probe_json;
 mod save;
@@ -125,6 +126,7 @@ fn main() {
             log,
             store_root: parsed.store_root.clone(),
             note_id: parsed.note_id.clone(),
+            settings_path: settings_path.clone(),
         });
     }
     let spec = PanelSpec {

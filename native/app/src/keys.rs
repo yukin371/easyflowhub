@@ -1,148 +1,25 @@
-//! The quick-note window's shortcut table.
+//! The quick-note window's keyboard path: a keystroke in, a command out.
 //!
-//! Ported from `useQuickNoteShortcuts.ts`, **in the shipped order**, because the
-//! order is the specification: `Ctrl+Shift+Z` is redo only because the redo check
-//! comes before the close check, and `Ctrl+Shift+D` closes the window only because
-//! the shipped close check ignores Shift. Changing the order changes behaviour
-//! even though every entry looks independent.
+//! The *table* moved to [`hub_core::shortcuts`] when shortcuts became
+//! configurable. What stays here is the part that belongs to a window: two input
+//! paths that must not double-fire, and the slot a pressed command waits in until
+//! the next frame.
 //!
 //! Two input paths reach the same table. While the island has focus the keystroke
-//! arrives at its subclass proc and never reaches winit; after a click on the
-//! title strip the focus is on the egui window instead. Neither path sees the
-//! other's keys, so a table entry needs no de-duplication.
+//! arrives at its subclass proc and never reaches the window's own event handler;
+//! after a click on the title strip the focus is on the frame instead. Neither
+//! path sees the other's keys, so a table entry needs no de-duplication.
 //!
-//! What is deliberately *not* here: the switcher (`Ctrl+K`). It needs the notes
-//! list, which is Phase 2; a shortcut that opens nothing would be a key the user
-//! learns is dead.
-//!
-//! Opacity (batch 1c) **is** here, but only as `Ctrl+Shift+H` (ghost on/off).
-//! `Ctrl+wheel` is not a key press: it arrives as `WM_MOUSEWHEEL` with `MK_CONTROL`
-//! set, so it goes through [`crate::wheel`] instead of this table.
+//! What a table entry *does* need is the modifier flags compared exactly. The
+//! shipped matcher requires them to agree, which is why `Ctrl+Alt+H` (minimize
+//! every note, a global key) is not also a window shortcut and why a typed `d`
+//! is a character rather than a close.
 
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+pub use hub_core::{Chord, Command, Scope, Table};
 pub use hub_editor::KeyPress;
-
-/// `VK_*` values the table compares against. Kept here rather than reaching into
-/// `hub-editor::keys` for the escape code, so a change to one crate's vocabulary
-/// cannot silently renumber a shortcut.
-const VK_ESCAPE: u16 = 0x1B;
-const VK_D: u16 = 0x44;
-const VK_H: u16 = 0x48;
-const VK_T: u16 = 0x54;
-const VK_Z: u16 = 0x5A;
-const VK_OEM_PERIOD: u16 = 0xBE;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
-    Close,
-    TogglePin,
-    ToggleTools,
-    /// `Ctrl+Shift+H`: opacity 0, then back to the value it interrupted (Q29).
-    ToggleGhost,
-    Undo,
-    Redo,
-}
-
-impl Action {
-    fn code(self) -> u8 {
-        match self {
-            Action::Close => 1,
-            Action::TogglePin => 2,
-            Action::ToggleTools => 3,
-            Action::ToggleGhost => 6,
-            Action::Undo => 4,
-            Action::Redo => 5,
-        }
-    }
-
-    fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Action::Close),
-            2 => Some(Action::TogglePin),
-            3 => Some(Action::ToggleTools),
-            4 => Some(Action::Undo),
-            5 => Some(Action::Redo),
-            6 => Some(Action::ToggleGhost),
-            _ => None,
-        }
-    }
-}
-
-/// Map a key press to an action, or `None` to let the control have the key.
-///
-/// `None` is the important answer for `Ctrl+Z`: RichEdit already owns undo, and
-/// replacing it to make the table symmetrical would trade the platform's caret and
-/// selection handling for nothing.
-pub fn resolve(press: KeyPress) -> Option<Action> {
-    if press.vk == VK_ESCAPE {
-        // The shipped handler does not look at modifiers for Escape, so Ctrl+Esc
-        // closes too. Kept as-is: Esc is the "get me out" key.
-        return Some(Action::Close);
-    }
-
-    // Every remaining entry is Ctrl-based. Alt is excluded because the shipped
-    // matcher requires the alt flag to agree, and no entry declares it.
-    if !press.ctrl || press.alt {
-        return None;
-    }
-
-    match (press.vk, press.shift) {
-        (VK_Z, false) => Some(Action::Undo),
-        (VK_Z, true) => Some(Action::Redo),
-        (VK_T, false) => Some(Action::TogglePin),
-        // Ghost mode is Shift-only on purpose: `Ctrl+H` is a text-editing key in
-        // some layouts, and the shipped entry is `Ctrl+Shift+H`.
-        (VK_H, true) => Some(Action::ToggleGhost),
-        // Shift is ignored on purpose -- see the module comment. `Ctrl+Shift+D`
-        // would otherwise be a line-duplicate shortcut, which this shell does not
-        // implement; until it does, matching the shipped close check exactly is the
-        // honest choice.
-        (VK_D, _) => Some(Action::Close),
-        // Shift+`.` produces `>` in `event.key`, so the shipped check misses it.
-        (VK_OEM_PERIOD, false) => Some(Action::ToggleTools),
-        _ => None,
-    }
-}
-
-/// The keys the table answers, as egui sees them.
-///
-/// Only used on the egui path; the island path already carries a virtual-key code.
-/// The event is matched rather than `InputState::key_pressed` so that an
-/// auto-repeat while the key is held cannot flip the pin ten times a second.
-pub fn egui_press(ctx: &egui::Context) -> Option<KeyPress> {
-    ctx.input(|input| {
-        for event in input.events.iter().rev() {
-            let egui::Event::Key {
-                key,
-                pressed: true,
-                repeat: false,
-                modifiers,
-                ..
-            } = event
-            else {
-                continue;
-            };
-            let vk = match key {
-                egui::Key::Escape => VK_ESCAPE,
-                egui::Key::Z => VK_Z,
-                egui::Key::T => VK_T,
-                egui::Key::H => VK_H,
-                egui::Key::D => VK_D,
-                egui::Key::Period => VK_OEM_PERIOD,
-                _ => continue,
-            };
-            return Some(KeyPress {
-                vk,
-                ctrl: modifiers.ctrl,
-                shift: modifiers.shift,
-                alt: modifiers.alt,
-            });
-        }
-        None
-    })
-}
 
 /// Where a pressed shortcut waits until the next frame.
 ///
@@ -169,141 +46,165 @@ impl Bus {
     }
 
     /// Record a shortcut and wake this note's viewport.
-    pub fn post(&self, action: Action, ctx: &egui::Context) {
-        self.slot.store(action.code(), Ordering::SeqCst);
+    pub fn post(&self, command: Command, ctx: &egui::Context) {
+        self.slot.store(command.code(), Ordering::SeqCst);
         ctx.request_repaint_of(self.viewport);
     }
 
-    /// Take the pending action, if any.
-    pub fn take(&self) -> Option<Action> {
-        Action::from_code(self.slot.swap(0, Ordering::SeqCst))
+    /// Take the pending command, if any.
+    pub fn take(&self) -> Option<Command> {
+        Command::from_code(self.slot.swap(0, Ordering::SeqCst))
     }
 
     /// Build the callback handed to `Editor::on_key`.
     ///
-    /// `true` means "consumed": the key must not reach `DefSubclassProc`, or
+    /// `true` means "consumed": the key must not reach the default handler, or
     /// `Ctrl+D` would beep inside the control as well as closing the window.
-    pub fn handler(&self, ctx: egui::Context) -> Box<dyn Fn(KeyPress) -> bool + Send + Sync> {
+    /// `table` is behind a lock rather than cloned per window: rebinding a key in
+    /// the workbench has to reach the windows that are already open, and a copy
+    /// taken at spawn time would leave every existing window on the old key --
+    /// exactly the kind of "I changed it and nothing happened" this feature exists
+    /// to avoid.
+    pub fn handler(
+        &self,
+        ctx: egui::Context,
+        table: Arc<RwLock<Table>>,
+    ) -> Box<dyn Fn(KeyPress) -> bool + Send + Sync> {
         let slot = self.slot.clone();
         let viewport = self.viewport;
-        Box::new(move |press| match resolve(press) {
-            Some(action) => {
-                slot.store(action.code(), Ordering::SeqCst);
-                ctx.request_repaint_of(viewport);
-                true
+        Box::new(move |press| {
+            let guard = table.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match resolve(&guard, press) {
+                Some(command) => {
+                    slot.store(command.code(), Ordering::SeqCst);
+                    ctx.request_repaint_of(viewport);
+                    true
+                }
+                None => false,
             }
-            None => false,
         })
     }
+}
+
+/// Match a pressed key against the window-scope commands.
+///
+/// `None` is the important answer for `Ctrl+Z` on a layout where the control wants
+/// it, and for every character the user is actually typing.
+pub fn resolve(table: &Table, press: KeyPress) -> Option<Command> {
+    table.find(
+        Scope::Window,
+        Chord::new(press.ctrl, press.alt, press.shift, press.vk),
+    )
+}
+
+/// The most recent key press this frame, in the shape the table compares against.
+///
+/// The conversion lives in the widget crate because the settings screen captures
+/// bindings with the same mapping; doing it twice is how one path ends up with a
+/// different code for `1` than the other.
+pub fn egui_press(ctx: &egui::Context) -> Option<KeyPress> {
+    hub_ui::keys::chord_from_egui(ctx).map(|chord| KeyPress {
+        vk: chord.vk,
+        ctrl: chord.ctrl,
+        shift: chord.shift,
+        alt: chord.alt,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn press(vk: u16) -> KeyPress {
+    fn press(vk: u16, ctrl: bool, shift: bool, alt: bool) -> KeyPress {
         KeyPress {
             vk,
-            ctrl: false,
-            shift: false,
-            alt: false,
+            ctrl,
+            shift,
+            alt,
         }
     }
 
-    fn ctrl(vk: u16) -> KeyPress {
-        KeyPress {
-            vk,
-            ctrl: true,
-            shift: false,
-            alt: false,
-        }
+    fn table() -> Table {
+        Table::defaults()
     }
 
     #[test]
-    fn escape_closes_even_with_modifiers() {
-        assert_eq!(resolve(press(VK_ESCAPE)), Some(Action::Close));
-        let mut shift_esc = press(VK_ESCAPE);
-        shift_esc.ctrl = true;
-        shift_esc.shift = true;
+    fn escape_closes_whatever_the_modifiers() {
+        let table = table();
         assert_eq!(
-            resolve(shift_esc),
-            Some(Action::Close),
-            "the shipped handler checks `event.key === 'Escape'` without reading modifiers"
+            resolve(&table, press(0x1B, false, false, false)),
+            Some(Command::CloseNote)
+        );
+        assert_eq!(
+            resolve(&table, press(0x1B, true, true, false)),
+            Some(Command::CloseNote),
+            "the shipped handler never reads the modifier flags for Escape"
         );
     }
 
     #[test]
     fn ctrl_z_is_undo_and_shift_switches_it_to_redo() {
-        assert_eq!(resolve(ctrl(VK_Z)), Some(Action::Undo));
-        let mut redo = ctrl(VK_Z);
-        redo.shift = true;
-        assert_eq!(resolve(redo), Some(Action::Redo));
+        let table = table();
+        assert_eq!(resolve(&table, press(0x5A, true, false, false)), Some(Command::Undo));
+        assert_eq!(
+            resolve(&table, press(0x5A, true, true, false)),
+            Some(Command::Redo)
+        );
     }
 
     #[test]
     fn ctrl_t_toggles_pin_only_without_shift() {
-        assert_eq!(resolve(ctrl(VK_T)), Some(Action::TogglePin));
-        let mut shifted = ctrl(VK_T);
-        shifted.shift = true;
+        let table = table();
         assert_eq!(
-            resolve(shifted),
+            resolve(&table, press(0x54, true, false, false)),
+            Some(Command::TogglePin)
+        );
+        assert_eq!(
+            resolve(&table, press(0x54, true, true, false)),
             None,
-            "`matchesShortcutEvent` requires the shift flag to agree with 'Ctrl+T'"
+            "the matcher requires the shift flag to agree"
         );
     }
 
     #[test]
     fn ctrl_d_closes_and_ignores_shift_like_the_shipped_check() {
-        assert_eq!(resolve(ctrl(VK_D)), Some(Action::Close));
-        let mut shifted = ctrl(VK_D);
-        shifted.shift = true;
+        let table = table();
         assert_eq!(
-            resolve(shifted),
-            Some(Action::Close),
-            "the shipped close check is `commandKey && key === 'd'`; Shift+D lowercases to 'd'"
+            resolve(&table, press(0x44, true, false, false)),
+            Some(Command::CloseNote)
         );
-    }
-
-    #[test]
-    fn ctrl_period_toggles_tools_but_shift_period_does_not() {
-        assert_eq!(resolve(ctrl(VK_OEM_PERIOD)), Some(Action::ToggleTools));
-        let mut shifted = ctrl(VK_OEM_PERIOD);
-        shifted.shift = true;
         assert_eq!(
-            resolve(shifted),
+            resolve(&table, press(0x44, true, true, false)),
             None,
-            "Shift+. reports '>' as `event.key`, so the shipped check misses it"
+            "the table compares modifiers exactly; Shift+Ctrl+D is not Ctrl+D"
         );
     }
 
     #[test]
-    fn ctrl_shift_h_toggles_ghost_and_ctrl_h_does_not() {
-        let mut ghost = ctrl(VK_H);
-        ghost.shift = true;
-        assert_eq!(resolve(ghost), Some(Action::ToggleGhost));
+    fn a_rebound_command_moves_on_both_paths() {
+        // The island and the frame both go through `resolve`, so a rebind is one
+        // edit. The old chord must stop answering even though no code changed.
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("toggle_pin".to_string(), "Ctrl+Shift+P".to_string());
+        let table = Table::build(&overrides);
 
         assert_eq!(
-            resolve(ctrl(VK_H)),
-            None,
-            "the shipped entry is Ctrl+Shift+H; Ctrl+H alone is an editing key"
+            resolve(&table, press(0x50, true, true, false)),
+            Some(Command::TogglePin)
         );
-
-        // Ctrl+Alt+H is a *global* hotkey (minimize/restore every note), so it must
-        // not also reach this table through the island.
-        let mut global = ctrl(VK_H);
-        global.alt = true;
-        assert_eq!(resolve(global), None);
+        assert_eq!(resolve(&table, press(0x54, true, false, false)), None);
     }
 
     #[test]
-    fn plain_letters_and_alt_chords_are_left_to_the_control() {
-        assert_eq!(resolve(press(VK_D)), None, "typing 'd' must not close");
-        assert_eq!(resolve(press(VK_Z)), None);
-        assert_eq!(resolve(press(VK_OEM_PERIOD)), None, "a typed '.' is a dot");
-
-        let mut alt_d = ctrl(VK_D);
-        alt_d.alt = true;
-        assert_eq!(resolve(alt_d), None, "Ctrl+Alt+D belongs to the global hotkeys");
+    fn plain_letters_and_global_chords_are_left_to_the_control() {
+        let table = table();
+        assert_eq!(resolve(&table, press(0x44, false, false, false)), None, "typing 'd'");
+        assert_eq!(resolve(&table, press(0x5A, false, false, false)), None);
+        assert_eq!(
+            resolve(&table, press(0x4E, true, false, true)),
+            None,
+            "Ctrl+Alt+N is a global hotkey, not a window shortcut"
+        );
     }
 
     #[test]
@@ -312,11 +213,11 @@ mod tests {
         let ctx = egui::Context::default();
         assert_eq!(bus.take(), None, "an empty bus must not invent an action");
 
-        bus.post(Action::TogglePin, &ctx);
-        bus.post(Action::Close, &ctx);
+        bus.post(Command::TogglePin, &ctx);
+        bus.post(Command::CloseNote, &ctx);
         assert_eq!(
             bus.take(),
-            Some(Action::Close),
+            Some(Command::CloseNote),
             "the later shortcut wins; a stale pin must not run after the window closed"
         );
         assert_eq!(bus.take(), None, "taking is destructive");
@@ -326,14 +227,17 @@ mod tests {
     fn the_handler_consumes_only_what_the_table_answers() {
         let bus = Bus::new(egui::ViewportId::ROOT);
         let ctx = egui::Context::default();
-        let handler = bus.handler(ctx);
+        let handler = bus.handler(
+            ctx,
+            std::sync::Arc::new(std::sync::RwLock::new(Table::defaults())),
+        );
 
-        assert!(handler(ctrl(VK_D)), "Ctrl+D is ours");
-        assert_eq!(bus.take(), Some(Action::Close));
+        assert!(handler(press(0x44, true, false, false)), "Ctrl+D is ours");
+        assert_eq!(bus.take(), Some(Command::CloseNote));
 
         assert!(
-            !handler(press(VK_D)),
-            "a typed 'd' must fall through to RichEdit, not be swallowed"
+            !handler(press(0x44, false, false, false)),
+            "a typed 'd' must fall through to the control, not be swallowed"
         );
         assert_eq!(bus.take(), None);
     }

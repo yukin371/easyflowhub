@@ -55,7 +55,7 @@ impl NoteShell {
                         ctx.clone(),
                         self.viewport,
                     ));
-                    editor.on_key(self.keys.handler(ctx.clone()));
+                    editor.on_key(self.keys.handler(ctx.clone(), self.shortcuts.clone()));
                     // RichEdit treats `Ctrl+wheel` as text zoom. The shell wants it
                     // for window opacity, so the notch is claimed at the control.
                     editor.on_wheel(self.wheel.handler(ctx.clone()));
@@ -74,6 +74,7 @@ impl NoteShell {
                     // An existing note is filled before the caret is placed, or the
                     // caret would sit at the end of an empty document and the first
                     // keystroke would land at the top instead of after the text.
+                    let mut loaded = None;
                     if let Some(text) = self.save.take_initial() {
                         let chars = text.chars().count();
                         editor.set_text(&text);
@@ -86,15 +87,23 @@ impl NoteShell {
                         // every open.
                         let shown = editor.text();
                         self.save.rebase(&shown);
+                        loaded = Some(chars);
+                    }
+                    editor.caret_to_end();
+                    editor.scroll_caret();
+                    editor.apply_caret_width(theme.caret_width);
+                    // Logged *after* the caret is parked, not before: the gate (and
+                    // any later script) types as soon as it sees this line, and a
+                    // line written while the caret was still at 0 is a race the
+                    // reader cannot win -- measured once as a character landing
+                    // second-from-last.
+                    if let Some(chars) = loaded {
                         self.log.mark(
                             0,
                             "note_load",
                             &format!("id={} note_id={} chars={chars}", self.id, self.save.id()),
                         );
                     }
-                    editor.caret_to_end();
-                    editor.scroll_caret();
-                    editor.apply_caret_width(theme.caret_width);
                     // Q19's criterion: focused on open, caret at the end. Logged
                     // because "the first keystroke went somewhere else" is otherwise
                     // indistinguishable from a key that was never delivered.

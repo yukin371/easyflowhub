@@ -49,9 +49,9 @@ use windows_sys::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, GetClassNameW, GetWindowLongPtrW, GetWindowTextLengthW,
-    GetWindowTextW, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-    SystemParametersInfoW, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WM_KEYDOWN, WM_PRINTCLIENT,
-    WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
+    GetWindowTextW, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    SystemParametersInfoW, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, WM_KEYDOWN,
+    WM_PRINTCLIENT, WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
 };
 
 // --- RichEdit messages (not exported by windows-sys; values from richedit.h) ---
@@ -582,6 +582,29 @@ impl Editor {
     pub fn replace_selection(&self, text: &str) {
         unsafe {
             SendMessageW(self.hwnd, EM_REPLACESEL, 1, wide(text).as_ptr() as isize);
+        }
+    }
+
+    /// Hide the control without destroying it.
+    ///
+    /// The switcher draws over exactly this rectangle, and a child window is
+    /// always in front of its parent's painting: the only way to see the panel is
+    /// to take the control out of the picture. Hidden rather than resized to zero
+    /// because a zero-sized control loses its layout and the caret position.
+    pub fn hide(&self) {
+        unsafe {
+            ShowWindow(self.hwnd as HWND, SW_HIDE);
+        }
+    }
+
+    /// Put the control back without taking the keyboard back.
+    ///
+    /// `SW_SHOWNA` rather than `SW_SHOW`: the caller decides who gets the focus,
+    /// and a show that activated the control would undo the frame's own focus
+    /// bookkeeping during a switch.
+    pub fn show(&self) {
+        unsafe {
+            ShowWindow(self.hwnd as HWND, SW_SHOWNA);
         }
     }
 

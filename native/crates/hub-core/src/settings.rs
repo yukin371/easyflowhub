@@ -10,6 +10,7 @@
 //! separately.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// One colour, `[r, g, b]`.
@@ -183,6 +184,15 @@ pub struct SpikeSettings {
     pub bench_visible_ms: u64,
     /// Note window size (parity Q2), logical pixels.
     pub quick_note: QuickNoteSettings,
+    /// Key overrides, `command id → "Ctrl+Alt+N"`.
+    ///
+    /// A map rather than a struct with one field per command on purpose: the
+    /// table in `shortcuts` is the single list of commands, and a mirrored struct
+    /// here would be a second one to keep in step. Rebindable is the default --
+    /// only what the user actually changed is written, so every new command added
+    /// later arrives with its default already in force instead of with an empty
+    /// string.
+    pub shortcuts: BTreeMap<String, String>,
 }
 
 impl Default for SpikeSettings {
@@ -196,6 +206,7 @@ impl Default for SpikeSettings {
             hotkey_debounce_ms: 260,
             bench_visible_ms: 240,
             quick_note: QuickNoteSettings::default(),
+            shortcuts: BTreeMap::new(),
         }
     }
 }
@@ -229,6 +240,28 @@ impl SpikeSettings {
             Ok(settings) => (settings, SettingsSource::File),
             Err(_) => (Self::default(), SettingsSource::Default),
         }
+    }
+
+    /// Write the whole file back, pretty-printed.
+    ///
+    /// Only the settings screen calls this; everything else reads once at startup.
+    /// The write goes to a sibling file and is renamed into place, because a
+    /// half-written JSON would be *silently* ignored on the next start (see
+    /// [`Self::load`]) -- every setting would revert to its default and nothing
+    /// would say why. A rename is atomic on one volume, so either the old file or
+    /// the new one is there, never a mix.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|error| format!("serialise settings: {error}"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        }
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, text)
+            .map_err(|error| format!("write {}: {error}", temp.display()))?;
+        std::fs::rename(&temp, path)
+            .map_err(|error| format!("replace {}: {error}", path.display()))
     }
 }
 
@@ -363,8 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hand_edited_opacity_is_clamped_including_nan() {
-        // `NaN` is the one that a naive `if x < 0 … else if x > 1 …` clamp lets
+    fn a_hand_edited_opacity_is_clamped_including_nan() {        // `NaN` is the one that a naive `if x < 0 … else if x > 1 …` clamp lets
         // through, and it would reach `SetLayeredWindowAttributes` as a 0 byte.
         let mut appearance = NoteAppearance::default();
         appearance.window_alpha = f32::NAN;
@@ -378,5 +410,46 @@ mod tests {
 
         appearance.window_alpha = 0.0;
         assert_eq!(appearance.initial_opacity(), 0.0, "zero is a legal value");
+    }
+
+    #[test]
+    fn a_saved_shortcut_override_comes_back_as_an_override() {
+        // The round trip is what the settings screen relies on: rebind, save,
+        // and the next start reads the same table.
+        let dir = std::env::temp_dir().join("hub-core-settings-save");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shortcuts.json");
+
+        let mut settings = SpikeSettings::default();
+        settings
+            .shortcuts
+            .insert("switcher".to_string(), "Ctrl+Shift+K".to_string());
+        settings.save(&path).expect("save");
+
+        let (loaded, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(
+            loaded.shortcuts.get("switcher").map(String::as_str),
+            Some("Ctrl+Shift+K")
+        );
+        // Everything the file did not change is still the default, which is why
+        // the map is sparse.
+        assert_eq!(loaded.quick_note.width, 400);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_creates_the_directory_and_leaves_no_temp_file_behind() {
+        let dir = std::env::temp_dir().join("hub-core-settings-save/nested/deeper");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+        let path = dir.join("settings.json");
+
+        SpikeSettings::default().save(&path).expect("save");
+        assert!(path.exists());
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "the temp file must be renamed, not copied"
+        );
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
     }
 }

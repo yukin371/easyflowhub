@@ -18,8 +18,9 @@
 
 use egui::{Align2, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
+use crate::hint;
 use crate::theme::Palette;
-use hub_core::STRIP_HEIGHT;
+use hub_core::{Command, STRIP_HEIGHT, Table};
 
 /// Width reserved for each side slot, logical pixels.
 ///
@@ -177,7 +178,17 @@ pub struct StripOutput {
 }
 
 /// Draw the strip (and the tools panel when open); return where the island goes.
-pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> StripOutput {
+///
+/// `table` is the shortcut table, not a `&str` per button: the hint under the
+/// pointer comes from the same object the keyboard handler reads, so a rebound
+/// key changes the tooltip and the behaviour in one edit. Passing pre-formatted
+/// strings would have been one more place to forget.
+pub fn draw(
+    ctx: &egui::Context,
+    state: &mut StripState,
+    palette: Palette,
+    table: &Table,
+) -> StripOutput {
     let full = ctx.screen_rect();
     let mut actions = StripActions::default();
     let mut content = full;
@@ -214,8 +225,18 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
             // clicks, so pressing `•••` must not also start a drag.
             let tools_rect = center_button_rect(&slots.center, strip);
             let pin_rect = right_button_rect(strip);
-            let tools = ui.interact(tools_rect, ui.id().with("tools"), Sense::click());
-            let pin = ui.interact(pin_rect, ui.id().with("pin"), Sense::click());
+            let tools = hint::hint(
+                ui.interact(tools_rect, ui.id().with("tools"), Sense::click()),
+                palette,
+                Command::ToggleTools.label(),
+                &table.hint(Command::ToggleTools),
+            );
+            let pin = hint::hint(
+                ui.interact(pin_rect, ui.id().with("pin"), Sense::click()),
+                palette,
+                Command::TogglePin.label(),
+                &table.hint(Command::TogglePin),
+            );
 
             let painter = ui.painter();
             // Neither button paints a background, in any state: the shipped
@@ -277,7 +298,14 @@ pub fn draw(ctx: &egui::Context, state: &mut StripState, palette: Palette) -> St
                 painter.text(
                     egui::pos2(panel.left() + EDGE_PADDING, panel.top() + 32.0),
                     Align2::LEFT_TOP,
-                    "内容随 Phase 2 补齐 · 置顶见标题条右槽",
+                    "Ctrl+滚轮 调整不透明度 · 20% 一档",
+                    FontId::proportional(10.0),
+                    palette.ink_subtle,
+                );
+                painter.text(
+                    egui::pos2(panel.left() + EDGE_PADDING, panel.top() + 48.0),
+                    Align2::LEFT_TOP,
+                    &format!("{} · 幽灵模式（再按恢复原值）", table.hint(Command::ToggleGhost)),
                     FontId::proportional(10.0),
                     palette.ink_subtle,
                 );

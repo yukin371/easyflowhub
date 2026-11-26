@@ -317,6 +317,27 @@ impl Pump {
         self.edit.store(true, Ordering::SeqCst);
     }
 
+    /// Point this window at another note and hand back its text.
+    ///
+    /// The caller flushes first. What is dropped here is the pump's memory of the
+    /// previous document -- id, `created_at`, baseline text, pending debounce --
+    /// because all four belong to a note this window no longer shows.
+    pub fn load(&mut self, row: &NoteRow) -> String {
+        self.saver = Saver::resume(self.saver.store.clone(), row);
+        self.edit.store(false, Ordering::SeqCst);
+        self.scan = Instant::now();
+        self.initial = None;
+        Saver::loaded_text(row)
+    }
+
+    /// Start a new note in this window: a fresh id, nothing persisted yet.
+    pub fn restart(&mut self) {
+        self.saver = Saver::fresh(self.saver.store.clone());
+        self.edit.store(false, Ordering::SeqCst);
+        self.scan = Instant::now();
+        self.initial = None;
+    }
+
     /// Text to put in the control once it exists, then `None` forever after.
     pub fn take_initial(&mut self) -> Option<String> {
         self.initial.take()
@@ -379,20 +400,23 @@ impl Pump {
         self.saver.wait(now)
     }
 
-    /// The close path: write what is in the control, ignoring the debounce.
+    /// Write now, whatever the timer says.
     ///
-    /// Called before the window goes away, because a debounce interrupted by a
-    /// close is the single most common way a keystroke would be lost.
-    pub fn flush(&mut self, text: &str, log: &Log) {
+    /// `reason` names the caller in the log. It is a parameter rather than always
+    /// `"close"` because the three paths that flush are different questions --
+    /// "the window went away", "this window now shows another note" and "a note was
+    /// created from a search" -- and a log that calls all three a close cannot
+    /// answer why a row appeared.
+    pub fn flush(&mut self, text: &str, reason: &str, log: &Log) {
         if self.saver.disabled() {
             log.mark(
                 0,
                 "note_save",
-                &format!("id={} reason=close store=off skipped=true", self.saver.id()),
+                &format!("id={} reason={reason} store=off skipped=true", self.saver.id()),
             );
             return;
         }
-        self.commit(text, "close", log);
+        self.commit(text, reason, log);
     }
 
     fn commit(&mut self, text: &str, reason: &str, log: &Log) {
@@ -533,7 +557,7 @@ mod tests {
         // closing it immediately must not litter the list with empty shells.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("", &log());
+        pump.flush("", "close", &log());
         assert!(rows(&store).is_empty(), "an empty note was persisted");
     }
 
@@ -544,10 +568,10 @@ mod tests {
         // the old text in SQLite and it comes back on the next open.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("原本的字", &log());
+        pump.flush("原本的字", "close", &log());
         assert_eq!(rows(&store).len(), 1);
 
-        pump.flush("", &log());
+        pump.flush("", "close", &log());
         let all = rows(&store);
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].content, "", "the stale body survived a clear");
@@ -559,7 +583,7 @@ mod tests {
         // Parity Q21: type one character, press Esc, reopen -- the character is there.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("一个字", &log());
+        pump.flush("一个字", "close", &log());
         let all = rows(&store);
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].content, "一个字");
@@ -571,9 +595,9 @@ mod tests {
         // just because the user looked at a note.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("内容", &log());
+        pump.flush("内容", "close", &log());
         let first = rows(&store)[0].updated_at.clone();
-        pump.flush("内容", &log());
+        pump.flush("内容", "close", &log());
         assert_eq!(rows(&store)[0].updated_at, first, "a no-op close rewrote the row");
     }
 
@@ -583,7 +607,7 @@ mod tests {
         // this database expects LF, and a browser shows the stray `\r` as a glyph.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("第一行\r\n第二行\r\n", &log());
+        pump.flush("第一行\r\n第二行\r\n", "close", &log());
         let all = rows(&store);
         assert_eq!(all[0].content, "第一行\n第二行\n");
         assert!(!all[0].content.contains('\r'), "a CR survived into the row");
@@ -593,12 +617,12 @@ mod tests {
     fn a_resumed_note_updates_its_row_instead_of_creating_one() {
         let (store, _dir) = temp_store();
         let mut first = Pump::new(Some(store.clone()), None);
-        first.flush("原始内容", &log());
+        first.flush("原始内容", "close", &log());
         let row = rows(&store).remove(0);
 
         let mut again = Pump::new(Some(store.clone()), Some(&row));
         assert_eq!(again.take_initial().as_deref(), Some("原始内容"));
-        again.flush("改过的内容", &log());
+        again.flush("改过的内容", "close", &log());
 
         let all = rows(&store);
         assert_eq!(all.len(), 1, "the resume created a second row");
@@ -614,14 +638,14 @@ mod tests {
         // writes a body without them.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("买菜\n# 工作 重要", &log());
+        pump.flush("买菜\n# 工作 重要", "close", &log());
         let row = rows(&store).remove(0);
         assert_eq!(row.tags, "工作 重要");
 
         let mut again = Pump::new(Some(store.clone()), Some(&row));
         let shown = again.take_initial().expect("loaded text");
         assert_eq!(shown, "买菜\n# 工作 重要");
-        again.flush(&shown, &log());
+        again.flush(&shown, "close", &log());
         assert_eq!(rows(&store)[0].tags, "工作 重要", "tags were lost on re-save");
     }
 
@@ -659,7 +683,7 @@ mod tests {
         // minute, forever.
         let (store, _dir) = temp_store();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("稳定", &log());
+        pump.flush("稳定", "close", &log());
         let idle = Instant::now() + Duration::from_secs(3);
 
         pump.tick(idle, || "稳定".to_string(), &log());
@@ -680,7 +704,7 @@ mod tests {
         let (store, _dir) = temp_store();
         let start = Instant::now();
         let mut pump = Pump::new(Some(store.clone()), None);
-        pump.flush("旧", &log());
+        pump.flush("旧", "close", &log());
         let scanned = start + SCAN + Duration::from_millis(500);
 
         // No flag is raised: this is the control changing under a message nobody

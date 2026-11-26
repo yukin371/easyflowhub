@@ -5,8 +5,12 @@
 //! real panel would. A "hello world" panel would warm the atlas for a handful of
 //! characters and make the 60 ms measurement meaningless.
 
+pub mod hint;
+pub mod keys;
+pub mod manager;
 pub mod panel;
 pub mod quicknote;
+pub mod switcher;
 pub mod theme;
 
 pub use panel::{first_screen_text, PanelState, PANEL_PADDING};

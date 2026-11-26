@@ -188,6 +188,47 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// Set or clear the *list* pin (not the window's z-order bookmark).
+    ///
+    /// The manager is the only writer: a quick note deliberately never touches this
+    /// column, because its bookmark means "keep this window on top" and writing it
+    /// here would reorder the list every time a note was opened.
+    pub fn set_note_pin(&mut self, id: &str, pinned: bool) -> Result<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "UPDATE notes SET is_pinned = ?2 WHERE id = ?1",
+            params![id, pinned as i64],
+        )?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// Take a note out of the trash.
+    pub fn restore_note(&mut self, id: &str) -> Result<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute("UPDATE notes SET deleted_at = NULL WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// Delete the row for good.
+    ///
+    /// Only reachable from the trash, where the user asked for it twice: the
+    /// shipped product keeps deletes reversible until this button, and a
+    /// `DELETE` anywhere else would be a data loss the UI never warned about.
+    pub fn purge_note(&mut self, id: &str) -> Result<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute("DELETE FROM notes WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
     /// The note that holds the todo list.
     ///
     /// Todos are **not a table**. The product stores them as Markdown checkbox lines
@@ -392,6 +433,28 @@ mod tests {
         let stored = store.note("n1").expect("read").expect("present");
         assert!(stored.is_pinned, "the list pin was cleared by an autosave");
         assert_eq!(stored.content, "edited in the note window");
+    }
+
+    #[test]
+    fn the_manager_can_pin_restore_and_purge_without_touching_the_body() {
+        let mut store = store();
+        store.upsert_note(&note("n1", "body")).expect("seed");
+
+        assert!(store.set_note_pin("n1", true).expect("pin"));
+        assert!(store.note("n1").expect("read").expect("present").is_pinned);
+        assert!(store.set_note_pin("n1", false).expect("unpin"));
+        assert!(!store.note("n1").expect("read").expect("present").is_pinned);
+
+        // The pin is a list property: the text must not move with it.
+        assert_eq!(store.note("n1").expect("read").expect("present").content, "body");
+
+        assert!(store.soft_delete_note("n1", "2026-11-26T00:00:00+00:00").expect("trash"));
+        assert_eq!(store.notes(false).expect("list").len(), 0);
+        assert!(store.restore_note("n1").expect("restore"));
+        assert_eq!(store.notes(false).expect("list").len(), 1);
+
+        assert!(store.purge_note("n1").expect("purge"));
+        assert!(store.note("n1").expect("read").is_none(), "the row must be gone");
     }
 
     #[test]
