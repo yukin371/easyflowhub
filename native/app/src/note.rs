@@ -41,6 +41,7 @@ use crate::log::Log;
 use crate::save;
 use crate::wheel;
 
+mod drag;
 mod island;
 mod panel;
 
@@ -138,6 +139,8 @@ pub struct NoteShell {
     /// Clicks in the body, reported by the island because egui cannot see them.
     /// Dismisses the tools panel (Q7). See [`click`].
     clicks: click::Clicks,
+    /// Q10: the window follows the cursor while the strip is held. See [`drag`].
+    drag: drag::Drag,
     /// Alpha last handed to the compositor. `None` until the window is attached, so
     /// the first application is never skipped by the "unchanged" guard.
     last_alpha: Option<u8>,
@@ -224,6 +227,7 @@ impl NoteShell {
             wheel: wheel::Wheel::new(viewport_id(spawn.id)),
             gate: wheel::Gate::default(),
             clicks: click::Clicks::new(),
+            drag: drag::Drag::default(),
             last_alpha: None,
             save,
             store,
@@ -425,10 +429,11 @@ impl NoteShell {
         let output = quicknote::draw(ctx, &mut self.strip, self.palette, &table);
 
         if output.actions.drag {
-            // Handing the drag to winit is what makes the whole strip a title bar
-            // without a per-slot hit region: the OS moves the window from here on.
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            // Q10: the window follows the cursor here, not in an OS move loop. See
+            // `note/drag.rs` for why `ViewportCommand::StartDrag` is not used.
+            self.begin_drag();
         }
+        self.drag_frame(ctx);
         if output.actions.toggle_pin {
             self.toggle_pin();
         }

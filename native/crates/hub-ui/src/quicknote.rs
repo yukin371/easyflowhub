@@ -233,8 +233,10 @@ pub fn draw(
             let drag = ui.interact(strip, ui.id().with("strip"), Sense::drag());
             // ...but ordering alone is not enough: `Sense::drag()` reports
             // `drag_started` on the same press that the button above it claims, so
-            // pressing `•••` would also hand the window to `StartDrag`. Measured:
-            // the window moved a few pixels and the *next* click landed on nothing.
+            // pressing `•••` would also start a window drag. Measured with the OS
+            // move loop: the window moved a few pixels and the *next* click landed
+            // on nothing. `actions.drag` is now a request the shell honours by
+            // moving the window itself (see `app/src/note/drag.rs`).
             let pointer = ctx.input(|i| i.pointer.interact_pos());
             let on_button = pointer
                 .map(|p| tools_rect.contains(p) || pin_rect.contains(p))

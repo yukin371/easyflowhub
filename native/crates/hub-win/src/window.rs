@@ -54,6 +54,54 @@ pub fn move_on_screen(hwnd: isize, x: i32, y: i32, width: i32, height: i32, topm
     }
 }
 
+/// Move the window without resizing, re-ordering or activating it.
+///
+/// The drag in `app::note::drag` calls this once per frame while the left button
+/// is held. `SWP_NOACTIVATE` matters as much here as in [`park`]: a window that
+/// activates on every frame of a drag would fight the focus it is trying to keep.
+pub fn move_to(hwnd: isize, x: i32, y: i32) -> bool {
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            std::ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        ) != 0
+    }
+}
+
+/// The cursor in physical screen pixels, and nothing else.
+///
+/// The drag reads this instead of egui's pointer position because egui reports
+/// *client* coordinates and the client moves with the window: every frame after
+/// the first would report the same delta, which is zero, and the window would
+/// never follow.
+pub fn cursor_position() -> (i32, i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut point = POINT { x: 0, y: 0 };
+    unsafe { GetCursorPos(&mut point) };
+    (point.x, point.y)
+}
+
+/// Where the client area starts on screen, in physical pixels.
+///
+/// This is the window's origin for a borderless shell (client and window rects are
+/// the same rectangle), and it is what a drag has to preserve: the offset between
+/// the cursor and this point must not change while the button is held.
+pub fn client_origin(hwnd: isize) -> (i32, i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+
+    let mut point = POINT { x: 0, y: 0 };
+    unsafe { ClientToScreen(hwnd as HWND, &mut point) };
+    (point.x, point.y)
+}
+
 /// Turn always-on-top on or off, touching only the z-order bit.
 ///
 /// `ViewportCommand::WindowLevel` is the obvious route and it **hid the window**.
