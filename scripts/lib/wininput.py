@@ -208,6 +208,43 @@ def click_client(hwnd, x, y):
     click(left + x, top + y)
 
 
+def drag(x, y, dx, dy, steps=8, hold=0.02):
+    """Press at a screen point, move by `(dx, dy)` in steps, release.
+
+    The steps are not politeness. The shell moves the window by one delta per frame
+    (`app/src/note/drag.rs`), so a single jump would be one frame carrying the whole
+    travel: it would pass while a real drag lagged, stuttered, or dropped every
+    intermediate position. A dozen small moves produce a dozen frames, which is what
+    a hand does and what the window has to keep up with.
+    """
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+
+    def at(px, py, flags):
+        ax = int(round(px * 65535 / max(width - 1, 1)))
+        ay = int(round(py * 65535 / max(height - 1, 1)))
+        _mouse(ax, ay, flags | MOUSEEVENTF_ABSOLUTE)
+
+    at(x, y, MOUSEEVENTF_MOVE)
+    time.sleep(0.05)
+    at(x, y, MOUSEEVENTF_LEFTDOWN)
+    time.sleep(0.1)
+    for step in range(1, steps + 1):
+        at(x + dx * step / steps, y + dy * step / steps, MOUSEEVENTF_MOVE)
+        time.sleep(hold)
+    time.sleep(0.1)
+    at(x + dx, y + dy, MOUSEEVENTF_LEFTUP)
+    time.sleep(0.25)
+
+
+def drag_client(hwnd, x, y, dx, dy, steps=8):
+    """Drag starting at a client point; `(dx, dy)` is a screen-space delta."""
+    left, top, width, height = client_box(hwnd)
+    x = max(0, min(width - 1, int(x)))
+    y = max(0, min(height - 1, int(y)))
+    drag(left + x, top + y, dx, dy, steps)
+
+
 def force(hwnd):
     """Make `hwnd` the foreground window and say whether it worked.
 
