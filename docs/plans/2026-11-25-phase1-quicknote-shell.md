@@ -626,6 +626,84 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | `store` 的 schema 版本号 | 仍与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉 |
 | 正文长度上限 / 图片与 Markdown | 属 P3，与 1c 的结论无关 |
 
+## 8.9 交互层：快捷键配置、切换器、工作台（2a–2d，2026-11-26）
+
+1d 结束时笔记存得住但换不了：要打开另一条笔记得先从库里取 id、再走命令行。这一批补上三件事——一张**可以改的**键位表（并把"每个带键位的按钮都悬浮显示功能名 + 快捷键"变成纪律）、`Ctrl+K` 切换器（Q25–Q27）、`Ctrl+Alt+M` 指向的工作台（Q16 与 Q18 的另一半）。
+
+### 落点
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| `hub-core` | `shortcuts.rs` | `Command` / `Chord` / `Scope` / `Table`：11 条命令、两个作用域、冲突仲裁、键位与字符串双向映射 |
+| `hub-core` | `settings.rs` | `shortcuts` 稀疏覆盖；`save()` 写 `.json.tmp` 再 `rename` |
+| `hub-core` | `store/notes.rs` | `set_note_pin` / `restore_note` / `purge_note`，三条都只动自己那列 |
+| `hub-ui` | `hint.rs` | 悬浮提示：功能名 + 键位，文案取自同一张表 |
+| `hub-ui` | `keys.rs` | egui 按键 → `Chord` 的唯一映射（改键捕获与窗内解析共用，避免两条路径对 `1` 给出不同码） |
+| `hub-ui` | `switcher.rs` | 面板状态机与绘制（查询、选中、Enter） |
+| `hub-ui` | `manager.rs` | 工作台四个分区 + 设置页 |
+| `app` | `keys.rs` | 两条输入路径汇到一张表；`Bus` 用一个 `AtomicU8` 存待处理命令 |
+| `app` | `note/panel.rs` | 切换器窗口侧：隐藏岛、就地切换、新建 |
+| `app` | `manager.rs` | 工作台窗口与它的副作用 |
+| `app` | `hub/commands.rs` | `open_manager` / `open_note` / `rebind`（都碰控制器私有的状态） |
+
+### 键位为什么必须是一张表
+
+`Ctrl+K` 只是默认值，不是事实。三处必须读同一份数据，否则总有一处会撒谎：
+
+1. **按键解析**——窗口里两条路径（岛的子类 proc、egui 的 winit 事件）都要认同一个组合；
+2. **悬浮提示**——提示里的键位若不是从表里取的，改完键它就开始骗人；
+3. **改键界面**——设置页显示"当前键"、捕获新键、写回文件，全是这张表。
+
+表放在 `hub-core` 而不是窗口里：它是纯逻辑（`Chord::parse` 与 `Chord::display` 同源，15 条单测把每个默认键跑一遍往返），窗口与工作台只消费。表本身用 `Arc<RwLock<Table>>` 共享——**改键要触达已经打开的窗口**，spawn 时拷一份的写法只会得到"我改了，但那个窗口还是老键"。
+
+### 冲突、固定键、以及为什么不拒绝启动
+
+- `Command::ALL` 的顺序**就是**优先级：先者胜，败者由 `Table::shadowed()` 返回并跳过注册，日志写 `shortcut_rejected`。拒绝启动会把一个可以容忍的配置变成打不开的程序。
+- `Esc` 不进表。它是"关闭"的语义本身（Q12 关窗口、Q13 关面板），不是偏好；窗口作用域下任意修饰键都触发。
+- 组合键必须带 `Ctrl`/`Alt`/`Shift`，例外只有 `Esc` 与 `F1`–`F24`——它们不是字符键，占不到用户的打字。
+
+### 三个坑
+
+1. **改全局键要先让旧的松手。** `RegisterHotKey` 是先来先得：关掉旧 `HotkeySet` 之后立刻注册新组合会拿到 1409（旧线程还没跑到 `UnregisterHotKey`）。所以 `shutdown()` → `sleep 60 ms` → 重新注册，日志里 `hotkeys registered=… failed=…` 就是这一步的证据。
+2. **子窗口永远画在父窗口之上。** 切换器要盖住正文，但正文是 RichEdit 子 HWND，egui 画不过它。开面板时 `Editor::hide()`（`SW_HIDE`）、关面板时 `Editor::show()`（`SW_SHOWNA`，恢复可见但不抢焦点），焦点在开面板时交回 frame（否则查询框一个字符也收不到）。
+3. **种下的查询词不会自己落库。** 索引 0 按 Enter 会把查询词写进控件当正文，但 `Pump::tick` 的判断是"控件文本 == 基线就丢掉这次写"，而 `start_new` 刚把基线设成那段文本——于是"新建的笔记"在列表里查不到自己。改成 seed **立刻** `flush`（`reason=seed`），再把基线设回控件自报的文本（RichEdit 会补一个段落标记，不设回去就会在一秒后重写同一行）。这是本批唯一一处由门禁实测暴露出来的缺陷。
+
+### 工作台为什么是 immediate viewport
+
+它没有文本岛、没有需要跨帧保存的窗口状态，deferred 只会给它自己的点击多加一帧延迟。反过来，**所有副作用都不在帧里做**：开一条笔记要创建 viewport，改一个全局键要重注册热键，两者都在 `Hub` 手里，所以工作台把它们塞进 `Request` 队列，由控制器在下一轮处理。工作台只重画列表而不每帧查库：列表只在打开与写之后变。
+
+### 证据（三个门禁，都要真按键）
+
+| 门禁 | 判什么 | 结果 |
+|---|---|---|
+| `scripts/check-native-switcher.py` | Q25 同键开关、Q13 Esc 只关面板、Q26 正文/标签命中、Q27 选中与索引 0 新建、面板打开时岛被隐藏 | 22/22 |
+| `scripts/check-native-manager.py` | Q16 用**改过的**键打开工作台且计数与库一致、Q18 Esc 只关工作台、K1 文件里的键生效、K2 被换掉的键失效 | 19/19 |
+| `scripts/check-native-notes.py` | 1d 的 Q20–Q23 + 按 id 重开（本批回归） | 24/24 |
+
+为什么这三个门禁要真按键：`hub-editor` 的修饰键读的是 `GetKeyState`，投一条消息只会得到"一个没修饰的字母"；egui 的键与文本来自 winit，投消息到不了它那儿。共用注入层是 `scripts/lib/wininput.py`，它的头部记了三条实测：`INPUT` 在 x64 上必须 40 字节（写错 `SendInput` 返回 0 + `ERROR_INVALID_PARAMETER`，且静默不投递）、中文要靠 `KEYEVENTF_UNICODE`、`SetForegroundWindow` 对非前台进程会被拒（`AttachThreadInput` 借一下就行）。
+
+`cargo test --release --workspace` 190 项、`node scripts/check-native-architecture.mjs`（5 crates）与 `node scripts/check-architecture.mjs` 同时通过。`cargo fmt` 在本机没装（`rustfmt` 组件缺失），这一批的格式是按既有风格手写的。
+
+### 与旧版的差异（有意）
+
+| 项 | 旧版 | 本批 | 为什么 |
+|---|---|---|---|
+| 键位存哪 | 前端 `shortcutConfig`（设置页写 `notes.db`） | 设置文件 `shortcuts`（稀疏，只存改过的） | 桌面壳没有 IPC 通道去读前端配置；文件的键名用 `Command::id()`，与前端字段一一对应，将来搬进 `notes.db` 时映射是直的 |
+| 悬浮提示 | 无 | 每个带键位的按钮都显示"功能名 + 快捷键" | 用户约束：改键之后"这个按钮是什么键"必须能就地查到 |
+| 切换器 | React 浮层，`selectedIndex` 由键盘表驱动 | egui 浮层，隐藏 RichEdit 子窗口让位 | 同样的语义；差别只在 z-order 上——原生子窗口不会尊重父窗口的绘制顺序 |
+| 工作台 | 独立页面路由 | 独立顶层窗口（viewport） | 工作台不是"一个更大的笔记"：没有岛、不置顶、可在任务栏出现 |
+| 改键时机 | 设置页失焦即写 | 捕获到新组合立刻写文件 + 重注册 | 少一个"还没保存"的状态，也就不存在"改了没生效" |
+
+### 本批不做
+
+| 项 | 为什么 |
+|---|---|
+| 每窗口记住透明度 | `QuickNotePage` 的 `opacity` 是 `useState`，旧版同样不持久化；原生侧只保留"新笔记初值"（`appearance.window_alpha`）。真要记，与窗口尺寸记忆（parity C5）一起做，别单独给 `settings` 表造一行一窗口的键 |
+| `store` 的 schema 版本号 | 现库与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉。等两边共用一份迁移器时再定 |
+| 工作台按钮的端到端点按 / 改键的写盘方向 | 点一下要在 egui 布局里猜坐标，布局一改门禁就红、且红的原因与行为无关。写路径由 store 与 `manager` 的 `Action` 单测覆盖，窗口行为由 `check-native-manager.py` 覆盖 |
+| 数据恢复（Q24） | 三选一对话框依赖"检测未合并备份"，属 P3 |
+| 收件箱与脚本分区 | 依赖 capture 与执行链路，属 P3；待办分区只读正文里的 `- [ ]` 行，不写回 |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -642,3 +720,4 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | 2026-11-25 | 1c 落地整窗透明 + 幽灵模式：`hub-win::alpha` 用 `LWA_ALPHA` 让 DWM 整窗混合；`Ctrl+滚轮` 两条通道（岛 `WM_MOUSEWHEEL`、标题条 egui，两边各自的缩放都关掉）+ 50 ms 节流；`Ctrl+Shift+H` 幽灵往返；透明度初值进 `appearance.window_alpha`（§8.7） |
 | 2026-11-25 | 1c.2 试做"背景完全消除 + 文字 20%"（`LWA_COLORKEY \| LWA_ALPHA`，面板色作键）：技术上成立（背景与桌面逐值相等），但用户实测观感不对——文字像被描边、背景仍有薄片残留——当日回退到 alpha 1 的幽灵。Mica 会挡色键、子窗口命中不跟随父窗口色键两条实测结论留在 §8.7 供后续参考 |
 | 2026-11-26 | 1d 落地正文写库：`hub-core` 加 `clock` / `note_text` / `save_note_body`，`app` 加 `save.rs`（900 ms 防抖 + 2 s 扫描 + 关闭 flush + 失败退避）与 `--note-id`；`note.rs` 拆出 `note/island.rs` 回到 800 行内。Q20–Q23 由 `scripts/check-native-notes.py` 判（24/24）。工作台、切换器、每窗口透明度记忆留给后续批次（§8.8） |
+| 2026-11-26 | 2a–2d 落地交互层：`hub-core::shortcuts` 一张表（11 命令 / 2 作用域 / 冲突先者胜）、`hub-ui` 的 `hint`（功能名 + 键位）、`switcher`、`manager` 与 `keys`，`app` 的 `note/panel.rs`、`manager.rs`、`hub/commands.rs`；新建笔记改成立刻 `flush(reason=seed)`（门禁实测缺陷）。Q13/Q16/Q25–Q27 由 `check-native-switcher.py`（22/22）与 `check-native-manager.py`（19/19）判（§8.9） |

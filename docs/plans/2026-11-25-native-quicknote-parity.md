@@ -64,20 +64,20 @@ Q11 不是凑数：现版专门为此重排过一次（`QuickNoteToolbar.tsx` �
 | ID | 行为 | 判定方式 | 现状 |
 |---|---|---|---|
 | Q12 | Esc **按一次**即关闭当前窗口 | 按一次窗口消失；日志恰好一行 `editor_esc` | ✓ 岛内 subclass 拦键 → 一帧内关闭；1b.2 起关闭只销毁该 viewport（`note_close reason=esc`），其余笔记不受影响 |
-| Q13 | 切换器打开时 Esc 只关切换器 | 开切换器按 Esc，窗口仍在、切换器消失 | ✗ 切换器未做（Phase 2） |
+| Q13 | 切换器打开时 Esc 只关切换器 | 开切换器按 Esc，窗口仍在、切换器消失 | ✓ 2b：`scripts/check-native-switcher.py`——`Ctrl+K` 开面板后按 Esc 得 `note_switcher open=false` 且 `note_close=0`，再按一次 Esc 才 `note_close reason=esc`（面板只吃一次，不永久吃掉这个键） |
 | Q14 | Ctrl+D 关闭当前窗口 | 同 Q12 | ✓ 实测 `note_key action=Close` + `note_close reason=shortcut open_notes=2` → `note_destroyed open_notes=1`；1b.3 起进程不再随窗口消失（托盘常驻），见 Q5 |
 | Q15 | 编辑器内 Ctrl+Z / Ctrl+Shift+Z 撤销/重做 | 输入三段，撤三次回空，重做三次还原 | ◐ 走 `EM_UNDO`/`EM_REDO`，实测输入 `abc` 后 undo ×3 得 `len=0`、redo ×3 回到 `len=3`；"三段"未按三次独立编辑验（连续输入被 RichEdit 合成一个 unit，见 `undo_probe`） |
-| Q16 | 置顶快捷键可切换（键位取 `shortcutConfig.toggleAlwaysOnTop`） | 按一次取消置顶，再按恢复 | ◐ 实测 `Ctrl+T` → `note_pin pinned=false`；键位固定旧版默认值，**未读配置**（无键位配置层） |
+| Q16 | 置顶快捷键可切换（键位取 `shortcutConfig.toggleAlwaysOnTop`） | 按一次取消置顶，再按恢复 | ✓ 2a：键位改由 `hub-core::shortcuts` 那张表提供，表由设置文件的 `shortcuts` 覆盖；`Ctrl+T` → `note_pin pinned=false` 的旧实测不变。改键生效由 `check-native-manager.py` 的 K1/K2 判（`close_note` 从 `Ctrl+D` 改到 `Ctrl+Q`：新键生效、旧键失效） |
 | Q17 | Ctrl+. 开/关工具面板 | 同 Q7 的键盘路径 | ◐ 表里有、代码已接；中文输入法把 `wParam` 改写成 `VK_PROCESSKEY`，脚本注入无法还原，**待真实键盘按一次**（§8.4） |
-| Q18 | 全局键：Ctrl+Alt+N 新建、Ctrl+Alt+D 关闭全部、Ctrl+Alt+H 最小化/恢复全部、Ctrl+Alt+M 打开工作台 | 焦点在记事本时逐个按，行为生效 | ◐ 1b.3：四条全部注册（`hotkeys registered=4 failed=0`）。`Ctrl+Alt+N` 在焦点属于另一个程序时新建并拿到前台；`Ctrl+Alt+D` → `note_close reason=all` ×2 + `hub_idle`（进程存活）；`Ctrl+Alt+H` → 外部 `IsIconic=true` ×2，再按恢复。**`Ctrl+Alt+M` 只到「注册 + 记日志」**（`note_manager target=none phase=2`）：管理中心窗口属 Phase 2，没有可打开的目标 |
+| Q18 | 全局键：Ctrl+Alt+N 新建、Ctrl+Alt+D 关闭全部、Ctrl+Alt+H 最小化/恢复全部、Ctrl+Alt+M 打开工作台 | 焦点在记事本时逐个按，行为生效 | ◐ 1b.3：四条全部注册（`hotkeys registered=4 failed=0`）。`Ctrl+Alt+N` 在焦点属于另一个程序时新建并拿到前台；`Ctrl+Alt+D` → `note_close reason=all` ×2 + `hub_idle`（进程存活）；`Ctrl+Alt+H` → 外部 `IsIconic=true` ×2，再按恢复。**`Ctrl+Alt+M` 只到「注册 + 记日志」**（`note_manager target=none phase=2`）：管理中心窗口属 Phase 2，没有可打开的目标。2c 起它打开工作台（`note_manager action=open target=manager` → `manager_open notes= trash=`），但本机 `Ctrl+Alt+M` 被 shipped 版占着，门禁改用它把 `open_manager` 绑到 `Ctrl+Alt+J` 再按——见 Q16 与 `check-native-manager.py` |
 
 **切换器（C1 裁决"留"，2026-11-25 补入）。** 现版 `shortcutConfig.quickSwitcher` 默认 `Ctrl+K`（`types/shortcut.ts:20`），可改键；浮层结构见 `NoteSwitcherPanel.tsx`——查询输入 + 索引 0 的"新建笔记"行 + 最近笔记列表，`selectedIndex` 由窗口键盘表驱动。Q13 的"Esc 只关切换器"依赖这三条成立才有前提。
 
 | ID | 行为 | 判定方式 | 现状 |
 |---|---|---|---|
-| Q25 | `Ctrl+K` 打开切换器，**同键再按关闭**（不是只开不开） | 按一次浮层出现、再按一次消失；输入框被清空 | ✗ |
-| Q26 | 查询同时匹配标题、正文、标签 | 造一条正文含"螺丝刀"、标题无关的笔记，搜"螺丝刀"能出现 | ✗ |
-| Q27 | `↑`/`↓` 移动选中，`Enter` 切换；选到索引 0 时 `Enter` 新建并切换 | 列表三条：↓ 两次选中第二条并切过去；↑ 回顶按 Enter 得到新空笔记 | ✗ |
+| Q25 | `Ctrl+K` 打开切换器，**同键再按关闭**（不是只开不开） | 按一次浮层出现、再按一次消失；输入框被清空 | ✓ 2b：`note_switcher open=true items=2` → 再按 → `open=false`，两次之间 `note_close=0`；`State::open()` 清空查询与选中。门禁 `check-native-switcher.py` |
+| Q26 | 查询同时匹配标题、正文、标签 | 造一条正文含"螺丝刀"、标题无关的笔记，搜"螺丝刀"能出现 | ✓ 2b：标题"周末计划"、正文含"买螺丝刀和膨胀管"，搜"螺丝刀" → `note_switch to=gate-note-a`；另一条只在 `tags` 里有"重要"，搜"重要" → `to=gate-note-b`。haystack = 标题 + 正文 + 标签，小写化 |
+| Q27 | `↑`/`↓` 移动选中，`Enter` 切换；选到索引 0 时 `Enter` 新建并切换 | 列表三条：↓ 两次选中第二条并切过去；↑ 回顶按 Enter 得到新空笔记 | ✓ 2b：查询后 ↓ 再 Enter → 窗口切到该笔记（`to=gate-note-a chars=14`），随后打一个字落进**被选中笔记**的行尾；索引 0 + Enter → `to=new seeded=true chars=4`，行立刻写成 `title="周报草稿"`（`reason=seed`）。↑/↓ 环绕、hover 不移动选中由 `switcher` 单测钉住 |
 
 ### 3.4 内容与保存
 
@@ -183,6 +183,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | 2026-11-25 | 1c 透明度回填：Q28 ✓、Q29 ✓、Q6 ✓（标签与窗口 alpha 同源）。实现路径 `LWA_ALPHA`（B5 允许）；GHOST 不能是 alpha 0（实测不可命中，旧版靠 CSS 保住的指针事件在这里不成立）。实施记录见 §8.7 |
 | 2026-11-25 | 1c.2 试做「背景完全消除 + 文字 20%」（色键，`LWA_COLORKEY \| LWA_ALPHA`）：技术上成立，但用户实测观感不对（文字像被描边、背景仍有薄片残留），**当日回退**。Q6/Q28/Q29 的验收标准不变（仍是 alpha 1 的幽灵）；Mica 挡色键等实测结论留在 §8.7 |
 | 2026-11-26 | 1d 数据层回填：Q20 ✓、Q21 ✓、Q22 ✓、Q23 ✓（正文接 `notes.db`，门禁 `scripts/check-native-notes.py` 24/24）。附带：`--note-id` 按 id 重开（正文与光标位置都验到）、标签行剥离。实现记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.8。**`Ctrl+K` 切换器（Q25–Q27）与数据恢复（Q24）仍未做** |
+| 2026-11-26 | 2a–2d 交互层回填：Q13 ✓、Q16 ✓、Q25 ✓、Q26 ✓、Q27 ✓（`scripts/check-native-switcher.py` 22/22、`check-native-manager.py` 19/19）。快捷键收成一张表（`hub-core::shortcuts`）+ 设置文件稀疏覆盖 + 每个带键位按钮的悬浮提示；工作台（笔记/回收站/待办/设置）与切换器落地。Q18 仍 ◐（`Ctrl+Alt+M` 被 shipped 版占着，门禁改用改键后的 `Ctrl+Alt+J` 验通）。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.9。**Q24 数据恢复、收件箱与脚本分区仍未做** |
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
 同一轮对话里发现采集脚本把**已启用**的搜狗与微信输入法报成"未安装"。两个独立原因，都已在脚本里修掉：
