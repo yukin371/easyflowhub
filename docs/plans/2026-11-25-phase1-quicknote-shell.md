@@ -556,6 +556,76 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | 透明时单独淡化光标/文字 | 整窗混合已经覆盖；再叠一层就与旧版的 CSS 语义分叉 |
 | 托盘里的"幽灵"菜单项 | 幽灵是窗内手势（旧版同样只在窗内）；托盘四项已经够用 |
 
+## 8.8 数据层：正文接 `notes.db`（1d，2026-11-26）
+
+1c 结束时，笔记正文还只是"内存文档"：关掉窗口就没了。这一批把它接到库里，覆盖 parity Q20–Q23，外加"按 id 重开一条已有笔记"——没有这一条，前面四条只能靠读库自证，连"重开还在不在"都验不了。
+
+### 落点
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| `hub-core` | `clock.rs` | 与旧版逐字一致的 RFC 3339（9 位小数、`+00:00`），不为此引入 `chrono` |
+| `hub-core` | `note_text.rs` | 标题 / 正文 / 标签的拆分，逐条对齐 `easyflowhub-app/src/lib/noteParser.ts` |
+| `hub-core` | `store/notes.rs` | `save_note_body`：只写 `title/content/tags/updated_at` 的 upsert |
+| `app` | `save.rs` | **何时写**：900 ms 空闲防抖 + 2 s 扫描兜底 + 关闭 flush + 失败退避 |
+| `app` | `note/island.rs` | `impl NoteShell` 里"岛"的那一半（从 `note.rs` 拆出，见下"文件上限"） |
+| `app` | `hub.rs` / `args.rs` | 打开 store、`--note-id` 按 id 重开、`note_doc`/`note_load` 日志 |
+
+### 三个"看起来省事、其实会出事"的地方
+
+1. **不能整行 upsert。** `is_pinned` 是**列表置顶**（旧版列表 `ORDER BY is_pinned DESC, updated_at DESC`），与快速笔记的**窗口 z-order 书签**（Q9）是两件事。整行写会把"最后碰过的笔记"搬到列表最前；`deleted_at` 更糟——一个还开着的窗口能把回收站里的笔记复活。所以 `NoteWrite` 只带六个字段，`ON CONFLICT` 只更新四个。
+2. **控件文本才是基线，不是"我推给它的字符串"。** RichEdit 会补段落标记、用 CRLF；拿推入值当基线，每一条重开的笔记都会在一秒后重写自己的行。落盘后调 `rebase(&control.text())`，第一次比较就已经是控制自己的答案。
+3. **保存失败不能记成保存。** 失败时 `due_at` 不清空、`retry_at` 退避 1 s，下次比较仍然知道有没写下去的字。"标记为已保存"是丢字最安静的形态。
+
+### Q23 是两件事，用一个标志分开
+
+- **新笔记 + 空正文 → 不写行**（新建后不输入直接 Esc，列表里不该多一条空壳）；
+- **已存在的笔记 + 清空 → 必须写**（否则库里的旧正文会在下次打开时"自己长回来"）。
+
+一个布尔 `persisted` 同时表达这两件事：它只由 `created` 那次写置真，之后空正文就是合法状态。
+
+### 编辑信号只是延迟优化，扫描才是保证
+
+`hub-editor` 的 subclass proc 只对"可能改文本"的消息**通知**（`WM_CHAR`/`WM_IME_CHAR`/`WM_PASTE`/`WM_CUT`/`WM_CLEAR`/`WM_UNDO`，加 `VK_BACK`/`VK_DELETE`），一律 `return None` 交回 `DefSubclassProc`——它从不吞消息。即便如此，正确性不依赖它：每 2 s 把控件文本与上次写入的文本比一次。门禁就是这么验的——只发 `WM_KEYDOWN VK_RETURN`（RichEdit 自己插段落，不发 `WM_CHAR`，因此没有任何编辑信号），3.8 s 内行照样落库（`note_save created=false`）。
+
+### 文件上限
+
+`note.rs` 拆分前 833 行，超了架构守卫的 800 行硬上限。拆的是模块本来就有的一条缝：`theme_for` + `sync_editor`（建岛、填字、上主题、记 `note_load`）挪到 `note/island.rs`，`colorref` 一起走；`note.rs` 剩 700 行。守卫随即通过（5 crates）。
+
+### 证据（`scripts/check-native-notes.py`，24/24）
+
+| 检查 | 实测 |
+|---|---|
+| Q20 打字后落库 | 打"买菜清单"等 1.7 s，`note_save reason=autosave created=true title="买菜清单"` |
+| 扫描兜底 | 只发 `WM_KEYDOWN VK_RETURN`，3.8 s 后正文变 `买菜清单\n`，`created=false` |
+| Q22 标题 | `title='买菜清单'` |
+| 标签剥离 | 末行 `# 工作 重要` → `tags='工作 重要'`，正文 `买菜清单\n鸡蛋`，无 `\r` |
+| 不碰置顶 | `is_pinned=0` |
+| Q21 关闭 flush | 打"字"后 **43–73 ms** 按 Esc，行已写入（`reason=close created=true`），远早于 900 ms |
+| Q23 空笔记 | 行数 40 → 40，`note_save reason=close skipped=empty` |
+| 按 id 重开 | `note_load requested=<id> found=true`、`note_load chars=15`；光标在末尾（再打"尾"落进 tags 行）；不新增行 |
+| G-1 / G-2 | 四个进程都开的是被复制的库；schema 指纹（含 `PRAGMA table_info`）不变 |
+
+门禁自身踩到的两个坑写在脚本头部：跨进程读不到 RichEdit 文本（`GetWindowTextW` 空串，`SetWindowTextW` 返回成功却不动一个字），以及 `WM_CHAR 0x0D` 不换行（要 keydown + char + keyup 三连）。所以"笔记里是什么"一律用数据库往返回答。
+
+### 与旧版的差异（有意）
+
+| 项 | 旧版 | 本批 | 为什么 |
+|---|---|---|---|
+| 重开一条笔记 | 前端持 `noteId` 走 IPC | `--note-id <uuid>` 命令行 | 没有工作台，命令行是唯一的"选一条笔记"入口；找到没有都记 `note_load requested= found=` |
+| 正文写库时机 | `useQuickNoteSession` 的 900 ms 防抖 | 同一 900 ms，外加 2 s 扫描与关闭 flush | 防抖管手感，扫描管"信号漏了也不丢字"，两者不重复 |
+| 空正文判定 | `buildPersistParams(..., { allowEmpty: notePersistedRef.current })` | `persisted` 标志 | 同一语义：已存在的笔记允许清空保存，新笔记不留空壳 |
+
+### 本批不做
+
+| 项 | 为什么 |
+|---|---|
+| 工作台（列表 / 搜索 / 收件箱 / 待办 / 脚本 / 设置 / 回收站） | Phase 2 其余批次；`Ctrl+Alt+M` 仍只记 `note_manager target=none phase=2` |
+| `Ctrl+K` 切换器（Q25–Q27）与数据恢复（Q24） | 依赖列表与查询，属工作台批次 |
+| 每窗口记住透明度 | 要 `settings` 表的一行一窗口键；与窗口尺寸记忆（parity C5）一起做 |
+| `store` 的 schema 版本号 | 仍与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉 |
+| 正文长度上限 / 图片与 Markdown | 属 P3，与 1c 的结论无关 |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -567,8 +637,8 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | 2026-11-25 | 1a.3 标题条留白回到旧 UI 的两层 padding：标签 16、按钮框 8（图标可见 14），`SIDE_SLOT_WIDTH` 44 → 60；正文内边距 12/10 → 18/18 以对齐标签；记下最小窗宽下 `GHOST` 越槽 5 px 但让开三点 6 px（§8.3） |
 | 2026-11-25 | 1b 拆成 1b.1（键位，本批）与 1b.2（多窗口/托盘）；1b.1 落地键位表、两条输入路径、`EM_UNDO`/`EM_REDO` 统一、输入法改写 vk 的还原；记下 `Ctrl+.` 只能人工验证（§8.4） |
 | 2026-11-25 | 1b.2 落地 viewport-per-note：根视口改为屏外控制器，每笔记一个 deferred viewport；关闭只销毁该窗口，`Ctrl+Alt+N` 经全局热键新建；去掉全局 `set_zoom_factor`；托盘与其余全局键留 1b.3，关完最后一个笔记即退出并在日志写明 `tray=pending`（§8.5） |
-
 | 2026-11-25 | 1b.3 落地托盘常驻 + `Ctrl+Alt+D/H/M` + 关完不退：托盘自带隐藏消息窗口、菜单 id 单表、退出前 `NIM_DELETE`；修掉"关闭打到根视口"（`send_viewport_cmd` → `send_viewport_cmd_to`）；最小化的笔记跳过布岛（§8.6） |
 
 | 2026-11-25 | 1c 落地整窗透明 + 幽灵模式：`hub-win::alpha` 用 `LWA_ALPHA` 让 DWM 整窗混合；`Ctrl+滚轮` 两条通道（岛 `WM_MOUSEWHEEL`、标题条 egui，两边各自的缩放都关掉）+ 50 ms 节流；`Ctrl+Shift+H` 幽灵往返；透明度初值进 `appearance.window_alpha`（§8.7） |
 | 2026-11-25 | 1c.2 试做"背景完全消除 + 文字 20%"（`LWA_COLORKEY \| LWA_ALPHA`，面板色作键）：技术上成立（背景与桌面逐值相等），但用户实测观感不对——文字像被描边、背景仍有薄片残留——当日回退到 alpha 1 的幽灵。Mica 会挡色键、子窗口命中不跟随父窗口色键两条实测结论留在 §8.7 供后续参考 |
+| 2026-11-26 | 1d 落地正文写库：`hub-core` 加 `clock` / `note_text` / `save_note_body`，`app` 加 `save.rs`（900 ms 防抖 + 2 s 扫描 + 关闭 flush + 失败退避）与 `--note-id`；`note.rs` 拆出 `note/island.rs` 回到 800 行内。Q20–Q23 由 `scripts/check-native-notes.py` 判（24/24）。工作台、切换器、每窗口透明度记忆留给后续批次（§8.8） |

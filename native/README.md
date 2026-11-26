@@ -7,8 +7,8 @@
 ```text
 native/
 ├─ Cargo.toml            workspace（app + 四个 crate）
-├─ app/                  组合根：事件循环、热键线程接线、bench 驱动
-├─ crates/hub-core/      纯逻辑：布局夹紧、列数、设置、岛几何 + `store`（notes.db 读写，无平台依赖，有单测）
+├─ app/                  组合根：事件循环、热键线程接线、笔记壳（`note/`）、自动保存（`save.rs`）、bench 驱动
+├─ crates/hub-core/      纯逻辑：布局夹紧、列数、设置、岛几何、RFC 3339 时钟、笔记文本解析 + `store`（notes.db 读写，无平台依赖，有单测）
 ├─ crates/hub-win/       win32：热键、显示器缓存、DWM、进程探针、窗口放置
 ├─ crates/hub-ui/        egui：调色板、字体、面板绘制与预热
 └─ crates/hub-editor/    win32：RICHEDIT50W 文本岛（子窗口）、测量与像素证据
@@ -34,7 +34,8 @@ cargo run --release -p app -- --probe              # 预热后占用（含窗口
 cargo run --release -p app -- --bench 200          # 200 轮自动唤起 + 分布
 cargo run --release -p app -- --bench 200 --scale 2.0   # 模拟 200%
 cargo run --release -p app -- --editor             # 交互模式：面板里带 RichEdit 正文
-cargo run --release -p app -- --note               # Phase 1 快速笔记壳：标题条 + 文本岛（可见，无热键）
+cargo run --release -p app -- --note               # Phase 1 快速笔记壳：标题条 + 文本岛（正文自动保存）
+cargo run --release -p app -- --note --note-id a673b810-9a1e-4d3c-9b2f-8f0d1c2b3a45   # 按 id 重开已有笔记
 cargo run --release -p app -- --editor-bench 200   # 键入分布 + 像素/滚动/撤销证据
 cargo run --release -p app                         # 交互模式：Ctrl+Shift+Space 开关面板
 
@@ -44,7 +45,9 @@ cargo run --release -p app -- --store-bench --store-root target/s3/root --store-
 cargo run --release -p app -- --store-hold 400 --store-root target/s3/root   # 持锁探针（并发用）
 ```
 
-`--note` 是 Phase 1 的产品窗口（`app/src/note.rs`），不是测量件：它不注册热键、不参与 bench，日志里 `note_window` / `island_created` 的尺寸就是 parity 清单 Q1–Q4、Q6–Q11 的判定依据。spike 的 `--bench` / `--editor` 保持原样，T-Gate 0 之后整个 spike 删除。
+`--note` 是 Phase 1 的产品窗口（`app/src/note.rs` + `app/src/note/island.rs`），不是测量件：它不注册热键、不参与 bench，日志里 `note_window` / `island_created` 的尺寸就是 parity 清单 Q1–Q4、Q6–Q11 的判定依据。spike 的 `--bench` / `--editor` 保持原样，T-Gate 0 之后整个 spike 删除。
+
+正文会写进 `notes.db`：默认 `%APPDATA%\com.yukin.easyflowhub`，`--store-root <dir>` 可改（门禁与探针都指向副本）。写盘节奏全在 `app/src/save.rs`——900 ms 空闲防抖、2 s 扫描兜底（有编辑信号漏了也能落库）、关闭前 flush、失败退避 1 s。日志三条：`note_doc`（这条笔记的 id 与是否从库里加载）、`note_load`（按 id 找到没有、灌进去多少字）、`note_save`（`reason=autosave|close`、`created=true|false`、`skipped=empty|unchanged`）。
 
 `--note` 的外观全部来自 `quick_note.appearance`（字号、行距、内边距、插入符宽度、七个颜色）：
 
@@ -73,6 +76,8 @@ cargo run --release -p app -- --note --settings my-note.json
 
 门禁侧：`scripts/measure-native-latency.ps1`（S1）、`scripts/measure-native-editor.ps1`（S2）、`scripts/measure-native-store.ps1`（S3）各自解析输出、判预算 + 结构证据、归档到 `docs/releases/native-s1|s2|s3/`；`run-smoke.ps1 -NativeBench` 会在 smoke 里跑快速版并写到临时目录，避免污染归档。
 
+Phase 2 的笔记门禁是 `scripts/check-native-notes.py`（parity Q20–Q23 + 按 id 重开）：一条命令出 `RESULT: PASS/FAIL`，退出码 0/1。它把真实库**复制**到 `native/target/p2-gate/root/` 再驱动二进制，所以不碰 `%APPDATA%`；每个场景单独起进程，因为这台机器上跑着 shipped 版，它持有 `Ctrl+Alt+N`（原生壳 `RegisterHotKey` 得 1409）。两条来自实测的约束写在脚本里：`WM_CHAR 0x0D` 不产生换行（要 `WM_KEYDOWN VK_RETURN` + `WM_CHAR` + `WM_KEYUP` 三连）；跨进程读不到 RichEdit 文本（`GetWindowTextW` 回空串，`SetWindowTextW` 返回成功却什么都不改），所以"笔记里是什么"一律用数据库往返回答。
+
 S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** native 读写真副本；**L2** 把结果交给 **Tauri 那份代码**（`cargo test --lib -- --ignored` 里的 `notes::tests::reads_and_writes_a_database_produced_by_the_native_shell`）；**L3** 独立的 `sqlite3` CLI（另一套 SQLite build）做 `integrity_check` 与逐行逐字段比对。只有 L1 过时文档写"仅自读通过"，不许折算成"兼容"。
 
 文本岛的三个诊断示例（`cargo run -p hub-editor --example scroll_probe` / `--example undo_probe` / `--example esc_probe`）保留了"为什么必须拿焦点才滚动""RichEdit 怎么合并撤销单元""Esc 是按一次还是根本没被轮询"的实测结论，别再靠猜。
@@ -97,15 +102,14 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | 首帧不是"直接 blit 上一帧纹理" | eframe 不暴露目标帧缓冲 | 实测量不足 60 ms 时改 `egui_glow` 手动循环接管 swap + blit |
 | 面板内容是静态样例 | 只为预热真实字符集与布局，不代表最终 UI | Phase 2 换成真实动作/最近项 |
 | 无中键钩子 | 不在 60 ms 路径上，属 T0 parity | Phase 1 与功能一起落地（托盘已在 1b.3 落地，见计划文档 §8.6） |
-| 文本岛正文是内存文档、无保存 | 存储布局属 S3 | Phase 2 接 `notes.db`（S3 已验通，接线在 Phase 2） |
 | `store` 没有 schema 版本号，只有与 Tauri 同文的幂等列探测 | 现库 `user_version = 0`，单方面打版本号会让两套迁移体系分叉 | Phase 2 统一迁移器与版本号，原生与 Tauri 共用一份 |
 | `store` 只覆盖 notes / settings / 附件的写入，不含 Inbox 完整 capture 路径 | S3 只回答"文件还读不读得动"，capture 是产品逻辑 | Phase 2 随 Inbox 迁移一起搬 |
 | `store` 保持 `journal_mode = delete`，不切 WAL | 切 WAL 会改文件头并留 `-wal`/`-shm`，影响备份/同步/"复制 db"的语义，属产品级决定 | 若要切，先写 ADR 并复验备份链路；并发已有 `IMMEDIATE` + 5 s `busy_timeout` 兜底 |
-
 | 文本岛无 Markdown 装饰、无图片粘贴 | 属 P3；装饰画在文本控件之上，不改变 S2 的结论 | P3 |
 | 输入法只验到 `ImmGetContext` 非空 | 三种输入法各 30 分钟需要人 | RC 前人工验收，结果回填 S2 文档 §9 |
 | 整窗透明度只活在窗口生命周期内 | 旧版同样是组件 state，关掉即回 100% | Phase 2 随 `notes.db` 记住"每窗口一组不透明度"，与窗口尺寸记忆（parity C5）一起做 |
 | GHOST 的实际 alpha 是 1/255，不是 0 | `LWA_ALPHA = 0` 的窗口不可命中（实测 `WindowFromPoint` 答背后的窗口），幽灵会点不回来 | 保留地板。曾试过"背景色键消除 + 内容 20%"（`LWA_COLORKEY \| LWA_ALPHA`），技术上成立但观感不对，已回退；结论见计划文档 §8.7 |
+| 笔记只能按 id 重开，没有列表/切换器 | 工作台与 `Ctrl+K`（Q25–Q27）属 Phase 2；现在要重开一条笔记得先从库里拿 id | Phase 2 工作台批次；Q20–Q23 与按 id 重开已在 1d 接上 `notes.db` |
 
 ## 度量口径
 
