@@ -170,6 +170,7 @@ impl Editor {
                 on_key: None,
                 on_wheel: None,
                 on_edit: None,
+                on_click: None,
             }));
 
             // ~800 lines of safety: keep the callback box reachable from the
@@ -690,6 +691,18 @@ impl Editor {
     pub fn on_edit(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
         unsafe {
             (*self.callbacks).on_edit = Some(callback);
+        }
+    }
+
+    /// Install the "the body was clicked" hook (Q7: a click outside the tools
+    /// panel closes it).
+    ///
+    /// Same rule as the others, plus one of its own: this is reported and not
+    /// claimed, so the control still places the caret, selects a word on a double
+    /// click and drag-selects.
+    pub fn on_click(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
+        unsafe {
+            (*self.callbacks).on_click = Some(callback);
         }
     }
 

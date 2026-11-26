@@ -221,10 +221,29 @@ pub fn draw(
                 },
             );
 
-            // Buttons first: egui gives the later-registered widget priority for
-            // clicks, so pressing `•••` must not also start a drag.
+            // Geometry first: the drag surface needs to know where the buttons are
+            // before it decides whether a press belongs to it.
             let tools_rect = center_button_rect(&slots.center, strip);
             let pin_rect = right_button_rect(strip);
+
+            // The drag surface is registered *before* the buttons on purpose: egui
+            // gives a click to the last widget under the pointer, so registering it
+            // after them left both buttons dead to the mouse while the keyboard
+            // still worked (found by `scripts/check-native-tools.py`, 2026-11-26).
+            let drag = ui.interact(strip, ui.id().with("strip"), Sense::drag());
+            // ...but ordering alone is not enough: `Sense::drag()` reports
+            // `drag_started` on the same press that the button above it claims, so
+            // pressing `•••` would also hand the window to `StartDrag`. Measured:
+            // the window moved a few pixels and the *next* click landed on nothing.
+            let pointer = ctx.input(|i| i.pointer.interact_pos());
+            let on_button = pointer
+                .map(|p| tools_rect.contains(p) || pin_rect.contains(p))
+                .unwrap_or(false);
+            if drag.drag_started() && !on_button {
+                actions.drag = true;
+            }
+
+            // Buttons on top of it, so a press on one is a click and not a drag.
             let tools = hint::hint(
                 ui.interact(tools_rect, ui.id().with("tools"), Sense::click()),
                 palette,
@@ -263,16 +282,6 @@ pub fn draw(
             }
             if pin.clicked() {
                 actions.toggle_pin = true;
-            }
-
-            let drag_rect = strip;
-            let drag = ui.interact(drag_rect, ui.id().with("strip"), Sense::drag());
-            let pointer = ctx.input(|i| i.pointer.interact_pos());
-            let on_button = pointer
-                .map(|p| tools_rect.contains(p) || pin_rect.contains(p))
-                .unwrap_or(false);
-            if drag.drag_started() && !on_button {
-                actions.drag = true;
             }
 
             let mut top = strip.bottom();
@@ -454,6 +463,56 @@ fn bookmark_point(rect: Rect, x: f32, y: f32) -> Pos2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A click on a title-bar button, with the drag surface registered underneath.
+    ///
+    /// This test exists because the bug it pins was invisible to every other kind of
+    /// check: the buttons were added *before* the strip's `Sense::drag()`, and egui
+    /// gives a press to the last widget under the pointer, so both buttons were dead
+    /// on a real mouse while `Ctrl+.` and `Ctrl+T` worked. It was found by
+    /// `scripts/check-native-tools.py`, not by reading the code.
+    #[test]
+    fn a_click_on_a_button_is_not_swallowed_by_the_drag_surface() {
+        let at = |point: Pos2| {
+            let ctx = egui::Context::default();
+            let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0));
+            let palette = Palette::quick();
+            let table = Table::defaults();
+            let mut state = StripState::default();
+            let mut frame = |events: Vec<egui::Event>| -> StripActions {
+                let input = egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                };
+                let mut actions = StripActions::default();
+                ctx.run(input, |ctx| {
+                    actions = draw(ctx, &mut state, palette, &table).actions;
+                });
+                actions
+            };
+            let button = |pos: Pos2, pressed: bool| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            frame(vec![egui::Event::PointerMoved(point)]);
+            frame(vec![button(point, true)]);
+            frame(vec![button(point, false)])
+        };
+
+        let strip = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, STRIP_HEIGHT));
+        let slots = slots(400.0);
+
+        let pin = at(right_button_rect(strip).center());
+        assert!(pin.toggle_pin, "a click on the pin never reached it");
+        assert!(!pin.drag, "clicking the pin also started a window drag");
+
+        let tools = at(center_button_rect(&slots.center, strip).center());
+        assert!(tools.toggle_tools, "a click on the dots never reached them");
+        assert!(!tools.drag, "clicking the dots also started a window drag");
+    }
 
     #[test]
     fn the_pin_is_the_shipped_bookmark_not_a_thumbtack() {

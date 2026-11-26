@@ -22,6 +22,43 @@ use hub_ui::switcher;
 use super::NoteShell;
 
 impl NoteShell {
+    /// `Ctrl+.` or the `•••` button: flip the tools panel (Q7/Q17).
+    ///
+    /// `reason` is the caller, not decoration. Three paths write this flag — the
+    /// button, the shortcut and a click in the body — and `open=false` alone cannot
+    /// tell a gate (or a bug report) which one fired.
+    pub(super) fn toggle_tools(&mut self, reason: &str) {
+        self.set_tools(!self.strip.tools_open, reason);
+    }
+
+    /// Q7's last clause: a click in the body closes the panel.
+    ///
+    /// Read before the strip is drawn so the dismissal lands in the frame the click
+    /// asked for. Deferring it to the next autosave tick would make the panel linger
+    /// for up to 900 ms, which reads as "the click did nothing".
+    pub(super) fn take_body_click(&mut self) {
+        if self.clicks.take() > 0 {
+            self.set_tools(false, "body");
+        }
+    }
+
+    /// The one place that writes `tools_open`.
+    ///
+    /// The island moves when this changes — the panel pushes the body down — and
+    /// `sync_editor` picks that up from the frame's content rectangle, so there is
+    /// nothing to resize here.
+    fn set_tools(&mut self, open: bool, reason: &str) {
+        if self.strip.tools_open == open {
+            return;
+        }
+        self.strip.tools_open = open;
+        self.log.mark(
+            0,
+            "note_tools",
+            &format!("id={} open={} reason={reason}", self.id, open),
+        );
+    }
+
     /// `Ctrl+K`: take the body over with the list (Q25).
     pub(super) fn open_switcher(&mut self, ctx: &egui::Context) {
         self.switcher.open();

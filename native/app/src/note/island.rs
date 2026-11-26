@@ -67,6 +67,10 @@ impl NoteShell {
                         ctx.clone(),
                         self.viewport,
                     ));
+                    // A click in the body, which egui never sees: the control is a
+                    // child window covering that rectangle. Dismisses the tools
+                    // panel (Q7).
+                    editor.on_click(self.clicks.handler(ctx.clone(), self.viewport));
                     // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,
                     // so the caret used to be parked at 0 and the first screenful
                     // was the only one that ever scrolled.

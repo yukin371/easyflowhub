@@ -35,6 +35,7 @@ use hub_ui::quicknote::{self, StripState};
 use hub_ui::switcher;
 use hub_ui::Palette;
 
+use crate::click;
 use crate::keys;
 use crate::log::Log;
 use crate::save;
@@ -134,6 +135,9 @@ pub struct NoteShell {
     /// the egui path. See [`wheel`].
     wheel: wheel::Wheel,
     gate: wheel::Gate,
+    /// Clicks in the body, reported by the island because egui cannot see them.
+    /// Dismisses the tools panel (Q7). See [`click`].
+    clicks: click::Clicks,
     /// Alpha last handed to the compositor. `None` until the window is attached, so
     /// the first application is never skipped by the "unchanged" guard.
     last_alpha: Option<u8>,
@@ -219,6 +223,7 @@ impl NoteShell {
             shortcuts: spawn.shortcuts,
             wheel: wheel::Wheel::new(viewport_id(spawn.id)),
             gate: wheel::Gate::default(),
+            clicks: click::Clicks::new(),
             last_alpha: None,
             save,
             store,
@@ -407,6 +412,11 @@ impl NoteShell {
             return;
         }
 
+        // Q7, before the strip is drawn: a click in the body dismisses the tools
+        // panel, and the panel must be gone in *this* frame. Deferring it to the
+        // next autosave tick would make a dismissal take up to 900 ms.
+        self.take_body_click();
+
         // A snapshot, not a guard: the draw call needs `&mut self` for the strip and
         // the switcher, and a read guard held across that is a borrow the compiler
         // is right to refuse. Eleven chords of `String` once per frame is cheaper
@@ -423,7 +433,7 @@ impl NoteShell {
             self.toggle_pin(ctx);
         }
         if output.actions.toggle_tools {
-            self.toggle_tools();
+            self.toggle_tools("button");
         }
 
         if self.switcher_open {
@@ -610,7 +620,7 @@ impl NoteShell {
             keys::Command::Switcher => self.open_switcher(ctx),
             keys::Command::CloseNote => self.close(ctx, "shortcut"),
             keys::Command::TogglePin => self.toggle_pin(ctx),
-            keys::Command::ToggleTools => self.toggle_tools(),
+            keys::Command::ToggleTools => self.toggle_tools("shortcut"),
             keys::Command::ToggleGhost => self.toggle_ghost(),
             keys::Command::Undo => self.history(true),
             keys::Command::Redo => self.history(false),
@@ -662,15 +672,6 @@ impl NoteShell {
             0,
             "note_pin",
             &format!("id={} pinned={}", self.id, self.strip.pinned),
-        );
-    }
-
-    fn toggle_tools(&mut self) {
-        self.strip.tools_open = !self.strip.tools_open;
-        self.log.mark(
-            0,
-            "note_tools",
-            &format!("id={} open={}", self.id, self.strip.tools_open),
         );
     }
 

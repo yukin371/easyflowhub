@@ -10,6 +10,7 @@
 
 mod args;
 mod bench;
+mod click;
 mod editor_bench;
 mod esc;
 mod hub;

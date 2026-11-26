@@ -13,6 +13,7 @@
 //! | `WM_KEYDOWN` `VK_TAB` | moves focus out of the island | a note is a scratch pad; Tab must insert a tab |
 //! | `WM_KEYDOWN` other | RichEdit's own editing | the shortcut table decides (Ctrl+D/Z/T/Shift+H) |
 //! | `WM_MOUSEWHEEL` +Ctrl | **zooms the text** | `Ctrl+wheel` is window opacity (Q28) |
+//! | `WM_LBUTTONDOWN` | places the caret | a click in the body is "outside the tools panel" (Q7) |
 //! | `WM_CHAR` / paste / cut / undo | edits the document | the shell is told "this may have changed", then the message continues to `DefSubclassProc` |
 //!
 //! Anything not claimed goes to `DefSubclassProc`, which is the point: reimplementing
@@ -21,7 +22,8 @@
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_BACK, VK_DELETE, VK_ESCAPE, VK_TAB};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SendMessageW, WM_CHAR, WM_CLEAR, WM_CUT, WM_KEYDOWN, WM_MOUSEWHEEL, WM_PASTE, WM_UNDO,
+    SendMessageW, WM_CHAR, WM_CLEAR, WM_CUT, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PASTE,
+    WM_UNDO,
 };
 
 use crate::keys;
@@ -58,6 +60,12 @@ pub(crate) struct Callbacks {
     /// "The text may have changed." Not a claim: the shell compares the document
     /// against what it last wrote, so this only decides *when* it looks.
     pub(crate) on_edit: Option<Box<dyn Fn() + Send + Sync>>,
+    /// "The body was clicked." Not a claim either — the caret still has to move.
+    ///
+    /// This exists because the click is invisible one level up: the island is a
+    /// child window covering the body rectangle, so egui's parent window never
+    /// receives the press. The shell needs it to dismiss the tools panel (Q7).
+    pub(crate) on_click: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// Handle one message. `Some` means "claimed: do not pass it on".
@@ -129,6 +137,16 @@ pub(crate) unsafe fn claim(
         return None;
     }
 
+    // A press in the body. Reported so the shell can dismiss the tools panel (Q7),
+    // and handed on: claiming it would cost caret placement, selection and
+    // drag-select -- everything a text control does with a mouse.
+    if message == WM_LBUTTONDOWN {
+        if let Some(callback) = callbacks.on_click.as_ref() {
+            callback();
+        }
+        return None;
+    }
+
     // `Ctrl+wheel` is RichEdit's zoom gesture, and the shell wants it for window
     // opacity. Claimed before `DefSubclassProc` so one wheel notch cannot do both:
     // the shipped note adjusts *only* the opacity, and a body that also grows a
@@ -167,6 +185,7 @@ mod tests {
                 true
             })),
             on_edit: None,
+            on_click: None,
         };
 
         let hwnd = std::ptr::null_mut();
@@ -189,6 +208,34 @@ mod tests {
     }
 
     #[test]
+    fn a_body_click_is_reported_but_never_claimed() {
+        // Q7 closes the tools panel on a click outside it, and the click has to be
+        // seen here: the island is a child window, so the press reaches this proc
+        // and never the egui parent.
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let sink = count.clone();
+        let callbacks = Callbacks {
+            on_escape: None,
+            on_key: None,
+            on_wheel: None,
+            on_edit: None,
+            on_click: Some(Box::new(move || {
+                sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })),
+        };
+        let hwnd = std::ptr::null_mut();
+
+        let claimed = unsafe { claim(hwnd, WM_LBUTTONDOWN, 0, 0, &callbacks) };
+        assert_eq!(claimed, None, "a click must still reach RichEdit");
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Moving the mouse is not a click, and must not dismiss the panel.
+        let claimed = unsafe { claim(hwnd, 0x0200, 0, 0, &callbacks) };
+        assert_eq!(claimed, None);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn an_edit_is_reported_but_never_claimed() {
         // Both halves matter. Reported, or the debounce never starts and the save
         // waits for the 2 s scan; not claimed, or the character is swallowed --
@@ -202,6 +249,7 @@ mod tests {
             on_edit: Some(Box::new(move || {
                 sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             })),
+            on_click: None,
         };
         let hwnd = std::ptr::null_mut();
 

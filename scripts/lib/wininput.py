@@ -23,6 +23,11 @@ Measured behaviour worth knowing before writing a gate against this:
   `KEYEVENTF_UNICODE`: the character travels in `wScan` and needs no layout.
 * The first chord after launch is unreliable until `editor_focus` reaches the log.
   Wait for that line, do not sleep a fixed time.
+* A click has to be real for the same reason a chord does: egui builds its pointer
+  events from winit, so a posted `WM_LBUTTONDOWN` would be seen by the control and
+  never by the frame -- and `WM_LBUTTONDOWN` *is* the message the island's subclass
+  proc watches (Q7). Absolute coordinates are in 0..65535 across the desktop, not
+  pixels.
 """
 
 import ctypes
@@ -45,6 +50,9 @@ user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, w
 user32.PostMessageW.restype = wintypes.BOOL
 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 
 WM_CHAR = 0x0102
 WM_KEYDOWN = 0x0100
@@ -58,9 +66,15 @@ VK_RETURN = 0x0D
 VK_DOWN = 0x28
 VK_UP = 0x26
 
+INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_ABSOLUTE = 0x8000
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -73,15 +87,33 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
 class _INPUTUNION(ctypes.Union):
     # `MOUSEINPUT` is the largest member and it is 32 bytes on x64, which makes
-    # `INPUT` 40. See the module header for what a wrong size does.
-    _fields_ = [("ki", KEYBDINPUT), ("padding", ctypes.c_byte * 32)]
+    # `INPUT` 40. See the module header for what a wrong size does. `padding`
+    # stays as the statement of that size, and the assertion below checks it.
+    _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("padding", ctypes.c_byte * 32)]
 
 
 class INPUT(ctypes.Structure):
     _anonymous_ = ("u",)
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+# The size is asserted rather than commented: a wrong one makes SendInput answer 0
+# with `ERROR_INVALID_PARAMETER` and deliver nothing, which reads as "the click did
+# nothing" in a gate.
+if ctypes.sizeof(INPUT) != 40:  # pragma: no cover - wrong ctypes layout
+    raise RuntimeError(f"INPUT is {ctypes.sizeof(INPUT)} bytes; SendInput needs 40 on x64")
 
 
 def _send(vk, scan, flags):
@@ -127,6 +159,53 @@ def type_text(text, gap=0.01):
             _send(0, unit, KEYEVENTF_UNICODE)
             _send(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
         time.sleep(gap)
+
+
+def _mouse(dx, dy, flags):
+    item = INPUT()
+    item.type = INPUT_MOUSE
+    item.mi.dx = dx
+    item.mi.dy = dy
+    item.mi.dwFlags = flags
+    if user32.SendInput(1, ctypes.byref(item), ctypes.sizeof(INPUT)) != 1:
+        raise RuntimeError(f"SendInput(mouse flags=0x{flags:X}) failed: {ctypes.get_last_error()}")
+
+
+def click(x, y):
+    """A real left click at a **screen** point, in physical pixels.
+
+    `MOUSEEVENTF_ABSOLUTE` coordinates are normalised to 0..65535 over the whole
+    desktop, so the conversion is done here rather than at every call site. The
+    move-then-press pair matters: some controls react to the move, and a press that
+    arrives while the cursor is still somewhere else opens the wrong thing.
+    """
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+    ax = int(round(x * 65535 / max(width - 1, 1)))
+    ay = int(round(y * 65535 / max(height - 1, 1)))
+    _mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)
+    time.sleep(0.02)
+    _mouse(ax, ay, MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN)
+    time.sleep(0.05)
+    _mouse(ax, ay, MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP)
+    time.sleep(0.12)
+
+
+def client_box(hwnd):
+    """`(left, top, width, height)` of a window's client area, in screen pixels."""
+    rect = wintypes.RECT()
+    origin = wintypes.POINT(0, 0)
+    user32.GetClientRect(hwnd, ctypes.byref(rect))
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+    return (origin.x, origin.y, rect.right - rect.left, rect.bottom - rect.top)
+
+
+def click_client(hwnd, x, y):
+    """Click at `(x, y)` inside `hwnd`'s client area, whatever its screen position."""
+    left, top, width, height = client_box(hwnd)
+    x = max(0, min(width - 1, int(x)))
+    y = max(0, min(height - 1, int(y)))
+    click(left + x, top + y)
 
 
 def force(hwnd):
