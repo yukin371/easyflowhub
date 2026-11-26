@@ -755,6 +755,70 @@ Q7 在 parity 里挂了很久，挂的理由是"点面板外部也关"没做。�
 | 点外部关闭 | 页面任意处 `click` 关面板 | 正文点击 + `•••` + `Ctrl+.`；标题条本身按住是拖窗，不算"外部点击" | 标题条是标题栏语义（按住拖动），把它也当"外部"会与拖动打架 |
 | 按钮点击 | React 按钮，天然可点 | egui 控件 + 拖拽面排序 + `StartDrag` 守卫 | 原生侧控件叠放由注册顺序决定，不写清楚就会静默失灵 |
 
+## 8.11 置顶按钮：一次「成功」的置顶把窗口弄没了（2f，2026-11-26）
+
+Q9 在 parity 里是 ◐，挂的理由是"待目视"。补门禁时先写的是一条日志断言——点一下得 `note_pin pinned=false`——它一次就过了。然后随手加了一条"窗口还在吗"，答案是**不在**。
+
+### 真 bug：`WindowLevel` 会重写整套窗口样式
+
+`toggle_pin` 原来发的是 `ViewportCommand::WindowLevel(AlwaysOnTop|Normal)`。winit 0.30 在 Windows 上把它翻成 `WindowFlags::ALWAYS_ON_TOP` 的一个位，然后**用缓存的整套 `WindowFlags` 重算 `WS_*` / `WS_EX_*`**（`window_state::WindowFlags::apply_diff`）。
+
+问题在于本窗口不是 winit 建出来的那个窗口：
+
+- 建的时候是 `with_visible(false)`（`ViewportBuilder`），所以 winit 记的 `VISIBLE` 是 false；
+- 真正显示它的是 `hub_win::window::move_on_screen`（`SetWindowPos` + `SWP_SHOWWINDOW` + `HWND_TOPMOST`），这一步 winit 完全不知道。
+
+于是第一次改 level，winit 按自己的记录把样式重算成"不可见"，`WS_VISIBLE` 被抹掉，窗口从桌面上消失。实测（2026-11-26）：
+
+```
+start:      visible=True  topmost=True   style=0xc0118
+after click: visible=False topmost=False  style=0x40110   note_pin pinned=false
+```
+
+连 `WS_EX_NOACTIVATE`（0x80000）也一起没了——同样是因为它只在 winit 之外设置过。窗口句柄还在、进程还活着、编辑器里的字也没丢，但用户看到的是"点了置顶，笔记没了"。
+
+**Q16 一直是 ✓ 的原因就在这里**：那条只断言 `note_pin pinned=false`。日志是对的，行为是错的，而门禁只读了日志。这次补的不是功能，是**判据**。
+
+### 修法：只动 z-order 位
+
+`hub-win::window::set_topmost(hwnd, on)` 直接 `SetWindowPos(HWND_TOPMOST|HWND_NOTOPMOST, SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)`：z-order 是唯一需要改的东西，样式表的其他位一概不碰。`SWP_NOACTIVATE` 让"取消置顶"不把键盘从用户正在打字的窗口抢走。
+
+`note/panel.rs::toggle_pin` 因此把两个状态绑在一次调用里：先翻 `strip.pinned`，再用同一次 `set_topmost` 去问系统，日志写 `pinned=… topmost=true|false|no-window`。高亮和 z-order 不可能各说各话——把它们分开写，就是下一个"图标变灰了但窗口还压着别人"的 bug。
+
+### 高亮怎么判：数填充，不认颜色
+
+Q9 的另一半是"图标变空心灰"。这属于画出来的东西，日志答不了，于是给门禁加了取像素：`scripts/lib/winshot.py` 用 `PrintWindow(PW_RENDERFULLCONTENT)` 抓客户区（不用屏幕 `BitBlt`——窗口被盖住时它读到的是桌面，而"窗口还在不在"正是这一批要证的事）。
+
+判据是**填充面积**而不是颜色：置顶是实心书签、浮动是空心轮廓，在图标中心取 11×11 物理像素数亮点，实心 116 个、空心 6 个，差一个数量级；换配色也不会翻结论。中心像素的颜色只写进日志，供人读失败时一眼看出是"没重绘"还是"画错了"。
+
+实测三态：
+
+| 状态 | `WS_EX_TOPMOST` | 中心亮点数 | 中心像素 |
+|---|---|---|---|
+| 起始（置顶） | 有 | 116 | `(134,171,220)` accent |
+| 点一次 | 无 | 6 | `(31,46,68)` 条底色 |
+| 再点一次 | 有 | 116 | `(134,171,220)` |
+
+### 门禁自己的坑：两次点击会被合成双击
+
+第一版门禁连跑三次，每次都有一项要重试一次才过。原因是注入层不是用户：两次合成点击若在 `GetDoubleClickTime`（本机 500 ms）内落在同一个 4 px 的 `SM_*DOUBLECLK` 框里，系统会把它们配成一次双击，egui 的 `clicked()` 只对前半次为真。门禁点完第一次立刻读像素、读完立刻点第二次，间隔常常不到 500 ms，于是第二下静默丢失。
+
+修法两条一起：两次点击至少隔 0.6 s，且左右交替偏 8 px（离开 4 px 双击框，仍在 42 px 的按钮内）。改完连跑三次 11/11，没有一条重试记录。
+
+### 证据
+
+| 门禁 | 判什么 | 结果 |
+|---|---|---|
+| `scripts/check-native-pin.py` | Q9 起始置顶、点一次取消（OS 位 + 空心图标）、窗口仍在、不关窗、再点恢复、点击不挪窗 | 11/11（连跑 3 次稳定） |
+| `scripts/check-native-tools.py` | Q7 回归（同一套点击路径） | 8/8 |
+| `scripts/check-native-notes.py` | 1d 数据回归 | 24/24 |
+| `scripts/check-native-manager.py` | 2b/2c 回归（含 `Ctrl+T` 改键路径） | 19/19 |
+| `cargo test --release --workspace` | 全工作区 | 193 项 |
+
+### 顺带
+
+`note.rs` 又长到 806 行，`toggle_pin` 移到 `note/panel.rs`（和 `toggle_tools` 同一个出口），回到 782 行。移动只改了 `pub(super)` 与文件位置，日志格式不变。
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -773,3 +837,4 @@ Q7 在 parity 里挂了很久，挂的理由是"点面板外部也关"没做。�
 | 2026-11-26 | 1d 落地正文写库：`hub-core` 加 `clock` / `note_text` / `save_note_body`，`app` 加 `save.rs`（900 ms 防抖 + 2 s 扫描 + 关闭 flush + 失败退避）与 `--note-id`；`note.rs` 拆出 `note/island.rs` 回到 800 行内。Q20–Q23 由 `scripts/check-native-notes.py` 判（24/24）。工作台、切换器、每窗口透明度记忆留给后续批次（§8.8） |
 | 2026-11-26 | 2a–2d 落地交互层：`hub-core::shortcuts` 一张表（11 命令 / 2 作用域 / 冲突先者胜）、`hub-ui` 的 `hint`（功能名 + 键位）、`switcher`、`manager` 与 `keys`，`app` 的 `note/panel.rs`、`manager.rs`、`hub/commands.rs`；新建笔记改成立刻 `flush(reason=seed)`（门禁实测缺陷）。Q13/Q16/Q25–Q27 由 `check-native-switcher.py`（22/22）与 `check-native-manager.py`（19/19）判（§8.9） |
 | 2026-11-26 | 2e Q7：`hub-editor::on_click`（`WM_LBUTTONDOWN` 上报不吞）、`app::click`、`note/panel.rs::set_tools`；修掉拖拽区盖住按钮的真 bug（顺序 + `StartDrag` 守卫，附 z-order 单测）。`scripts/check-native-tools.py` 8/8（§8.10） |
+| 2026-11-26 | 2f Q9：置顶走 `hub_win::window::set_topmost`（`ViewportCommand::WindowLevel` 会按 winit 缓存的 `WindowFlags` 重写整套样式，把 `with_visible(false)` 建、`move_on_screen` 显示的笔记窗口直接抹掉——Q16 只读日志所以一直显示正常）；新增 `scripts/lib/winshot.py`（`PrintWindow` 取像素）与 `scripts/check-native-pin.py`（11/11，连跑 3 次）。`toggle_pin` 移入 `note/panel.rs`（§8.11） |

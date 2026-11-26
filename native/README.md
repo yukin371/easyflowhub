@@ -84,9 +84,12 @@ Phase 2 的笔记门禁是 `scripts/check-native-notes.py`（parity Q20–Q23 + 
 python scripts/check-native-switcher.py     # Q25 同键开关、Q13 Esc 只关面板、Q26 正文/标签命中、Q27 选中与新建（22 项）
 python scripts/check-native-manager.py      # Q16 工作台开/数/关、K1 配置文件的键生效、K2 被换掉的键失效（19 项）
 python scripts/check-native-tools.py        # Q7 工具面板：按钮开、按钮关、点正文关，岛随之让位与复位（8 项）
+python scripts/check-native-pin.py          # Q9 置顶：OS 的 topmost 位 + 图标实心/空心两态，窗口不消失（11 项）
 ```
 
-`scripts/lib/wininput.py` 是共用注入层，脚本头部记了这条链上的四条实测：`hub-editor` 用 `GetKeyState` 读修饰键，所以投消息只会得到"一个没修饰的字母"；egui 的键与文本来自 winit，所以字符必须作为输入到达；`INPUT` 在 x64 上必须是 40 字节（写错 `SendInput` 返回 0 + 87，且静默不投递）；**合成点击在 RichEdit 上释放会留下鼠标捕获状态**，之后父窗口收到的光标坐标按子窗口原点解释（client (300,176) 报成 (182,31)），所以 `check-native-tools.py` 把"点正文"放在最后一步——真实鼠标的释放会清掉这个状态，用户看不到。工作台门禁还把 `open_manager` 改成 `Ctrl+Alt+J` 再用它开窗——本机 `Ctrl+Alt+M` 属于 shipped 版，而"文件里的键真的生效"正是这一批要证的事。
+`scripts/lib/wininput.py` 是共用注入层，脚本头部记了这条链上的四条实测：`hub-editor` 用 `GetKeyState` 读修饰键，所以投消息只会得到"一个没修饰的字母"；egui 的键与文本来自 winit，所以字符必须作为输入到达；`INPUT` 在 x64 上必须是 40 字节（写错 `SendInput` 返回 0 + 87，且静默不投递）；**合成点击在 RichEdit 上释放会留下鼠标捕获状态**，之后父窗口收到的光标坐标按子窗口原点解释（client (300,176) 报成 (182,31)），所以 `check-native-tools.py` 把"点正文"放在最后一步——真实鼠标的释放会清掉这个状态，用户看不到。第五条也来自失败：**两次合成点击若落在同一个 4 px 双击框内、间隔小于 `GetDoubleClickTime`（本机 500 ms），会被系统配成双击**，egui 的 `clicked()` 只对前半次为真（实测 0.4 s 连点 8 次丢了 3 次），`check-native-pin.py` 因此把间隔压到 ≥0.6 s 并左右交替偏 8 px。工作台门禁还把 `open_manager` 改成 `Ctrl+Alt+J` 再用它开窗——本机 `Ctrl+Alt+M` 属于 shipped 版，而"文件里的键真的生效"正是这一批要证的事。
+
+要判"画出来的是什么"时用 `scripts/lib/winshot.py`：`PrintWindow(PW_RENDERFULLCONTENT)` 取客户区像素。不用屏幕 `BitBlt`——窗口被盖住时它读到的是桌面，而"窗口还在不在"恰恰是 `check-native-pin.py` 要回答的问题。
 
 S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** native 读写真副本；**L2** 把结果交给 **Tauri 那份代码**（`cargo test --lib -- --ignored` 里的 `notes::tests::reads_and_writes_a_database_produced_by_the_native_shell`）；**L3** 独立的 `sqlite3` CLI（另一套 SQLite build）做 `integrity_check` 与逐行逐字段比对。只有 L1 过时文档写"仅自读通过"，不许折算成"兼容"。
 
@@ -146,6 +149,7 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | GHOST 的实际 alpha 是 1/255，不是 0 | `LWA_ALPHA = 0` 的窗口不可命中（实测 `WindowFromPoint` 答背后的窗口），幽灵会点不回来 | 保留地板。曾试过"背景色键消除 + 内容 20%"（`LWA_COLORKEY \| LWA_ALPHA`），技术上成立但观感不对，已回退；结论见计划文档 §8.7 |
 | 工作台里的按钮没有端到端点按门禁 | 点一下需要在 egui 布局里猜坐标，布局一改门禁就红，且红的原因与行为无关 | 写路径由 `hub-core` 的 store 单测（置顶/移入回收站/恢复/彻底删除都不动正文）与 `hub-ui::manager` 的 `Action` 单测覆盖；窗口行为（开、计数、`Esc` 关）由 `check-native-manager.py` 判。标题条上那两个按钮**有**点击门禁（`check-native-tools.py`），因为它们的坏法（拖拽面盖住按钮）只有真点击能发现 |
 | 工具面板的"点外部"只覆盖正文 | 标题条按住是拖窗（Q10），把 strip 也算"外部点击"会和拖动抢手势 | `•••`、`Ctrl+.` 与正文点击三个入口都能关；header 区的点击归拖动。旧版是页面上任意 `click`，那在 React 里没有"标题栏拖动"这个冲突 |
+| 置顶用 `SetWindowPos`，不用 `ViewportCommand::WindowLevel` | winit 改 level 时按自己缓存的 `WindowFlags` 重算整套 `WS_*`，而本窗口是 `with_visible(false)` 建、`move_on_screen` 显示的；第一次改就把 `WS_VISIBLE` 抹掉，窗口从桌面消失（实测 2026-11-26，`IsWindowVisible` false） | `hub_win::window::set_topmost` 只动 z-order 位（`SWP_NOACTIVATE`）。**同样是这条约束**：任何让 winit 重算样式的 viewport 命令（decorations、visible）都会隐藏笔记窗口，要加这类命令先读 §8.11 |
 | 改键的"写盘"方向没有端到端门禁 | 需要点设置页里的键位再按新键，同上一条的坐标问题 | 反向（文件 → 表 → OS 注册 → 真按键生效）由 `check-native-manager.py` 的 K1/K2 判；写盘一侧由 `SpikeSettings::save`（tmp + rename）与 `Table::rebind` 的单测钉住 |
 | 工作台只做了笔记 / 回收站 / 待办 / 设置四个分区 | 收件箱与脚本分区依赖 capture 与执行链路，属 P3 | 随 P3 迁移一起补；待办分区只读正文里的 `- [ ]` 行，不写回 |
 | `store` 的 schema 版本号仍未打 | 现库与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉 | 与 Tauri 共用一份迁移器时一起定，见上一处说明 |
