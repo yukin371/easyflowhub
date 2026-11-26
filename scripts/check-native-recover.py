@@ -526,16 +526,21 @@ def main() -> int:
                 break
             print(f"  note: keystroke attempt {attempt + 1} produced no draft; retrying")
         draft = written or {}
-        # The caret parks at the end of the loaded text, and on a note with tags
-        # that end is inside the trailing `# ...` line -- so the character may land
-        # in `tags` rather than `content`. Either way it is in the draft, which is
-        # what this check is about; where the caret belongs is Q19/Q20's question.
-        landed = draft.get("content", "") + "\n" + draft.get("tags", "")
+        # The caret now parks at the end of the *body*, before the trailing `# 当前`
+        # line, so the text has to arrive in `content` and leave `tags` alone. This
+        # used to be either-or -- "it is in the draft, which is what this check is
+        # about" -- and that tolerance is how the caret spent a release inside the
+        # tag line. The exact placement is `check-native-notes.py`'s Q-L.
         report.check(
             "Q24 a keystroke still writes a draft",
-            bool(written) and "再写一行" in landed,
+            bool(written) and "再写一行" in draft.get("content", ""),
             f"file={bool(written)} content={draft.get('content', '')!r} "
             f"tags={draft.get('tags', '')!r}",
+        )
+        report.check(
+            "Q24 the draft kept the tags and put the text above them",
+            written and draft.get("tags", "") == CURRENT[2],
+            f"tags={draft.get('tags', '')!r} (expected {CURRENT[2]!r})",
         )
     finally:
         session.stop()

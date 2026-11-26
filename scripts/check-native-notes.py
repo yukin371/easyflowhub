@@ -8,7 +8,7 @@ What this checks, and why each step is a separate process:
     Q-T  the trailing tag line comes off the body and into its own column
     Q21  typing then closing at once flushes (the debounce is not a reason to lose it)
     Q23  a note that never received a keystroke leaves no row
-    Q-L  reopening by id shows the body again and keeps the caret at its end
+    Q-L  reopening by id shows the body again and keeps the caret at the end of it
     G-1  the shell opened the copy of the database, not the live one
     G-2  the schema fingerprint is unchanged by a save
 
@@ -494,10 +494,20 @@ def main() -> int:
                 chars > 0,
                 f"note_load chars={chars}",
             )
+            # The load parks the caret at the end of the *body*, which on this note
+            # is not the end of the text: the row has tags, so the control also holds
+            # a trailing `# 工作 重要` line. `at < of` is that distinction in the log.
+            parked = re.search(r"note_caret id=\d+ at=(\d+) of=(\d+) tag_line=(\w+)", log)
+            report.check(
+                "the caret was parked before the tag line",
+                parked is not None
+                and parked.group(3) == "true"
+                and int(parked.group(1)) < int(parked.group(2)),
+                parked.group(0) if parked else "no note_caret line",
+            )
             # The control is unreadable from out here, so the proof is a round trip:
-            # type one character at the caret -- which the load parked at the end --
-            # and see where it landed. Had the body not been loaded, the row would
-            # hold "尾" and nothing else.
+            # type one character at the caret and see where it landed. Typed *at* the
+            # end of the text, this character used to join the tag list instead.
             type_text(window, "尾")
             time.sleep(AUTOSAVE + SLACK)
             row_after = row_by_id(db, note_id)
@@ -505,13 +515,16 @@ def main() -> int:
             session.stop()
             report.check(
                 "the body survived the reopen",
-                row_after is not None and row_after[2] == row_before[2],
+                row_after is not None and row_after[2] == row_before[2] + "尾",
                 f"was {row_before[2]!r} now {row_after[2]!r}" if row_after else "row missing",
             )
             report.check(
-                "the caret was at the end of the loaded text",
-                row_after is not None and row_after[3] == row_before[3] + "尾",
-                f"tags={row_after[3]!r} (expected {row_before[3] + '尾'!r})" if row_after else "no row",
+                "the caret was at the end of the body, not inside the tag line",
+                row_after is not None and row_after[3] == row_before[3],
+                f"tags={row_after[3]!r} (expected {row_before[3]!r}; the keystroke must"
+                " not join the tag list)"
+                if row_after
+                else "no row",
             )
             report.check(
                 "reopening did not create a second row",
