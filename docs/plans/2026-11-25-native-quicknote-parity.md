@@ -83,7 +83,7 @@ Q11 不是凑数：现版专门为此重排过一次（`QuickNoteToolbar.tsx` �
 
 | ID | 行为 | 判定方式 | 现状 |
 |---|---|---|---|
-| Q19 | 打开即聚焦编辑区，光标在末尾 | 打开后直接打字，字符落在最后一行末尾 | ✓ 实测 `editor_focus focused=true caret=(0, 0)`，随后直接打字无需先点击 |
+| Q19 | 打开即聚焦编辑区，光标在正文末尾 | 打开后直接打字，字符落在最后一行末尾 | ✓ 实测 `editor_focus focused=true caret=(0, 0)`，随后直接打字无需先点击。2i 修正"末尾"的含义：有标签行的笔记，光标落在**正文**末尾（标签行之前），否则续写的字会进标签——`note_caret at=7 of=15 tag_line=true`，门禁 Q-L 打字后正文加字、`tags` 不变（§8.14） |
 | Q20 | 停止输入后自动保存（现版 900 ms 防抖，见 §7.1） | 输入后等 2 s，杀进程重开，内容在 | ✓ 1d：`scripts/check-native-notes.py` 打字后等 1.7 s，库里出现一行（`note_save reason=autosave created=true`）；另有 2 s 扫描兜底——只发 `WM_KEYDOWN VK_RETURN`（不发 `WM_CHAR`，因此不触发编辑信号）也能在 3.8 s 内落库（`created=false`） |
 | Q21 | 关闭前强制 flush | 输入一个字立刻 Esc，再打开同一笔记，那个字仍在 | ✓ 1d：打"字"后 43–73 ms 按 Esc，行已写入（`note_save reason=close created=true title="字"`），远早于 900 ms 防抖 |
 | Q22 | 标题取首个非空行 | 第一行输入"买菜清单"，列表标题即"买菜清单" | ✓ 1d：首行"买菜清单"，库中 `title="买菜清单"`；末行 `# 工作 重要` 被剥成 `tags`，正文留下 `买菜清单\n鸡蛋` |
@@ -188,6 +188,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | 2026-11-26 | 2f Q9 置顶回填（✓）：`check-native-pin.py` 11/11，判 OS 的 `WS_EX_TOPMOST` 位与图标的填充/空心两态。**Q16 的 ✓ 是虚的**——同一函数发的 `WindowLevel` 会把窗口隐藏（winit 按缓存样式重算 `WS_VISIBLE`），键盘路径此前只验了日志；改走 `hub_win::window::set_topmost` 后两条路径一并修好。实施记录见 §8.11。Q10 拖动已排下一项 |
 | 2026-11-26 | 2g Q10 拖动回填（✓）：`check-native-drag.py` 9/9（连跑 4 次）。`ViewportCommand::StartDrag` 在本环境不发车（`GetWindowRect` 不动，普通窗口探针同样不动），改由 `note/drag.rs` 每帧按光标位移 `SetWindowPos`，光标位置取 `GetCursorPos`（egui 的客户区坐标会跟着窗口跑，用它算位移恒为 0）。左/中/右槽位移逐轴精确、按钮起拖不动。实施记录见 §8.12 |
 | 2026-11-26 | 2h Q24 数据恢复回填（✓）：草稿写 `{store_root}/autosave/{id}.json`（与现版同形），`save` 在写库前落盘、成功后删除；打开时按"与行不同且不比行旧"判定，`hub-ui/recover` 手绘三按钮卡片、`note/recover` 执行三种回答。`check-native-recover.py` 15/15（连跑 3 次）。**与现版不互通（`localStorage` vs 文件）**，且"保留当前"会删文件（现版只关对话框、下次再问）。实施记录见 §8.13 |
+| 2026-11-26 | 2i 光标落点（Q19 的"末尾"修正）：带标签的笔记打开时光标停在标签行里，续写的字进了标签（§8.13 的遗留）。`note_text::caret_offset` 给出正文末尾，`hub-editor::caret.rs` 的 `position_of` 把字节换算成 RichEdit 的**字符位置**——`EM_SETSEL` 里一对 `CRLF` 只算 1，按 UTF-16 换算会正好落在标签行开头（实测 `at=8 of=17` vs 对的 `at=7 of=15`）。打开/切换/恢复草稿共用 `park_caret`。`check-native-notes.py` 25/25、`check-native-recover.py` 16/16、`check-native-switcher.py` 22/22、`cargo test` 212 项。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.14 |
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
 同一轮对话里发现采集脚本把**已启用**的搜狗与微信输入法报成"未安装"。两个独立原因，都已在脚本里修掉：

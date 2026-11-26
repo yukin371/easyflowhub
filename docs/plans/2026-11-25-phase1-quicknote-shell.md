@@ -960,6 +960,63 @@ Q24 一直是 `✗`，而且它是唯一一条与"数据安全"直接相关的 p
 
 **遗留一个真问题**：光标停在文档末尾，而带标签的笔记末尾是 `# …` 行——用户想续写正文，字却进了标签。`check-native-notes.py` 的 Q-L 已经把这件事当成现状断言了（`tags == 旧 tags + "尾"`）。它不是 Q24 的一部分，但这属于"打开笔记就想接着写"的日常路径，应单独立项。
 
+## 8.14 光标落点：文档末尾不是正文末尾（2i，2026-11-26）
+
+上一节留下的问题。表现是一句话：打开一条带标签的笔记、直接打字，字进了标签。`# 工作 重要` 加上一个 `尾` 之后，`parse` 仍认这一行是标签行，但标签列变成 `工作 重要尾`——两个标签变成一个，而且正文一个字没多。
+
+### 两个原因，叠在一起
+
+**一、位置选错了。** Q19 的判据写的是"光标在末尾"，而带标签的笔记末尾是标签行。标签行在打开时是被 `format_for_display` 拼回去的，所以"末尾"落在标签里。正确的位置是**正文末尾**，也就是正文与标签行之间那个换行的位置——在那里打字，字接在正文最后一行后面，标签行还是最后一行。
+
+`hub_core::note_text::caret_offset` 回答这个问题，返回字节偏移：末行是标签行 → 返回该行前那个换行的偏移；末行不是标签行（含末尾空行）→ 返回文本长度；整篇只有一个标签行 → 也返回长度（上面没有正文可接，扩标签是唯一合理的动作，放到 0 会把 `#` 推到文字后面、把标签变成正文）。
+
+**二、单位也错了。** 第一版按 UTF-16 单元换算：`买菜清单\r\n鸡蛋\r\n# 工作 重要` 里正文之后的偏移是 8。门禁立刻红了，行变成 `买菜清单\n鸡蛋\n尾# 工作 重要`——字落在标签行**开头**。原因是 RichEdit 的 `EM_SETSEL` 数的是**字符位置**：一对 `CRLF` 算 **1** 个，emoji 算 2 个。8 在它的计数里是标签行的第一个位置。
+
+所以 `hub_editor::position_of(text, byte)` 做字节 → 字符位置的换算（`CR` 计 1，紧跟的 `LF` 计 0，其余按 `len_utf16`）。同一份文本，对的数是 `at=7 of=15`，错的是 `at=8 of=17`，两个数字都写进了 `note_caret` 日志：
+
+```
+note_caret id=0 at=7 of=15 tag_line=true
+editor_focus id=0 focused=true caret=(7, 7)
+```
+
+`caret_to_end` 一直没暴露这个差别，是因为它用 `GetWindowTextLengthW`（UTF-16 长度，比字符位置大）当位置——**超出末尾**，RichEdit 自己夹到结尾。看起来对，其实靠的是越界。
+
+### 改在哪
+
+| 位置 | 改动 |
+|---|---|
+| `hub-core::note_text::caret_offset` | 新函数 + 4 组单测（标签行、无标签/中间 `#`/末尾空行、只有标签行、正文与标签之间的空行） |
+| `hub-editor::caret.rs` | 新文件：`caret_to_end`/`select_all`/`caret` 从 `lib.rs` 搬来，加 `set_caret(位置)` 与 `position_of(文本, 字节)`；`lib.rs` 798 → 775 行 |
+| `note/island.rs` | `park(editor, id, log)`：一次算位置、放光标、滚到光标、写 `note_caret`；`NoteShell::park_caret` 给其余两条路径用 |
+| `note/panel.rs` | 切换器选中另一条笔记（Q27）也走 `park_caret` |
+| `note/recover.rs` | 恢复/合并草稿后同样走 `park_caret`——草稿里也带标签行 |
+
+`set_caret` 把位置夹在文档长度内：越界 RichEdit 自己会夹，但把控制没用过的数字报给 `caret()` 读回来，是那种要到很久以后才付账的静默不一致。
+
+### 门禁
+
+`check-native-notes.py` 的 Q-L 从"把缺陷当现状"改成断言修复：
+
+| 判什么 | 怎么判 |
+|---|---|
+| 光标停在标签行之前 | `note_caret` 行 `tag_line=true` 且 `at < of` |
+| 字进了正文 | 行内容 = 旧内容 + `尾` |
+| 标签没被动 | `tags` 与点击前**完全相等**（旧断言是 `tags + "尾"`） |
+
+`check-native-recover.py` 那条"打字仍写草稿"原来把 `content` 与 `tags` 拼起来判——正是这种宽容让缺陷活了下来——现在分开判：字在 `content` 里，`tags` 保持 `当前`（16/16）。
+
+### 证据
+
+| 门禁 | 结果 |
+|---|---|
+| `scripts/check-native-notes.py` | 25/25（Q-L 前是 23/25，两条红的就是这个缺陷） |
+| `scripts/check-native-recover.py` | 16/16 |
+| `scripts/check-native-switcher.py` | 22/22 |
+| `cargo test --release --workspace` | 212 项（新增 4 项 `caret_offset`、3 项 `position_of`） |
+| `scripts/check-native-architecture.mjs` | 通过（5 crates） |
+
+`caret_offset` 与 `position_of` 都是纯函数，所以这一批的两条根因各有一组不需要窗口的测试；窗口里只剩"把数字交给 `EM_SETSEL`"这一步。
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -981,3 +1038,4 @@ Q24 一直是 `✗`，而且它是唯一一条与"数据安全"直接相关的 p
 | 2026-11-26 | 2g Q10：`note/drag.rs` 每帧按 `GetCursorPos` 的位移 `SetWindowPos`（`StartDrag` 在本环境不动窗口，普通窗口探针同样不动）；`check-native-drag.py` 9/9（连跑 4 次），按钮上起拖不动也不误触（§8.12） |
 | 2026-11-26 | 2h Q24：`app/src/backup.rs`（草稿读写、判定、合并）+ `save::Saver::stash`/`clear_stash` + `hub-ui/src/recover.rs`（手绘卡片，返回按钮矩形）+ `note/recover.rs`（隐藏编辑器、三种回答）。`check-native-recover.py` 15/15，`save.rs` 拆成 `save/mod.rs` + `save/tests.rs`（§8.13） |
 | 2026-11-26 | 2f Q9：置顶走 `hub_win::window::set_topmost`（`ViewportCommand::WindowLevel` 会按 winit 缓存的 `WindowFlags` 重写整套样式，把 `with_visible(false)` 建、`move_on_screen` 显示的笔记窗口直接抹掉——Q16 只读日志所以一直显示正常）；新增 `scripts/lib/winshot.py`（`PrintWindow` 取像素）与 `scripts/check-native-pin.py`（11/11，连跑 3 次）。`toggle_pin` 移入 `note/panel.rs`（§8.11） |
+| 2026-11-26 | 2i 光标落点：`hub-core::note_text::caret_offset` 把光标放在正文末尾而非标签行内；`hub-editor::caret.rs`（从 `lib.rs` 拆出）加 `set_caret`/`position_of`——`EM_SETSEL` 数的是字符位置，`CRLF` 只算 1，按 UTF-16 换算会正好落到标签行开头（实测）。打开、切换、恢复草稿三条路径共用 `park_caret`。`check-native-notes.py` 25/25（Q-L 改判"字进正文、标签不动"）、`check-native-recover.py` 16/16；`cargo test` 212 项（§8.14） |
