@@ -20,8 +20,9 @@
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    IsIconic, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_MINIMIZE, SW_RESTORE, SW_SHOWNOACTIVATE,
+    IsIconic, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_MINIMIZE, SW_RESTORE,
+    SW_SHOWNOACTIVATE,
 };
 
 /// Far enough that no virtual desktop (including a 4-monitor 4K wall) reaches it.
@@ -50,6 +51,36 @@ pub fn move_on_screen(hwnd: isize, x: i32, y: i32, width: i32, height: i32, topm
 
     unsafe {
         SetWindowPos(hwnd, insert_after, x, y, width, height, flags);
+    }
+}
+
+/// Turn always-on-top on or off, touching only the z-order bit.
+///
+/// `ViewportCommand::WindowLevel` is the obvious route and it **hid the window**.
+/// winit applies a level change by rebuilding the whole window style from its
+/// cached `WindowFlags`, and this window is created `with_visible(false)` and then
+/// shown by [`move_on_screen`] — all of it outside winit's model. So the first
+/// level change wrote "not visible" (and dropped the no-activate style) and the
+/// note disappeared; measured 2026-11-26 with `IsWindowVisible` plus a screen grab
+/// that came back as the desktop. `SetWindowPos` with `HWND_TOPMOST` /
+/// `HWND_NOTOPMOST` moves the window in the z-order and leaves the rest of the
+/// style alone, which is the only part of the request that was wanted.
+///
+/// `SWP_NOACTIVATE`: unpinning must not pull the keyboard away from whatever the
+/// user is typing in. Returns whether the OS accepted the call, so the caller can
+/// log a failure instead of painting a highlight over a window that did not move.
+pub fn set_topmost(hwnd: isize, on: bool) -> bool {
+    let insert_after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            insert_after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        ) != 0
     }
 }
 

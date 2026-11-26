@@ -430,7 +430,7 @@ impl NoteShell {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         if output.actions.toggle_pin {
-            self.toggle_pin(ctx);
+            self.toggle_pin();
         }
         if output.actions.toggle_tools {
             self.toggle_tools("button");
@@ -619,7 +619,7 @@ impl NoteShell {
         match command {
             keys::Command::Switcher => self.open_switcher(ctx),
             keys::Command::CloseNote => self.close(ctx, "shortcut"),
-            keys::Command::TogglePin => self.toggle_pin(ctx),
+            keys::Command::TogglePin => self.toggle_pin(),
             keys::Command::ToggleTools => self.toggle_tools("shortcut"),
             keys::Command::ToggleGhost => self.toggle_ghost(),
             keys::Command::Undo => self.history(true),
@@ -655,23 +655,6 @@ impl NoteShell {
                 before,
                 self.strip.ghost_restore
             ),
-        );
-    }
-
-    fn toggle_pin(&mut self, ctx: &egui::Context) {
-        self.strip.pinned = !self.strip.pinned;
-        ctx.send_viewport_cmd_to(
-            self.viewport,
-            egui::ViewportCommand::WindowLevel(if self.strip.pinned {
-                egui::WindowLevel::AlwaysOnTop
-            } else {
-                egui::WindowLevel::Normal
-            }),
-        );
-        self.log.mark(
-            0,
-            "note_pin",
-            &format!("id={} pinned={}", self.id, self.strip.pinned),
         );
     }
 

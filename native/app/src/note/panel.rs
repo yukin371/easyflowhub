@@ -59,6 +59,40 @@ impl NoteShell {
         );
     }
 
+    /// Q9: the pin button and `Ctrl+T` both land here.
+    ///
+    /// The z-order is set through `hub-win`, **not** `ViewportCommand::WindowLevel`.
+    /// winit applies a level change by rebuilding the whole window style from its
+    /// cached `WindowFlags`, and this window is created `with_visible(false)` and
+    /// shown by `move_on_screen` — all outside winit's model. The first level change
+    /// therefore wrote "not visible" and the note vanished; measured 2026-11-26,
+    /// `IsWindowVisible` false and a screen grab that came back as the desktop.
+    /// See `hub_win::window::set_topmost` for the reproduction.
+    ///
+    /// `pinned` and the topmost bit are one state, not two: the flag is flipped and
+    /// the OS is asked in the same call, and `topmost=` records whether it took. A
+    /// highlight painted over a window that never moved would be the same bug with
+    /// a nicer screenshot.
+    pub(super) fn toggle_pin(&mut self) {
+        self.strip.pinned = !self.strip.pinned;
+        let topmost = self
+            .hwnd
+            .map(|hwnd| hub_win::window::set_topmost(hwnd, self.strip.pinned));
+        self.log.mark(
+            0,
+            "note_pin",
+            &format!(
+                "id={} pinned={} topmost={}",
+                self.id,
+                self.strip.pinned,
+                match topmost {
+                    Some(ok) => ok.to_string(),
+                    None => "no-window".to_string(),
+                }
+            ),
+        );
+    }
+
     /// `Ctrl+K`: take the body over with the list (Q25).
     pub(super) fn open_switcher(&mut self, ctx: &egui::Context) {
         self.switcher.open();
