@@ -201,10 +201,16 @@ class Report:
 def open_workbench(session: Session, window: int, before: int = 0, tries: int = 3) -> str:
     """Send the rebound global chord and wait for the workbench to say it opened.
 
-    `before` is how many open lines the log already had: a global hotkey that was
-    registered but refused (1409, another program owns it) delivers nothing, and the
-    retry loop is the only way to tell that apart from "the log has not been written
-    yet".
+    `before` is how many open lines the log already had, so "opened" means "opened
+    *now*". The loop is here because of a measured fact: the first chord after the
+    workbench has been closed and the note has taken the foreground back is
+    sometimes lost -- repeatably so, across runs, while every later attempt lands.
+    Nothing in the shell's hotkey path depends on focus (the registration lives on
+    the hotkey thread and `WM_HOTKEY` is posted there), so this is the injection
+    side: a synthetic `Ctrl+Alt` chord injected right after a foreground change does
+    not always reach the queue. Retrying is safe because it is guarded by the log --
+    a chord that did arrive leaves a line, and a second chord sent blindly would then
+    close what the first one opened.
     """
     for attempt in range(tries):
         wininput.force(window)
