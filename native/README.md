@@ -165,7 +165,7 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | 置顶用 `SetWindowPos`，不用 `ViewportCommand::WindowLevel` | winit 改 level 时按自己缓存的 `WindowFlags` 重算整套 `WS_*`，而本窗口是 `with_visible(false)` 建、`move_on_screen` 显示的；第一次改就把 `WS_VISIBLE` 抹掉，窗口从桌面消失（实测 2026-11-26，`IsWindowVisible` false） | `hub_win::window::set_topmost` 只动 z-order 位（`SWP_NOACTIVATE`）。**同样是这条约束**：任何让 winit 重算样式的 viewport 命令（decorations、visible）都会隐藏笔记窗口，要加这类命令先读 §8.11 |
 | 改键的"写盘"方向没有端到端门禁 | 需要点设置页里的键位再按新键，同上一条的坐标问题 | 反向（文件 → 表 → OS 注册 → 真按键生效）由 `check-native-manager.py` 的 K1/K2 判；写盘一侧由 `SpikeSettings::save`（tmp + rename）与 `Table::rebind` 的单测钉住 |
 | 工作台只做了笔记 / 回收站 / 待办 / 设置四个分区 | 收件箱与脚本分区依赖 capture 与执行链路，属 P3 | 随 P3 迁移一起补；待办分区只读正文里的 `- [ ]` 行，不写回 |
-| `store` 的迁移梯子只装在原生侧 | Tauri 仍按列探测迁移，两边共用一份迁移器属 Phase 2 | 这版只能保证"量出来的版本 == Tauri 建出来的形状"：漂移守卫比 `notes.rs` / `inbox/schema.rs` 的列、`check-native-store-schema.py` 比真实场景，`Schema::ahead` 报出新版本加的列 |
+| `store` 的迁移梯子只装在原生侧 | 曾是 Phase 2 的事：Tauri 按列探测迁移，两边靠"同文"维持 | **已还（2026-11-26）**：Tauri 通过 path 依赖调同一把梯子（`src-tauri/src/db.rs` 是唯一连接入口），DDL 只剩 `hub-core::store::schema` 一份；守卫反向——`the_tauri_build_owns_no_ddl` 扫 Tauri `src/`，生产代码里出现 `CREATE`/`ALTER`/`PRAGMA user_version` 即失败 |
 
 ## 度量口径
 

@@ -68,8 +68,9 @@ pub enum Rebuild {
 /// The highest rung this build knows how to build.
 ///
 /// Adding a rung means: append it to [`RUNGS`], give it a `version` of `+1`, and
-/// teach [`accepts`] about any column it adds. The drift test in `store/mod.rs`
-/// fails when `easyflowhub-app/src-tauri` grows a migration this list does not have.
+/// teach [`accepts`] about any column it adds. Nothing else needs editing: the Tauri
+/// build calls this module instead of growing migrations of its own, and the
+/// `the_tauri_build_owns_no_ddl` test in `store/mod.rs` fails if one reappears there.
 pub const SCHEMA_VERSION: u32 = 6;
 
 /// What a file looks like right now, measured rather than remembered.
@@ -100,7 +101,8 @@ impl Schema {
 /// A 0.1.x file has `tags` and `deleted_at` appended at the end instead, because
 /// `ALTER TABLE` appends; that is fine and not worth equalising -- every statement
 /// in this crate names its columns, so physical order is not part of the contract.
-/// The drift test in `store/mod.rs` pins these lists against the Tauri DDL.
+/// `the_declared_columns_are_the_ones_our_ddl_creates` in `store/mod.rs` pins these
+/// lists against what a fresh file actually gets.
 pub const NOTES_COLUMNS: &[&str] = &[
     "id",
     "title",
@@ -237,12 +239,11 @@ const RUNGS: &[Rung] = &[
     },
 ];
 
-/// The exact DDL the Tauri build runs, plus its column-probe migrations.
+/// The `notes` DDL, and the only copy of it.
 ///
-/// Kept as one string so a reader can diff it against `notes.rs` and see it is the
-/// same statement; the drift test in `store/mod.rs` parses that file so a column
-/// added there but not here fails the build instead of silently producing a
-/// narrower schema.
+/// It used to be kept byte-identical to the statement in `notes.rs`, which is what
+/// the old drift test compared. That file no longer writes DDL at all: this const is
+/// what both processes execute, through [`init_schema`].
 pub const NOTES_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS notes (
     id TEXT PRIMARY KEY,

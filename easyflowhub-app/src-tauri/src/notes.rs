@@ -1008,6 +1008,20 @@ mod tests {
         // 1. The real migrations must accept the file without changing it.
         init_db(&mut conn).expect("migrations run against a native-written database");
 
+        // 1b. And the ladder must then report it finished. The native shell climbed
+        //     the same six rungs, so `Rebuild::Run` should have found nothing to do --
+        //     in particular no pre-audio CHECK left to rewrite, which is the one
+        //     migration that renames tables and could silently eat rows.
+        let report = hub_core::store::schema(&conn).expect("measure the native database");
+        assert!(
+            report.is_current(),
+            "native database is not current after migrating: {report:?}"
+        );
+        assert!(
+            !report.legacy_capture_kinds,
+            "the Inbox CHECK is still the pre-audio one after `Rebuild::Run`"
+        );
+
         // 2. A row the native shell inserted is readable through the product's own
         //    helper, field for field. `PROBE_BODY` plus the native-side update suffix.
         let probe = get_note_helper(&conn, "s3-probe-created").expect("native probe row");

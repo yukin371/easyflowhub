@@ -1,6 +1,6 @@
 # `notes.db` 统一迁移器（Tauri 接入 `hub-core`）方案
 
-> 状态：`proposed`（2026-11-26，待评审后开工）
+> 状态：`implemented`（2026-11-26 批 1–3 落地；批 4 未做，见 §5）
 >
 > 上游：[native-runtime-redesign.md](./2026-11-24-native-runtime-redesign.md) §5.7（持久化归属 `hub-core::store`）、[ADR-0009](../decisions/ADR-0009-windows-native-runtime.md)
 > 前序：[2026-11-25-notes-db-compat-spike.md](./2026-11-25-notes-db-compat-spike.md)（S3 双向兼容）、[2026-11-25-phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.17（梯子与 `SCHEMA_VERSION = 6`）
@@ -10,7 +10,7 @@
 
 把 DDL 的所有权从 Tauri 移到 `hub-core::store`，Tauri 通过 path 依赖调**同一把梯子**；Tauri 侧只保留两件它才该管的事：连接策略（`busy_timeout`、`foreign_keys`）和"旧 CHECK 要不要就地重建"的选择（`Rebuild::Run`）。
 
-这不只是删重复代码。现在的守卫是**反向**的：`store/mod.rs:358` 的 `the_legacy_migrations_are_all_mirrored` 用 `include_str!` 把 Tauri 的源码读进来，要求 `hub-core` 的列清单与之相等。也就是"原生追 Tauri"。统一之后守卫换成"Tauri 的生产代码里不许出现 DDL"，方向与所有权一致：越权的那一侧失败。
+这不只是删重复代码。接入之前守卫是**反向**的：`the_legacy_migrations_are_all_mirrored` 用 `include_str!` 把 Tauri 的源码读进来，要求 `hub-core` 的列清单与之相等，也就是"原生追 Tauri"。统一之后守卫换成"Tauri 的生产代码里不许出现 DDL"（`the_tauri_build_owns_no_ddl`），方向与所有权一致：越权的那一侧失败。旧守卫已随批 3 删除。
 
 ## 2. 现状事实（代码级）
 
@@ -144,7 +144,7 @@ INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filenam
 |---|---|---|
 | 单元 | `cargo test -p hub-core`：搬过来的 4 条测试（`inbox_schema_is_additive_and_idempotent_for_existing_notes`、`legacy_inbox_tables_gain_audio_and_transcript_kinds`、`inbox_migration_rolls_back_on_failure_and_retries`、`legacy_attachments_gain_source_path_column`）+ 2 条新测试（列名交集搬运不丢 `deleted_at`；`Rebuild::Defer` 只报不做） | 重建逻辑不对 |
 | 单元（Tauri） | `cargo test --manifest-path … --lib`：现有三条覆盖（幂等、两连接并发建待办箱、`reads_and_writes_a_database_produced_by_the_native_shell`）；后者加两条断言：迁移后 `schema.is_current()`、`legacy_capture_kinds == false` | 同一把梯子在同一份文件上没走完 |
-| 反漂移 | `hub-core` 新测试扫 Tauri `src/`：截断到每个文件的 `#[cfg(test)]`，前半段不许出现 `CREATE TABLE` / `ALTER TABLE` / `PRAGMA user_version`。替换掉现在反向的 `the_legacy_migrations_are_all_mirrored` | 有人把 DDL 又写回 Tauri |
+| 反漂移 | `hub-core` 的 `the_tauri_build_owns_no_ddl`：递归扫 Tauri `src/**/*.rs`，**逐个 `#[cfg(test)]` 项**跳过（不是"截断文件"——`settings.rs` 的测试模块下面还有生产命令），其余不得出现 `CREATE TABLE` / `CREATE INDEX` / `CREATE UNIQUE INDEX` / `CREATE VIEW` / `CREATE TRIGGER` / `ALTER TABLE` / `DROP TABLE` / `DROP INDEX` / `PRAGMA user_version`；另断言扫到的文件数 > 20，避免路径指错时空过 | 有人把 DDL 又写回 Tauri |
 | 端到端 | `python scripts/check-native-store-schema.py`（4 场景）+ `scripts/measure-native-store.ps1`（真实库副本、双向读写、`cargo test --lib -- --ignored`） | 真文件被改坏 |
 
 本地跑 Tauri 那层要先 `go build` 出 sidecar（`tauri.conf.json` 把 `scriptmgr.exe` 当资源打包，缺文件时 build script 直接拒绝），CI 的 `native-windows` job 里已有这一步。
@@ -159,6 +159,16 @@ INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filenam
 | 4（可选） | `user_version` 回声 | schema 门禁 6 场景、S3 门禁全绿 | 文件头多一个号 |
 
 批 1 与批 2 各自可回退；批 1 对 Tauri 完全没有影响，这是先做它的原因。
+
+### 7.1 实施记录（2026-11-26）
+
+| 批 | 提交 | 证据 |
+|---|---|---|
+| 1 | `9e07107` | `cargo test -p hub-core` 109 项；workspace 242 项；架构门禁 `schema/mod.rs` 664 / `rebuild.rs` 301 / `store/mod.rs` 457 行（均 < 800） |
+| 2 | `c958ed9` | `cargo check --locked` 通过（手写补 `Cargo.lock` 的 `hub-core` 包块，离线且 `spin 0.9.8` 已 yank，无法重生成）；`cargo test --lib` 95 passed / 1 ignored；真实库 sha256 与字节数不变 |
+| 3 | 本批 | `cargo test -p hub-core` 112 项、workspace 244 项；`the_tauri_build_owns_no_ddl` 做了反向验证——往 `src/` 放一个含 `CREATE TABLE` 的探针文件，测试按 `zz_probe.rs:1: CREATE TABLE` 失败，删除后恢复绿；不做"按文件截断"，而是 `#[cfg(test)]` 项级跳过，`settings.rs`（测试模块下仍有 `pub fn update_settings`）与 `inbox/mod.rs`（`#[cfg(test)] mod schema;`）都没误报；S3 跨实现测试加的两条断言在原生写出的库上通过（39 → 41 条笔记，`version 6/6`、`legacy_capture_kinds=false`） |
+
+E2E 门禁 `scripts/measure-native-store.ps1` 本轮在 `native/target` 下跑写通道时报 `attempt to write a readonly database`（同一份库复制到 `%TEMP%` 后 `--store-bench --store-write` 立刻 `verdict=PASS`），判定为那台机器上该目录的写入限制，不是迁移器行为；L1/L2 用 `%TEMP%` 副本手工复跑通过，L3 与 G-1 仍以批 2 记录的那次完整 `RESULT: PASS` 为准。
 
 ## 8. 风险与回退
 

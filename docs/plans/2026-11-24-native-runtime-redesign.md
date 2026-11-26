@@ -466,7 +466,7 @@ easyflowhub/native/
 
 1. **单向依赖，禁止环**：`app → hub-ui → hub-editor → hub-core`；`hub-win` 是被依赖方，不反向依赖任何业务 crate。
 2. **平台能力只经 `hub-win` 暴露的 trait**：UI 层出现 `use windows::` 即违规。
-3. **持久化只在 `hub-core::store`**：UI 不持有连接、不拼 SQL。
+3. **持久化只在 `hub-core::store`**：UI 不持有连接、不拼 SQL。（2026-11-26 过渡期也成立：Tauri 仍是主力，但它已通过 path 依赖调同一把梯子，`src-tauri/src/db.rs` 是唯一连接入口，生产代码零 DDL——见 [notes-db-shared-migrator](./2026-11-26-notes-db-shared-migrator.md)）
 4. **网络只在 `hub-bridge`**：`hub-core` 不直接发 HTTP；worker 契约版本化 JSON。
 5. **UI 与 core 只通过 DTO / 命令交互**，不共享可变全局状态。
 6. **单文件 ≤ 800 行**；超出先拆模块，不靠注释分区。

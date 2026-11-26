@@ -3,14 +3,15 @@
 //! This is the S3 question in one module: can the native shell read and write the
 //! database the Tauri build already owns, without changing its contract?
 //!
-//! Three rules are load-bearing, and each has a measured reason behind it:
+//! Four rules are load-bearing, and each has a measured reason behind it:
 //!
-//! * **The DDL is copied, not re-invented.** `notes.rs` in the Tauri crate evolves
-//!   the schema by probing for columns (`pragma_table_info`) instead of tracking a
-//!   version number -- the live database has `user_version = 0`. A native side that
-//!   invented its own migrations would eventually disagree with that probe, so
-//!   [`notes_ddl`] is the same text and [`tests::the_legacy_migrations_are_all_mirrored`]
-//!   fails when the other crate grows a column we do not know about.
+//! * **This crate owns the DDL; the Tauri build owns the connection.** The schema
+//!   used to exist twice -- once in `notes.rs` as column probes, once here -- kept
+//!   aligned by a test that parsed their source. There is now one writer
+//!   ([`init_schema`]), called by both processes, and the guard points the other way:
+//!   [`tests::the_tauri_build_owns_no_ddl`] fails if a `CREATE`, an `ALTER` or a
+//!   `PRAGMA user_version` reappears in that crate's production code, because that is
+//!   how a second author of the same file would start.
 //! * **`IMMEDIATE` transactions.** The Tauri side takes the write lock up front
 //!   (`TransactionBehavior::Immediate`); a deferred transaction that later upgrades
 //!   can deadlock against another process. Same choice here.
@@ -21,8 +22,8 @@
 //!   migrations as a ladder of rungs and reports which ones are on the file; see
 //!   that module for why `PRAGMA user_version` is the wrong place for the number.
 //!   [`Store::open`] refuses a connection whose ladder did not end at
-//!   [`SCHEMA_VERSION`], so "we mirror the Tauri migrations" is checked on every
-//!   open instead of being asserted in a comment.
+//!   [`SCHEMA_VERSION`], so "the ladder reached the top" is checked on every open
+//!   instead of being asserted in a comment.
 //!
 //! Nothing here changes `journal_mode`, `user_version`, `page_size` or `encoding`.
 //! Switching to WAL would rewrite the file header and leave `-wal`/`-shm` siblings,
@@ -359,29 +360,10 @@ mod tests {
     }
 
     #[test]
-    fn the_legacy_migrations_are_all_mirrored() {
-        // Drift guard, against both shapes the Tauri build grows a column in:
-        //   * `CREATE TABLE` (one column per line, `source_path` arrived this way);
-        //   * `ALTER TABLE ... ADD COLUMN` (the 0.1.x migrations).
-        // Either one landing upstream without landing here means the two processes
-        // disagree about the same file, and the one that opened it first wins.
-        const NOTES: &str = include_str!("../../../../../easyflowhub-app/src-tauri/src/notes.rs");
-        const INBOX: &str =
-            include_str!("../../../../../easyflowhub-app/src-tauri/src/inbox/schema.rs");
-
-        for (source, table, declared) in [
-            (NOTES, "notes", schema::NOTES_COLUMNS),
-            (INBOX, "inbox_items", schema::INBOX_ITEM_COLUMNS),
-            (INBOX, "inbox_attachments", schema::INBOX_ATTACHMENT_COLUMNS),
-        ] {
-            let upstream = upstream_columns(source, table);
-            assert_eq!(
-                upstream, declared,
-                "{table}: hub-core does not declare the columns the Tauri build creates"
-            );
-        }
-
-        // And the file the DDL claims to produce really has them, in that order.
+    fn the_declared_columns_are_the_ones_our_ddl_creates() {
+        // The other half of the ownership check: the lists `ahead_columns` compares
+        // against must describe the file this crate builds, in the order a fresh file
+        // physically gets, or a downgrade would be reported on a healthy database.
         let store = memory();
         for (table, declared) in [
             ("notes", schema::NOTES_COLUMNS),
@@ -393,54 +375,158 @@ mod tests {
         }
     }
 
-    /// Columns a table gets in `notes.rs` / `inbox/schema.rs`, in physical order: the
-    /// ones the base `CREATE TABLE` names, then the ones an `ALTER` appends.
-    fn upstream_columns(source: &str, table: &str) -> Vec<&'static str> {
-        // Leaked on purpose: the assertion compares against `&'static str` tables, and
-        // a test process leaking a few dozen bytes is cheaper than a second type.
-        let source: &'static str = Box::leak(source.to_string().into_boxed_str());
-        let mut out: Vec<&'static str> = Vec::new();
+    /// The ownership check, pointing the other way.
+    ///
+    /// While both processes carried a copy of the schema the useful question was "do
+    /// our column lists still match theirs", and this test read their source to answer
+    /// it. `init_schema` is now the only writer, so the question inverts: does the
+    /// other crate still hold a `CREATE`, an `ALTER` or a `PRAGMA user_version` that
+    /// would make a second author? Test fixtures are exempt -- building a
+    /// pre-migration table is how a migration gets proven -- and they are skipped item
+    /// by item rather than by truncating the file, because `settings.rs` keeps
+    /// production commands *below* its test module.
+    #[test]
+    fn the_tauri_build_owns_no_ddl() {
+        const TAURI_SRC: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../easyflowhub-app/src-tauri/src"
+        );
+        // Every way a second owner could reappear. `PRAGMA user_version` is in the
+        // list because stamping the number is the other half of owning the schema.
+        const FORBIDDEN: &[&str] = &[
+            "CREATE TABLE",
+            "CREATE INDEX",
+            "CREATE UNIQUE INDEX",
+            "CREATE VIEW",
+            "CREATE TRIGGER",
+            "ALTER TABLE",
+            "DROP TABLE",
+            "DROP INDEX",
+            "PRAGMA user_version",
+        ];
 
-        let marker = format!("CREATE TABLE IF NOT EXISTS {table} (");
-        if let Some(start) = source.find(&marker) {
-            let body = &source[start + marker.len()..];
-            if let Some(end) = body.find(");") {
-                for line in body[..end].lines() {
-                    let line = line.trim();
-                    let Some(first) = line.split_whitespace().next() else {
-                        continue;
-                    };
-                    // Table-level constraints, not columns.
-                    if matches!(first, "CHECK" | "FOREIGN" | "PRIMARY" | "UNIQUE") {
-                        continue;
-                    }
-                    let name = first.trim_end_matches(',');
-                    if !name.is_empty() {
-                        out.push(name);
+        // Canonicalised so a failure names the file the way an editor does.
+        let root = std::fs::canonicalize(TAURI_SRC)
+            .unwrap_or_else(|error| panic!("{TAURI_SRC}: {error}"));
+        let files = rust_sources(&root);
+        // A path that resolves to nothing would make this pass for the wrong reason.
+        assert!(
+            files.len() > 20,
+            "{}: only {} Rust files found, the guard is looking at the wrong place",
+            root.display(),
+            files.len()
+        );
+
+        let mut offenders = Vec::new();
+        for file in &files {
+            let source = std::fs::read_to_string(file)
+                .unwrap_or_else(|error| panic!("{}: {error}", file.display()));
+            for (number, line) in production_lines(&source) {
+                for needle in FORBIDDEN {
+                    if line.contains(needle) {
+                        offenders.push(format!("{}:{number}: {needle}", file.display()));
                     }
                 }
             }
         }
+        assert!(
+            offenders.is_empty(),
+            "the Tauri build must not own DDL; `hub-core::store::schema` is the only writer:\n{}",
+            offenders.join("\n")
+        );
+    }
 
-        let alter = format!("ALTER TABLE {table} ADD COLUMN ");
-        for line in source.lines() {
-            let Some(rest) = line.split(&alter).nth(1) else {
+    #[test]
+    fn the_ddl_scan_skips_test_items_and_nothing_else() {
+        // The guard's own blind spot: a skip that eats too much would hide real DDL.
+        let source = "\
+fn production() {}
+
+#[cfg(test)]
+mod tests {
+    const FIXTURE: &str = \"CREATE TABLE legacy (id TEXT)\";
+}
+
+fn after_the_tests() {}
+";
+        let production: Vec<&str> = production_lines(source).into_iter().map(|(_, l)| l).collect();
+        assert!(production.iter().any(|line| line.contains("fn production")));
+        // Production code below a test module is still production code.
+        assert!(production.iter().any(|line| line.contains("fn after_the_tests")));
+        assert!(!production.iter().any(|line| line.contains("CREATE TABLE")));
+    }
+
+    /// Every `.rs` under `dir`, recursively.
+    fn rust_sources(dir: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(next) = pending.pop() {
+            let entries = std::fs::read_dir(&next)
+                .unwrap_or_else(|error| panic!("{}: {error}", next.display()));
+            for entry in entries {
+                let path = entry.expect("directory entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+
+    /// The lines of `source` that are production code, with their 1-based numbers.
+    fn production_lines(source: &str) -> Vec<(usize, &str)> {
+        let lines: Vec<&str> = source.split('\n').collect();
+        let mut out = Vec::new();
+        let mut index = 0;
+        while index < lines.len() {
+            if lines[index].trim() == "#[cfg(test)]" {
+                index = skip_cfg_test_item(&lines, index);
                 continue;
-            };
-            if let Some(name) = rest.split_whitespace().next() {
-                out.push(name);
             }
+            out.push((index + 1, lines[index]));
+            index += 1;
         }
+        out
+    }
 
-        // `tags` is both in the base statement and in an `ALTER` (the 0.1.x path), so
-        // the union keeps the first position and drops the repeat.
-        let mut unique: Vec<&'static str> = Vec::new();
-        for name in out {
-            if !unique.contains(&name) {
-                unique.push(name);
+    /// First line after the `#[cfg(test)]` item whose attribute is at `start`.
+    ///
+    /// Brace counting. The bodies are test code full of SQL strings, but every brace
+    /// inside one of those strings is balanced, so the count closes on the item's own
+    /// `}` rather than on a quote.
+    fn skip_cfg_test_item(lines: &[&str], start: usize) -> usize {
+        let mut index = start + 1;
+        // Further attributes belong to the same item.
+        while index < lines.len() && lines[index].trim_start().starts_with("#[") {
+            index += 1;
+        }
+        if index == lines.len() {
+            return index;
+        }
+        if !lines[index].contains('{') {
+            // `mod schema;` or `pub(crate) use ...;`
+            while index < lines.len() && !lines[index].trim_end().ends_with(';') {
+                index += 1;
+            }
+            return index + 1;
+        }
+        let mut depth = 0i32;
+        while index < lines.len() {
+            for byte in lines[index].bytes() {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            index += 1;
+            if depth <= 0 {
+                break;
             }
         }
-        unique
+        index
     }
 
     #[test]
