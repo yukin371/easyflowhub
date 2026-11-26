@@ -1,5 +1,6 @@
 //! Pure logic shared by the native shell: panel geometry maths, the spike's
-//! settings shape, and the store that reads and writes the product's `notes.db`.
+//! settings shape, the note-text rules that decide what a save writes, and the
+//! store that reads and writes the product's `notes.db`.
 //!
 //! Nothing here may touch a platform API. `scripts/check-native-architecture.mjs`
 //! enforces that (no win32 bindings, no GUI toolkit — and it scans comments too, so
@@ -13,8 +14,10 @@
 //! never escapes this crate. SQLite is a file format, not a platform call, so it
 //! does not violate the rule above.
 
+pub mod clock;
 pub mod island;
 pub mod layout;
+pub mod note_text;
 pub mod settings;
 pub mod store;
 
@@ -26,4 +29,4 @@ pub use layout::{
 pub use settings::{
     NoteAppearance, NoteColors, QuickNoteSettings, Rgb, SettingsSource, SpikeSettings,
 };
-pub use store::{Counts, NoteRow, SettingRow, Store, StoreError};
+pub use store::{new_note_id, Counts, NoteRow, NoteWrite, SettingRow, Store, StoreError};

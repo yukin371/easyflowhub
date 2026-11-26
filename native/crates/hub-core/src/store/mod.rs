@@ -33,7 +33,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 
 pub use attachments::{StoredAttachment, ATTACHMENT_DIR};
-pub use notes::NoteRow;
+pub use notes::{NoteRow, NoteWrite};
 pub use settings::SettingRow;
 
 /// The `identifier` from `easyflowhub-app/src-tauri/tauri.conf.json`.
@@ -46,6 +46,15 @@ pub use settings::SettingRow;
 pub const DEFAULT_APP_DIR: &str = "com.yukin.easyflowhub";
 
 pub const DB_FILE: &str = "notes.db";
+
+/// A fresh note id.
+///
+/// Same crate the other build uses to mint ids, so a row's id looks identical no
+/// matter which process wrote it -- anything that keys on the shape of an id (log
+/// greps, the asset naming convention) keeps working across the two.
+pub fn new_note_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
 
 /// How long a writer waits for the other process before giving up, matching
 /// `notes.rs::get_connection`.

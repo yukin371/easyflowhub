@@ -33,6 +33,8 @@ pub struct Args {
     pub editor: bool,
     /// Open the Phase 1 quick-note shell instead of the spike (batch 1a).
     pub note: bool,
+    /// Open this note id in the quick-note shell instead of creating a new note.
+    pub note_id: Option<String>,
     /// Run this many timed keystrokes in the island, then print the distribution.
     pub editor_bench: Option<usize>,
     /// S2 gate for "keystroke → character painted" (app side, excludes composition).
@@ -72,6 +74,7 @@ impl Default for Args {
             no_vsync: false,
             editor: false,
             note: false,
+            note_id: None,
             editor_bench: None,
             editor_budget_p95_ms: 16.0,
             editor_budget_p99_ms: 25.0,
@@ -105,6 +108,7 @@ easyflowhub-native — S1 shell spike
   --no-vsync             diagnostic: measure without vsync
   --editor               draw the RichEdit island instead of the action grid
   --note                 open the Phase 1 quick-note shell (title strip + island)
+  --note-id <uuid>       open that note in the shell instead of a new one
   --editor-bench <N>     type N timed characters into the island, print, exit
   --editor-budget-p95 <ms>  gate for keystroke -> painted (default 16)
   --editor-budget-p99 <ms>  gate for keystroke -> painted p99 (default 25)
@@ -179,6 +183,7 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
             "--no-vsync" => args.no_vsync = true,
             "--editor" => args.editor = true,
             "--note" => args.note = true,
+            "--note-id" => args.note_id = Some(value("--note-id")?),
             "--editor-budget-p95" => {
                 args.editor_budget_p95_ms = value("--editor-budget-p95")?
                     .parse()

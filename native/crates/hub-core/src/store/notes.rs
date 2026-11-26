@@ -42,6 +42,68 @@ impl NoteRow {
     }
 }
 
+/// The body of a note, ready to write.
+///
+/// `is_pinned` and `deleted_at` are deliberately **not** here. They belong to the
+/// manager -- the list pin and the trash -- and a quick-note autosave that carried
+/// them would overwrite both with whatever the note window happens to think.
+pub struct NoteWrite {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub tags: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Store {
+    /// Insert or update a note's text. Returns `true` when the row was created.
+    ///
+    /// Two columns are left untouched on purpose, and both are load-bearing:
+    ///
+    /// * `is_pinned` is the **list** pin that `ORDER BY is_pinned DESC` sorts on.
+    ///   The quick note's toolbar bookmark toggles *window z-order* (parity Q9) --
+    ///   two features that share a name and nothing else. Writing the window state
+    ///   here would make every note typed in the shell jump to the top of the
+    ///   manager's list, and the symptom ("the list reordered itself") would be
+    ///   blamed on the sort.
+    /// * `deleted_at` keeps a trashed note trashed. An autosave from a window that
+    ///   was open before the delete must not resurrect the row.
+    ///
+    /// `created_at` is not updated either: it is the note's identity in time, and
+    /// every save would otherwise rewrite it.
+    pub fn save_note_body(&mut self, write: &NoteWrite) -> Result<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Inside the transaction, after the write lock: a `SELECT` beforehand could
+        // see "absent" and then lose the race to another process's insert.
+        let created = tx
+            .query_row("SELECT 1 FROM notes WHERE id = ?1", [&write.id], |_| Ok(()))
+            .optional()?
+            .is_none();
+        tx.execute(
+            "INSERT INTO notes (id, title, content, tags, created_at, updated_at, is_pinned, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                 title = excluded.title,
+                 content = excluded.content,
+                 tags = excluded.tags,
+                 updated_at = excluded.updated_at",
+            params![
+                write.id,
+                write.title,
+                write.content,
+                write.tags,
+                write.created_at,
+                write.updated_at,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(created)
+    }
+}
+
 impl Store {
     /// Every note, ordered the way the product lists them.
     ///
@@ -287,5 +349,66 @@ mod tests {
         store.upsert_note(&inbox).expect("write");
         store.soft_delete_note("a", "2026-11-25T00:00:00+00:00").expect("delete");
         assert!(store.todo_inbox().expect("lookup").is_none());
+    }
+
+    fn write(id: &str, content: &str, updated_at: &str) -> NoteWrite {
+        NoteWrite {
+            id: id.to_string(),
+            title: format!("title of {id}"),
+            content: content.to_string(),
+            tags: String::new(),
+            created_at: "2026-11-25T00:00:00+00:00".to_string(),
+            updated_at: updated_at.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_body_save_creates_then_updates_and_reports_which() {
+        let mut store = store();
+        assert!(store.save_note_body(&write("n1", "first", "2026-11-25T00:00:00+00:00")).expect("create"));
+        assert!(!store.save_note_body(&write("n1", "second", "2026-11-25T01:00:00+00:00")).expect("update"));
+
+        let stored = store.note("n1").expect("read").expect("present");
+        assert_eq!(stored.content, "second");
+        assert_eq!(stored.updated_at, "2026-11-25T01:00:00+00:00");
+        // Only the body columns move; identity stays put.
+        assert_eq!(stored.created_at, "2026-11-25T00:00:00+00:00");
+    }
+
+    #[test]
+    fn a_body_save_never_moves_the_list_pin() {
+        // The regression this guards: the quick note's bookmark is window z-order,
+        // and `is_pinned` is what `ORDER BY is_pinned DESC` sorts on. A save that
+        // wrote the window state would silently reorder the manager's list.
+        let mut store = store();
+        let mut pinned = note("n1", "body");
+        pinned.is_pinned = true;
+        store.upsert_note(&pinned).expect("seed pinned row");
+
+        store
+            .save_note_body(&write("n1", "edited in the note window", "2026-11-25T01:00:00+00:00"))
+            .expect("save");
+
+        let stored = store.note("n1").expect("read").expect("present");
+        assert!(stored.is_pinned, "the list pin was cleared by an autosave");
+        assert_eq!(stored.content, "edited in the note window");
+    }
+
+    #[test]
+    fn a_body_save_does_not_resurrect_a_trashed_note() {
+        let mut store = store();
+        store.save_note_body(&write("n1", "before", "2026-11-25T00:00:00+00:00")).expect("create");
+        store.soft_delete_note("n1", "2026-11-25T02:00:00+00:00").expect("trash");
+
+        // A window that was still open saves after the delete: the text updates it,
+        // but the row stays in the trash.
+        store
+            .save_note_body(&write("n1", "typed after the delete", "2026-11-25T03:00:00+00:00"))
+            .expect("late save");
+
+        assert_eq!(store.notes(false).expect("list").len(), 0, "it came back to the list");
+        let stored = store.note("n1").expect("read").expect("present");
+        assert!(stored.deleted_at.is_some(), "the trash marker was cleared");
+        assert_eq!(stored.content, "typed after the delete");
     }
 }

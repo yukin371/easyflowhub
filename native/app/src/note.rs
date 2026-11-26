@@ -24,20 +24,22 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hub_core::{
-    NoteAppearance, NotePlacement, NoteSpec, PixelRect, SpikeSettings, MIN_NOTE_HEIGHT,
-    MIN_NOTE_WIDTH,
+    NoteAppearance, NotePlacement, NoteRow, NoteSpec, PixelRect, SpikeSettings, Store,
+    MIN_NOTE_HEIGHT, MIN_NOTE_WIDTH,
 };
 use hub_editor::Editor;
 use hub_ui::quicknote::{self, StripState};
 use hub_ui::Palette;
 
-use crate::esc;
 use crate::keys;
 use crate::log::Log;
+use crate::save;
 use crate::wheel;
+
+mod island;
 
 /// Prefix of every note window title. The suffix is the note id.
 ///
@@ -86,6 +88,11 @@ pub struct Spawn {
     pub settings: Arc<SpikeSettings>,
     pub lite: bool,
     pub log: Arc<Log>,
+    /// `None` when the database could not be opened: the note still works, it just
+    /// lives in memory, and the save log says so once.
+    pub store: Option<Arc<Mutex<Store>>>,
+    /// The row to open, for a note that already exists. `None` starts a new one.
+    pub existing: Option<NoteRow>,
 }
 
 pub struct NoteShell {
@@ -121,6 +128,8 @@ pub struct NoteShell {
     /// Alpha last handed to the compositor. `None` until the window is attached, so
     /// the first application is never skipped by the "unchanged" guard.
     last_alpha: Option<u8>,
+    /// Autosave: debounce, dirty tracking, and the write itself. See [`crate::save`].
+    save: save::Pump,
     closing: bool,
     last_island: Option<PixelRect>,
     /// Last `pixels_per_point` this note laid out at, for the transition log.
@@ -138,6 +147,9 @@ impl NoteShell {
             opacity: appearance.initial_opacity(),
             ..StripState::default()
         };
+        // The id in the log is the database id from here on: a note that cannot be
+        // found again by its window ordinal is not persisted, it is a scratch pad.
+        let save = save::Pump::new(spawn.store, spawn.existing.as_ref());
         spawn.log.mark(
             0,
             "note_begin",
@@ -152,6 +164,17 @@ impl NoteShell {
                 spawn.placement.y,
                 spawn.scale,
                 strip.opacity
+            ),
+        );
+        spawn.log.mark(
+            0,
+            "note_doc",
+            &format!(
+                "id={} note_id={} loaded={} store={}",
+                spawn.id,
+                save.id(),
+                spawn.existing.is_some(),
+                if save.disabled() { "off" } else { "on" }
             ),
         );
 
@@ -176,6 +199,7 @@ impl NoteShell {
             wheel: wheel::Wheel::new(viewport_id(spawn.id)),
             gate: wheel::Gate::default(),
             last_alpha: None,
+            save,
             closing: false,
             last_island: None,
             last_ppp: 0.0,
@@ -375,9 +399,18 @@ impl NoteShell {
         );
         self.sync_editor(ctx, rect);
 
+        // Autosave. The pump decides whether this frame has to read the document at
+        // all, and returns when it next needs a look -- asking for a fixed interval
+        // either saves late or copies the whole document for nothing.
+        let wait = self.save.tick(
+            Instant::now(),
+            || self.editor.as_ref().map(|editor| editor.text()).unwrap_or_default(),
+            &self.log,
+        );
+
         // A shell must not spin: egui repaints on input, and the island paints
         // itself. Without this the note would draw 60 fps of identical frames.
-        ctx.request_repaint_after(Duration::from_millis(500));
+        ctx.request_repaint_after(wait);
     }
 
     /// Find, place, show and focus this note's OS window -- once.
@@ -479,106 +512,6 @@ impl NoteShell {
         );
     }
 
-    /// Translate the user's logical appearance into the editor's physical theme.
-    ///
-    /// `pixels_per_point` is the only place the scale is applied: `font_pt` is in
-    /// points and must *not* be multiplied (that bug rendered 16.5 pt at 150%),
-    /// while the inset is in logical pixels and must be.
-    fn theme_for(&self, ctx: &egui::Context) -> hub_editor::Theme {
-        let ppp = ctx.pixels_per_point().max(0.1);
-        hub_editor::Theme {
-            background: colorref(self.palette.panel),
-            foreground: colorref(self.palette.ink),
-            font_face: self.appearance.font_family.clone(),
-            font_pt: self.appearance.font_pt,
-            line_spacing: self.appearance.line_spacing,
-            padding: (
-                (self.appearance.padding_x as f32 * ppp).round() as i32,
-                (self.appearance.padding_y as f32 * ppp).round() as i32,
-            ),
-            caret_width: (self.appearance.caret_width as f32 * ppp).round() as i32,
-        }
-    }
-
-    fn sync_editor(&mut self, ctx: &egui::Context, rect: PixelRect) {
-        let theme = self.theme_for(ctx);
-        let hwnd = self.hwnd.unwrap_or(0);
-
-        match self.editor.as_mut() {
-            None => match Editor::create(hwnd, rect, &theme) {
-                Ok(mut editor) => {
-                    editor.on_escape(esc::handler(
-                        self.escape.clone(),
-                        self.esc_presses.clone(),
-                        ctx.clone(),
-                        self.viewport,
-                    ));
-                    editor.on_key(self.keys.handler(ctx.clone()));
-                    // RichEdit treats `Ctrl+wheel` as text zoom. The shell wants it
-                    // for window opacity, so the notch is claimed at the control.
-                    editor.on_wheel(self.wheel.handler(ctx.clone()));
-                    // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,
-                    // so the caret used to be parked at 0 and the first screenful
-                    // was the only one that ever scrolled.
-                    editor.focus();
-                    editor.caret_to_end();
-                    editor.scroll_caret();
-                    editor.apply_caret_width(theme.caret_width);
-                    // Q19's criterion: focused on open, caret at the end. Logged
-                    // because "the first keystroke went somewhere else" is otherwise
-                    // indistinguishable from a key that was never delivered.
-                    self.log.mark(
-                        0,
-                        "editor_focus",
-                        &format!(
-                            "id={} focused={} caret={:?}",
-                            self.id,
-                            editor.is_focused(),
-                            editor.caret()
-                        ),
-                    );
-                    self.last_theme = Some(theme.clone());
-                    self.log.mark(
-                        0,
-                        "island_created",
-                        &format!(
-                            "id={} rect={}x{}+{}+{} ppp={:.2} pt={} pad={}x{} caret={}",
-                            self.id,
-                            rect.width,
-                            rect.height,
-                            rect.x,
-                            rect.y,
-                            ctx.pixels_per_point(),
-                            self.appearance.font_pt,
-                            theme.padding.0,
-                            theme.padding.1,
-                            theme.caret_width
-                        ),
-                    );
-                    self.editor = Some(editor);
-                }
-                Err(error) => self.log.mark(0, "island_failed", &error),
-            },
-            Some(editor) => {
-                if self.last_theme.as_ref() != Some(&theme) {
-                    editor.apply_theme(&theme);
-                    self.last_theme = Some(theme);
-                }
-                if editor.set_rect(rect) {
-                    self.log.mark(
-                        0,
-                        "island_rect",
-                        &format!(
-                            "id={} {}x{}+{}+{}",
-                            self.id, rect.width, rect.height, rect.x, rect.y
-                        ),
-                    );
-                }
-            }
-        }
-        self.last_island = Some(rect);
-    }
-
     /// Run one shortcut. Split from the table so the table stays a pure function:
     /// everything that touches a window handle or the control happens here.
     fn act(&mut self, ctx: &egui::Context, action: keys::Action) {
@@ -666,6 +599,10 @@ impl NoteShell {
                 editor.redo(1);
             }
         }
+        // `EM_UNDO` changes the document without a `WM_CHAR`, so the edit signal
+        // that normally starts the debounce never fires. Raising it here is what
+        // keeps an undo from waiting for the 2 s scan.
+        self.save.changed();
         self.log.mark(
             0,
             "note_history",
@@ -688,6 +625,13 @@ impl NoteShell {
             return;
         }
         self.closing = true;
+        // Before anything else: the debounce is not a reason to drop the last
+        // keystroke. Reading first and saving second, because the editor is gone the
+        // moment the viewport closes.
+        let text = self.editor.as_ref().map(|editor| editor.text());
+        if let Some(text) = text {
+            self.save.flush(&text, &self.log);
+        }
         self.log.mark(
             0,
             "note_close",
@@ -752,9 +696,4 @@ impl Shared {
         );
         self.shell.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
-
-/// egui stores RGB; Windows colour values are `0x00BBGGRR`.
-fn colorref(color: egui::Color32) -> u32 {
-    color.r() as u32 | (color.g() as u32) << 8 | (color.b() as u32) << 16
 }

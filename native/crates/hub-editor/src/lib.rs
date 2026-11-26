@@ -169,6 +169,7 @@ impl Editor {
                 on_escape: None,
                 on_key: None,
                 on_wheel: None,
+                on_edit: None,
             }));
 
             // ~800 lines of safety: keep the callback box reachable from the
@@ -654,6 +655,18 @@ impl Editor {
     pub fn on_wheel(&mut self, callback: Box<dyn Fn(i32) -> bool + Send + Sync>) {
         unsafe {
             (*self.callbacks).on_wheel = Some(callback);
+        }
+    }
+
+    /// Install the "the text may have changed" hook.
+    ///
+    /// Fires on the messages that can alter the document, never on the ones that
+    /// only move the caret. The callback is a hint, not the source of truth: the
+    /// shell compares the text against what it last wrote, so a message this list
+    /// misses costs latency (the next scan finds it) rather than content.
+    pub fn on_edit(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
+        unsafe {
+            (*self.callbacks).on_edit = Some(callback);
         }
     }
 

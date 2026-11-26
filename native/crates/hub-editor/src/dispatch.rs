@@ -13,17 +13,26 @@
 //! | `WM_KEYDOWN` `VK_TAB` | moves focus out of the island | a note is a scratch pad; Tab must insert a tab |
 //! | `WM_KEYDOWN` other | RichEdit's own editing | the shortcut table decides (Ctrl+D/Z/T/Shift+H) |
 //! | `WM_MOUSEWHEEL` +Ctrl | **zooms the text** | `Ctrl+wheel` is window opacity (Q28) |
+//! | `WM_CHAR` / paste / cut / undo | edits the document | the shell is told "this may have changed", then the message continues to `DefSubclassProc` |
 //!
 //! Anything not claimed goes to `DefSubclassProc`, which is the point: reimplementing
 //! editing would trade the platform's caret, selection and IME behaviour for nothing.
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_TAB};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_BACK, VK_DELETE, VK_ESCAPE, VK_TAB};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SendMessageW, WM_CHAR, WM_KEYDOWN, WM_MOUSEWHEEL,
+    SendMessageW, WM_CHAR, WM_CLEAR, WM_CUT, WM_KEYDOWN, WM_MOUSEWHEEL, WM_PASTE, WM_UNDO,
 };
 
 use crate::keys;
+
+/// `WM_IME_CHAR`: an IME commit arrives as this, not as `WM_CHAR`, so watching only
+/// `WM_CHAR` would leave Chinese input unsaved until the next scan.
+///
+/// Spelled out because the constant lives in `UI::Input::Ime` in the bindings, and
+/// pulling that feature in for one number is not worth it. The value is from
+/// `winuser.h` and does not change.
+const WM_IME_CHAR: u32 = 0x0286;
 
 /// `LOWORD(wParam)` bit of `WM_MOUSEWHEEL` meaning "Ctrl was held".
 ///
@@ -46,6 +55,9 @@ pub(crate) struct Callbacks {
     /// wheel: `Ctrl+wheel` is its text **zoom** gesture, so unless the message is
     /// intercepted here, scrolling the opacity would also resize the body text.
     pub(crate) on_wheel: Option<Box<dyn Fn(i32) -> bool + Send + Sync>>,
+    /// "The text may have changed." Not a claim: the shell compares the document
+    /// against what it last wrote, so this only decides *when* it looks.
+    pub(crate) on_edit: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// Handle one message. `Some` means "claimed: do not pass it on".
@@ -64,6 +76,14 @@ pub(crate) unsafe fn claim(
 ) -> Option<LRESULT> {
     if message == WM_KEYDOWN {
         match wparam as u16 {
+            // Backspace and Delete are edits, not shortcuts. Reported and then
+            // handed to `DefSubclassProc`: the control does the deleting.
+            VK_BACK | VK_DELETE => {
+                if let Some(callback) = callbacks.on_edit.as_ref() {
+                    callback();
+                }
+                return None;
+            }
             // Esc: RichEdit does nothing with it but would beep; the shell needs
             // to see it so the panel closes instead of the editor swallowing it.
             VK_ESCAPE => {
@@ -88,6 +108,23 @@ pub(crate) unsafe fn claim(
                     }
                 }
             }
+        }
+        return None;
+    }
+
+    // The editing messages. None of them is claimed -- the control must still
+    // insert, paste, cut and undo -- but each is a reason to look at the document
+    // before the next scan would.
+    //
+    // `WM_UNDO` is here for the app's own undo path, which sends `EM_UNDO` instead;
+    // the shortcut table's `Ctrl+Z` changes the text without any message at all, so
+    // that path raises the flag itself.
+    if matches!(
+        message,
+        WM_CHAR | WM_IME_CHAR | WM_PASTE | WM_CUT | WM_CLEAR | WM_UNDO
+    ) {
+        if let Some(callback) = callbacks.on_edit.as_ref() {
+            callback();
         }
         return None;
     }
@@ -129,6 +166,7 @@ mod tests {
                 sink.lock().unwrap().push(delta);
                 true
             })),
+            on_edit: None,
         };
 
         let hwnd = std::ptr::null_mut();
@@ -148,5 +186,40 @@ mod tests {
         let claimed = unsafe { claim(hwnd, WM_MOUSEWHEEL, plain, 0, &callbacks) };
         assert_eq!(claimed, None);
         assert_eq!(seen.lock().unwrap().len(), 2, "the plain wheel was not reported");
+    }
+
+    #[test]
+    fn an_edit_is_reported_but_never_claimed() {
+        // Both halves matter. Reported, or the debounce never starts and the save
+        // waits for the 2 s scan; not claimed, or the character is swallowed --
+        // `Some(0)` here would turn the note into a control that accepts no input.
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let sink = count.clone();
+        let callbacks = Callbacks {
+            on_escape: None,
+            on_key: None,
+            on_wheel: None,
+            on_edit: Some(Box::new(move || {
+                sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })),
+        };
+        let hwnd = std::ptr::null_mut();
+
+        for message in [WM_CHAR, WM_IME_CHAR, WM_PASTE, WM_CUT, WM_CLEAR, WM_UNDO] {
+            let claimed = unsafe { claim(hwnd, message, 0, 0, &callbacks) };
+            assert_eq!(claimed, None, "message {message:#06x} was claimed");
+        }
+        // Backspace and Delete arrive as keys, and are edits too.
+        for key in [VK_BACK as usize, VK_DELETE as usize] {
+            let claimed = unsafe { claim(hwnd, WM_KEYDOWN, key, 0, &callbacks) };
+            assert_eq!(claimed, None, "key {key:#04x} was claimed");
+        }
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 8);
+
+        // A key that only moves the caret is not an edit: reporting it would restart
+        // the debounce on every arrow press and never save while the user scrolls.
+        let claimed = unsafe { claim(hwnd, WM_KEYDOWN, 0x25, 0, &callbacks) };
+        assert_eq!(claimed, None);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 8);
     }
 }

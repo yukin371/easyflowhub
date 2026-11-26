@@ -29,10 +29,11 @@
 //! means one ordering: a tray click and a keystroke cannot interleave halfway through
 //! a spawn.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use hub_core::{place_note, NoteSpec, Rect, SpikeSettings};
+use hub_core::{place_note, NoteRow, NoteSpec, Rect, SpikeSettings, Store};
 use hub_win::hotkey::{Binding, HotkeySet, PressHandler};
 use hub_win::tray::{Tray, TrayCommand};
 use hub_win::MonitorCache;
@@ -90,6 +91,14 @@ pub struct Config {
     pub scale: f32,
     pub lite: bool,
     pub log: Arc<Log>,
+    /// `--store-root`: the app data directory to use instead of `%APPDATA%`.
+    ///
+    /// The only reason this exists is that developing against the live database
+    /// means every test note shows up in the user's list. The gate runs on a copy;
+    /// so does a person trying a change.
+    pub store_root: Option<PathBuf>,
+    /// `--note-id`: open an existing note instead of a new one.
+    pub note_id: Option<String>,
 }
 
 /// Create the controller and run until the user quits from the tray.
@@ -129,6 +138,12 @@ struct Hub {
     settings: Arc<SpikeSettings>,
     lite: bool,
     scale: f32,
+    /// One connection for the whole process, shared by every note window.
+    ///
+    /// `None` if the database could not be opened: the notes keep working and say
+    /// `store=off` once, which is the Phase 1 behaviour. Refusing to open a window
+    /// because SQLite objected would be the worse failure.
+    store: Option<Arc<Mutex<Store>>>,
     notes: Vec<Arc<Shared>>,
     inbox: Arc<Mutex<Vec<Request>>>,
     next_id: u32,
@@ -182,11 +197,32 @@ impl Hub {
                 .mark(0, "hub_window", "parked=false reason=handle_not_found"),
         }
 
+        let store = open_store(&config);
+        // Resolved before the first window exists: a note that cannot find its row
+        // must open as a new note and say so, not open empty and overwrite the id.
+        let existing = config.note_id.as_ref().map(|id| match store.as_ref() {
+            Some(store) => {
+                let found = store.lock().ok().and_then(|store| store.note(id).ok().flatten());
+                config.log.mark(
+                    0,
+                    "note_load",
+                    &format!(
+                        "requested={id} found={} reason={}",
+                        found.is_some(),
+                        if found.is_some() { "explicit" } else { "missing" }
+                    ),
+                );
+                found
+            }
+            None => None,
+        });
+
         let mut hub = Self {
             log: config.log,
             settings: Arc::new(config.settings),
             lite: config.lite,
             scale: config.scale,
+            store,
             notes: Vec::new(),
             inbox: Arc::new(Mutex::new(Vec::new())),
             next_id: 0,
@@ -207,12 +243,17 @@ impl Hub {
                 if hub.tray.is_some() { "on" } else { "off" }
             ),
         );
-        hub.spawn(&ctx);
+        hub.spawn(&ctx, existing.flatten());
         hub
     }
 
     /// Resolve geometry and create a note. Called on the event-loop thread only.
-    fn spawn(&mut self, ctx: &egui::Context) {
+    ///
+    /// `existing` is the row to open, or `None` for a new note. The row travels with
+    /// the spawn rather than being fetched inside the shell: the shell has no business
+    /// blocking its first frame on a query, and the controller is where the store
+    /// lives.
+    fn spawn(&mut self, ctx: &egui::Context, existing: Option<NoteRow>) {
         let id = self.next_id;
         self.next_id += 1;
         self.spawned += 1;
@@ -249,6 +290,8 @@ impl Hub {
             settings: self.settings.clone(),
             lite: self.lite,
             log: self.log.clone(),
+            store: self.store.clone(),
+            existing,
         })));
         self.log.mark(
             0,
@@ -288,7 +331,7 @@ impl Hub {
 
     fn handle(&mut self, ctx: &egui::Context, request: Request) {
         match request {
-            Request::NewNote => self.spawn(ctx),
+            Request::NewNote => self.spawn(ctx, None),
             Request::CloseAll => self.close_all(ctx),
             Request::ToggleVisible => self.toggle_visible(ctx),
             // The honest version of "not implemented": the key is registered and
@@ -437,6 +480,42 @@ impl eframe::App for Hub {
         // so the controller keeps nudging until every note is attached.
         if self.notes.iter().any(|handle| !handle.lock().attached()) {
             ctx.request_repaint_after(Duration::from_millis(50));
+        }
+    }
+}
+
+/// Open `notes.db` once for the process.
+///
+/// A failure is not fatal: the note windows are the product, and a shell that refused
+/// to open because the database was locked or corrupt would take the notes down with
+/// it. The log line is what makes "my notes are not being saved" answerable -- without
+/// it, a silent in-memory note looks exactly like a broken save.
+fn open_store(config: &Config) -> Option<Arc<Mutex<Store>>> {
+    let opened = match &config.store_root {
+        Some(root) => Store::open_in(root),
+        None => Store::open_default(),
+    };
+    match opened {
+        Ok(store) => {
+            config.log.mark(
+                0,
+                "store",
+                &format!(
+                    "open=true path={} sqlite={} notes={:?}",
+                    store.path().display(),
+                    store.sqlite_version(),
+                    store.counts().ok().and_then(|counts| counts.notes)
+                ),
+            );
+            Some(Arc::new(Mutex::new(store)))
+        }
+        Err(error) => {
+            config.log.mark(
+                0,
+                "store",
+                &format!("open=false error=\"{error}\" notes=memory-only"),
+            );
+            None
         }
     }
 }

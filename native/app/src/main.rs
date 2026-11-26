@@ -17,6 +17,7 @@ mod keys;
 mod log;
 mod note;
 mod probe_json;
+mod save;
 mod spike;
 mod store_bench;
 mod wheel;
@@ -122,6 +123,8 @@ fn main() {
             scale,
             lite,
             log,
+            store_root: parsed.store_root.clone(),
+            note_id: parsed.note_id.clone(),
         });
     }
     let spec = PanelSpec {
