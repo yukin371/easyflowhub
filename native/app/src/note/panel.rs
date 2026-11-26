@@ -271,4 +271,38 @@ impl NoteShell {
             ),
         );
     }
+
+    /// Push the strip's opacity into the compositor (parity Q28/Q29), on change.
+    ///
+    /// One `SetLayeredWindowAttributes` per *change*, never per frame: the call is
+    /// cheap but it makes DWM recompose the window, and a 500 ms tick that repeated
+    /// it would be pure waste.
+    ///
+    /// `readback` is what the OS kept, logged next to what was asked for. A window
+    /// that refused to become layered (or a compositor that ignored the attribute)
+    /// would otherwise look exactly like a working one until someone compared
+    /// screenshots.
+    ///
+    /// Lives here rather than in `note.rs` only because the shell hit the line cap;
+    /// the strip that owns the value is this module's subject.
+    pub(super) fn apply_alpha(&mut self, phase: &str) {
+        let Some(hwnd) = self.hwnd else {
+            return;
+        };
+        let alpha = hub_win::alpha::from_opacity(self.strip.opacity);
+        if self.last_alpha == Some(alpha) {
+            return;
+        }
+        let applied = hub_win::alpha::set(hwnd, alpha);
+        let readback = hub_win::alpha::get(hwnd);
+        self.last_alpha = Some(alpha);
+        self.log.mark(
+            0,
+            "note_alpha",
+            &format!(
+                "id={} phase={phase} opacity={:.2} alpha={alpha} applied={applied} readback={readback:?}",
+                self.id, self.strip.opacity
+            ),
+        );
+    }
 }

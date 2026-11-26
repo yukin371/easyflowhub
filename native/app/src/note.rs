@@ -45,6 +45,7 @@ mod drag;
 mod island;
 mod panel;
 mod recover;
+pub mod size;
 
 /// Prefix of every note window title. The suffix is the note id.
 ///
@@ -102,6 +103,11 @@ pub struct Spawn {
     /// the workbench: a rebind has to reach the windows that are already open, so
     /// this is a lock rather than a copy taken at spawn time.
     pub shortcuts: Arc<RwLock<Table>>,
+    /// C5: the one size every new note opens at, updated when a window is dragged.
+    pub size: size::SharedSize,
+    /// Where a remembered size is written. The notes read settings once at startup
+    /// as a rule (§5.8.1), so this is only ever used by the resize path.
+    pub settings_path: Arc<std::path::PathBuf>,
 }
 
 pub struct NoteShell {
@@ -163,6 +169,8 @@ pub struct NoteShell {
     last_island: Option<PixelRect>,
     /// Last `pixels_per_point` this note laid out at, for the transition log.
     last_ppp: f32,
+    /// C5: watches the client area and remembers the size the user left it at.
+    sizer: size::Sizer,
 }
 
 impl NoteShell {
@@ -179,6 +187,7 @@ impl NoteShell {
         // The id in the log is the database id from here on: a note that cannot be
         // found again by its window ordinal is not persisted, it is a scratch pad.
         let store = spawn.store.clone();
+        let sizer = size::Sizer::new(spawn.size.clone(), spawn.settings_path.clone());
         let save = save::Pump::new(spawn.store, spawn.existing.as_ref());
         // Q24: decided here, drawn on the first frame that has a content rectangle.
         let recover = recover::start(&store, spawn.existing.as_ref(), &spawn.log);
@@ -243,6 +252,7 @@ impl NoteShell {
             closing: false,
             last_island: None,
             last_ppp: 0.0,
+            sizer,
         }
     }
 
@@ -485,6 +495,8 @@ impl NoteShell {
         // reports a 10000 px placeholder screen rect; a child window built from
         // that is not "a bit large", it is one the compositor has to clip.
         let (client_w, client_h) = hub_win::window::client_size(self.hwnd.unwrap_or(0));
+        // C5: remember the size the user left the window at. See `note/size.rs`.
+        self.track_size(ctx, client_w, client_h, ppp);
         let client = egui::Rect::from_min_size(
             egui::Pos2::ZERO,
             egui::Vec2::new(client_w as f32 / ppp, client_h as f32 / ppp),
@@ -559,37 +571,6 @@ impl NoteShell {
             ),
         );
         true
-    }
-
-    /// Push the strip's opacity into the compositor (parity Q28/Q29), on change.
-    ///
-    /// One `SetLayeredWindowAttributes` per *change*, never per frame: the call is
-    /// cheap but it makes DWM recompose the window, and a 500 ms tick that repeated
-    /// it would be pure waste.
-    ///
-    /// `readback` is what the OS kept, logged next to what was asked for. A window
-    /// that refused to become layered (or a compositor that ignored the attribute)
-    /// would otherwise look exactly like a working one until someone compared
-    /// screenshots.
-    fn apply_alpha(&mut self, phase: &str) {
-        let Some(hwnd) = self.hwnd else {
-            return;
-        };
-        let alpha = hub_win::alpha::from_opacity(self.strip.opacity);
-        if self.last_alpha == Some(alpha) {
-            return;
-        }
-        let applied = hub_win::alpha::set(hwnd, alpha);
-        let readback = hub_win::alpha::get(hwnd);
-        self.last_alpha = Some(alpha);
-        self.log.mark(
-            0,
-            "note_alpha",
-            &format!(
-                "id={} phase={phase} opacity={:.2} alpha={alpha} applied={applied} readback={readback:?}",
-                self.id, self.strip.opacity
-            ),
-        );
     }
 
     /// One `Ctrl+wheel` notch, after the 50 ms floor.

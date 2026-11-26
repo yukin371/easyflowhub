@@ -143,9 +143,33 @@ impl NoteAppearance {
 /// two apps eventually read one settings file, `quick_note.width` must already
 /// mean the same thing on both sides. Translating between `note_width` and
 /// `quick_note.width` is the kind of mapping that silently stops being applied.
+/// Version of the `quick_note` block.
+///
+/// `1` is the first numbered shape, and it is also what an unnumbered file means:
+/// every settings file written before this field existed holds exactly the keys
+/// version 1 defines, so a missing (or `0`) `schema` is version 1, not "unknown".
+///
+/// The number exists so that a later change can *tell* an old block from a new
+/// one. `serde(default)` already keeps unknown and missing keys from failing the
+/// load, which is why the field can be added to an existing file safely; what it
+/// cannot express is "this key used to mean something else", and that needs a
+/// version to branch on.
+pub const QUICK_NOTE_SCHEMA: u32 = 1;
+
+/// Ceiling for a remembered size, logical pixels.
+///
+/// The floor is [`crate::MIN_NOTE_WIDTH`]/[`crate::MIN_NOTE_HEIGHT`]. The ceiling
+/// is not about the layout -- `place_note` clamps to the work area anyway -- but
+/// about the file: a hand-edited `99999999` would be stored, echoed back on every
+/// save, and mean nothing.
+pub const MAX_NOTE_WIDTH: u32 = 8000;
+pub const MAX_NOTE_HEIGHT: u32 = 8000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct QuickNoteSettings {
+    /// See [`QUICK_NOTE_SCHEMA`]. First in the struct so it reads first in the file.
+    pub schema: u32,
     pub width: u32,
     pub height: u32,
     /// Not in the Tauri struct: an unknown key is ignored there, and `serde(default)`
@@ -156,10 +180,37 @@ pub struct QuickNoteSettings {
 impl Default for QuickNoteSettings {
     fn default() -> Self {
         Self {
+            schema: QUICK_NOTE_SCHEMA,
             width: 400,
             height: 300,
             appearance: NoteAppearance::default(),
         }
+    }
+}
+
+impl QuickNoteSettings {
+    /// Stamp a block that predates the version field, and leave a newer one alone.
+    ///
+    /// A file from a future version is **not** downgraded: its author wrote `2` for
+    /// a reason, and overwriting that on the next save would turn a forward-
+    /// compatible read into data loss. What this version understands is unchanged
+    /// by the number, because every key it knows still means what it always did.
+    fn normalized(mut self) -> Self {
+        if self.schema == 0 {
+            self.schema = QUICK_NOTE_SCHEMA;
+        }
+        self
+    }
+
+    /// Set the remembered size, clamped to what a window can legally be.
+    ///
+    /// Called with a **logical** size read back from the OS, so the value has
+    /// already been through a round trip and may be one pixel off either way; the
+    /// clamp is about nonsense, not about precision.
+    pub fn sized(mut self, width: u32, height: u32) -> Self {
+        self.width = width.clamp(crate::MIN_NOTE_WIDTH as u32, MAX_NOTE_WIDTH);
+        self.height = height.clamp(crate::MIN_NOTE_HEIGHT as u32, MAX_NOTE_HEIGHT);
+        self
     }
 }
 
@@ -237,9 +288,15 @@ impl SpikeSettings {
             return (Self::default(), SettingsSource::Default);
         };
         match serde_json::from_str::<Self>(&text) {
-            Ok(settings) => (settings, SettingsSource::File),
+            Ok(settings) => (settings.normalized(), SettingsSource::File),
             Err(_) => (Self::default(), SettingsSource::Default),
         }
+    }
+
+    /// Bring an older file up to the current shape without touching a newer one.
+    fn normalized(mut self) -> Self {
+        self.quick_note = self.quick_note.normalized();
+        self
     }
 
     /// Write the whole file back, pretty-printed.
@@ -410,6 +467,66 @@ mod tests {
 
         appearance.window_alpha = 0.0;
         assert_eq!(appearance.initial_opacity(), 0.0, "zero is a legal value");
+    }
+
+    #[test]
+    fn a_file_without_a_schema_number_is_version_one() {
+        // Every file written before the field existed has version 1's keys, so
+        // "missing" and "0" both mean 1 rather than "unknown, refuse to touch it".
+        assert_eq!(SpikeSettings::default().quick_note.schema, QUICK_NOTE_SCHEMA);
+
+        let dir = std::env::temp_dir().join("hub-core-settings-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("no-schema.json");
+        std::fs::write(&path, r#"{"quick_note":{"width":500}}"#).unwrap();
+
+        let (settings, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(settings.quick_note.schema, QUICK_NOTE_SCHEMA);
+        assert_eq!(settings.quick_note.width, 500);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_newer_schema_number_is_kept_as_written() {
+        // Reading a version-2 block must not stamp it back to 1 on the next save:
+        // the fields this build knows still mean what they meant, but the number is
+        // the other build's record of what changed.
+        let dir = std::env::temp_dir().join("hub-core-settings-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("future-schema.json");
+        std::fs::write(&path, r#"{"quick_note":{"schema":2,"width":500}}"#).unwrap();
+
+        let (settings, _) = SpikeSettings::load(&path);
+        assert_eq!(settings.quick_note.schema, 2);
+
+        settings.save(&path).expect("save");
+        let (reloaded, _) = SpikeSettings::load(&path);
+        assert_eq!(reloaded.quick_note.schema, 2);
+        assert_eq!(reloaded.quick_note.width, 500);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_remembered_size_is_clamped_but_never_rounded_to_a_default() {
+        // The floor keeps a remembered 20x10 from becoming a window the OS refuses
+        // to create; the ceiling keeps a hand-typed figure out of the file. Neither
+        // clamp may quietly substitute the default -- a remembered 900x700 has to
+        // survive a round trip, which is the whole point of C5.
+        let sized = QuickNoteSettings::default().sized(900, 700);
+        assert_eq!((sized.width, sized.height), (900, 700));
+
+        let tiny = QuickNoteSettings::default().sized(4, 4);
+        assert_eq!(
+            (tiny.width, tiny.height),
+            (
+                crate::MIN_NOTE_WIDTH as u32,
+                crate::MIN_NOTE_HEIGHT as u32
+            )
+        );
+
+        let huge = QuickNoteSettings::default().sized(99_999, 99_999);
+        assert_eq!((huge.width, huge.height), (MAX_NOTE_WIDTH, MAX_NOTE_HEIGHT));
     }
 
     #[test]

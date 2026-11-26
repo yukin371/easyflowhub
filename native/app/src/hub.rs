@@ -174,6 +174,12 @@ struct Hub {
     /// appearance, and a second source of truth for keys is the thing this batch
     /// exists to remove.
     settings_path: PathBuf,
+    /// C5: the size the next note opens at.
+    ///
+    /// A cell rather than a field of `settings` because `settings` is a startup
+    /// snapshot behind an `Arc` that every note reads without a lock; a resize has
+    /// to reach the *next* spawn in the same process, not only the next launch.
+    note_size: note::size::SharedSize,
     /// Id whose window is expected to be gone, and how many notes were left.
     /// Logged one pass later, because the OS destroys the window at the end of the
     /// pass that stops declaring it.
@@ -220,8 +226,7 @@ impl Hub {
         let store = open_store(&config);
         // Resolved before the first window exists: a note that cannot find its row
         // must open as a new note and say so, not open empty and overwrite the id.
-        let existing = config.note_id.as_ref().map(|id| match store.as_ref() {
-            Some(store) => {
+        let existing = config.note_id.as_ref().map(|id| match store.as_ref() {            Some(store) => {
                 let found = store.lock().ok().and_then(|store| store.note(id).ok().flatten());
                 config.log.mark(
                     0,
@@ -237,6 +242,14 @@ impl Hub {
             None => None,
         });
 
+        // Read before `config.settings` is moved into the `Arc` below. The cell is
+        // what C5 updates: a note that is dragged must change the size of the note
+        // opened after it, without a restart.
+        let note_size = note::size::shared(
+            config.settings.quick_note.width,
+            config.settings.quick_note.height,
+        );
+
         let mut hub = Self {
             log: config.log,
             settings: Arc::new(config.settings),
@@ -245,6 +258,7 @@ impl Hub {
             store,
             shortcuts: Arc::new(RwLock::new(table)),
             settings_path: config.settings_path,
+            note_size,
             notes: Vec::new(),
             inbox: Arc::new(Mutex::new(Vec::new())),
             next_id: 0,
@@ -286,9 +300,19 @@ impl Hub {
         self.next_id += 1;
         self.spawned += 1;
 
+        // C5: the remembered size, not the startup one. Read here rather than at
+        // `Hub::new` so a drag in window 2 already applies to window 3.
+        let (width, height) = {
+            let size = self
+                .note_size
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *size
+        };
+
         let spec = NoteSpec {
-            width: self.settings.quick_note.width as f32,
-            height: self.settings.quick_note.height as f32,
+            width: width as f32,
+            height: height as f32,
             margin: self.settings.margin.max(0),
         };
 
@@ -321,6 +345,8 @@ impl Hub {
             store: self.store.clone(),
             existing,
             shortcuts: self.shortcuts.clone(),
+            size: self.note_size.clone(),
+            settings_path: Arc::new(self.settings_path.clone()),
         })));
         self.log.mark(
             0,
