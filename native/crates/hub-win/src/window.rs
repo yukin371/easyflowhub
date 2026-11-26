@@ -73,6 +73,69 @@ pub fn move_to(hwnd: isize, x: i32, y: i32) -> bool {
     }
 }
 
+/// Move **and** resize in one call, without activating the window.
+///
+/// The resize in `app::note::edge` needs both halves every frame: grabbing the
+/// left edge moves the origin and shrinks the width at the same time, and two
+/// calls would show one of them for a frame. `SWP_NOZORDER` keeps a pinned note on
+/// top while its edge is dragged; `SWP_NOACTIVATE` keeps the keyboard where it is.
+///
+/// Coordinates and size are physical pixels, which is the space the cursor is in.
+pub fn set_frame(hwnd: isize, x: i32, y: i32, width: i32, height: i32) -> bool {
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            std::ptr::null_mut(),
+            x,
+            y,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        ) != 0
+    }
+}
+
+/// The whole window rectangle, in physical screen pixels: `(x, y, w, h)`.
+///
+/// The resize reads this rather than the client size: an edge drag is defined on
+/// the window's outer edges, and this note is undecorated, so the two rectangles
+/// differ by nothing today -- reading the window one keeps the arithmetic honest
+/// if it ever gains a frame.
+pub fn window_rect(hwnd: isize) -> (i32, i32, i32, i32) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let ok = unsafe { GetWindowRect(hwnd as HWND, &mut rect) };
+    if ok == 0 {
+        return (0, 0, 0, 0);
+    }
+    (
+        rect.left,
+        rect.top,
+        (rect.right - rect.left).max(0),
+        (rect.bottom - rect.top).max(0),
+    )
+}
+
+/// Whether the left mouse button is physically down, right now.
+///
+/// `GetAsyncKeyState`, not `GetKeyState`: the latter answers from the last message
+/// the thread retrieved, and the resize runs in the frame loop, which is driven by
+/// `request_repaint` rather than by mouse messages -- during an edge drag the
+/// messages go to the island's control, not to this thread's queue in a way the
+/// frame can see.
+pub fn left_button_down() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
+}
+
 /// The cursor in physical screen pixels, and nothing else.
 ///
 /// The drag reads this instead of egui's pointer position because egui reports

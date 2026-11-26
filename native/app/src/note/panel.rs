@@ -305,4 +305,27 @@ impl NoteShell {
             ),
         );
     }
+
+    /// `Ctrl+Shift+H` (Q29): opacity 0, then back to what it interrupted.
+    ///
+    /// Only the opacity changes. Whether the window is pinned, what it contains and
+    /// when it was last saved are all untouched -- "visible but out of the way" is a
+    /// different request from `Ctrl+Alt+H` (minimize every note), and mixing the
+    /// two would make one key do two things depending on state.
+    pub(super) fn toggle_ghost(&mut self) {
+        let before = self.strip.opacity;
+        self.strip.toggle_ghost();
+        self.log.mark(
+            0,
+            "note_ghost",
+            &format!(
+                "id={} ghost={} opacity={:.2} (was {:.2}) restore={:.2}",
+                self.id,
+                self.strip.opacity <= 0.005,
+                self.strip.opacity,
+                before,
+                self.strip.ghost_restore
+            ),
+        );
+    }
 }

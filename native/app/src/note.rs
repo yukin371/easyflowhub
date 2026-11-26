@@ -42,6 +42,7 @@ use crate::save;
 use crate::wheel;
 
 mod drag;
+mod edge;
 mod island;
 mod panel;
 mod recover;
@@ -150,6 +151,10 @@ pub struct NoteShell {
     recover: recover::State,
     /// Q10: the window follows the cursor while the strip is held. See [`drag`].
     drag: drag::Drag,
+    /// Q3: the same, from one of the window's edges. See [`edge`].
+    resize: edge::Resize,
+    /// Q3: what the island's press hook writes when a press lands on the band.
+    edge: Arc<edge::Signal>,
     /// Alpha last handed to the compositor. `None` until the window is attached, so
     /// the first application is never skipped by the "unchanged" guard.
     last_alpha: Option<u8>,
@@ -242,6 +247,8 @@ impl NoteShell {
             gate: wheel::Gate::default(),
             clicks: click::Clicks::new(),
             drag: drag::Drag::default(),
+            resize: edge::Resize::default(),
+            edge: Arc::new(edge::Signal::new(viewport_id(spawn.id), spawn.scale)),
             last_alpha: None,
             save,
             store,
@@ -421,6 +428,9 @@ impl NoteShell {
                 ),
             );
             self.last_ppp = ppp;
+            // The press hook measures in physical pixels, so its band has to follow
+            // the scale when the note is dragged to a monitor with another one.
+            self.edge.set_scale(ppp);
         }
 
         // Collapsed windows report a degenerate client area -- measured 190x31 whole
@@ -445,11 +455,36 @@ impl NoteShell {
         let output = quicknote::draw(ctx, &mut self.strip, self.palette, &table);
 
         if output.actions.drag {
-            // Q10: the window follows the cursor here, not in an OS move loop. See
-            // `note/drag.rs` for why `ViewportCommand::StartDrag` is not used.
-            self.begin_drag();
+            // Q3 before Q10: a press inside the strip's left/right band belongs to
+            // the resize. `press_origin`, not `interact_pos`: the band is where the
+            // press *landed*, and the pointer may have moved since.
+            let origin = ctx.input(|input| input.pointer.press_origin());
+            let resizing = origin
+                .is_some_and(|point| self.begin_edge_from_strip(point, ctx.screen_rect().size()));
+            if !resizing {
+                // Q10: the window follows the cursor here, not in an OS move loop. See
+                // `note/drag.rs` for why `ViewportCommand::StartDrag` is not used.
+                self.begin_drag();
+            }
         }
         self.drag_frame(ctx);
+        // The strip half of Q3's cursor hint: over the island the control answers
+        // its own `WM_SETCURSOR` (see `note/edge.rs`), but the strip belongs to
+        // egui, and a grip that is only discoverable below y = 32 would read as a
+        // bug at the top of the edge.
+        if !self.resize.active() && !self.switcher_open {
+            if let Some(point) = ctx.input(|input| input.pointer.hover_pos()) {
+                // Logical on both sides: the strip is laid out in points, and this
+                // band is the same `BAND` the press path measures in points.
+                let narrow = ctx.screen_rect().width() - edge::BAND;
+                if point.x <= edge::BAND || point.x >= narrow {
+                    ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+            }
+        }
+        // Q3: the other half -- an edge press that landed on the island, which egui
+        // never sees. See `note/edge.rs`.
+        self.resize_frame(ctx);
         if output.actions.toggle_pin {
             self.toggle_pin();
         }
@@ -631,68 +666,6 @@ impl NoteShell {
                 &format!("id={} command={}", self.id, other.id()),
             ),
         }
-    }
-
-    /// `Ctrl+Shift+H` (Q29): opacity 0, then back to what it interrupted.
-    ///
-    /// Only the opacity changes. Whether the window is pinned, what it contains and
-    /// when it was last saved are all untouched -- "visible but out of the way" is a
-    /// different request from `Ctrl+Alt+H` (minimize every note), and mixing the
-    /// two would make one key do two things depending on state.
-    fn toggle_ghost(&mut self) {
-        let before = self.strip.opacity;
-        self.strip.toggle_ghost();
-        self.log.mark(
-            0,
-            "note_ghost",
-            &format!(
-                "id={} ghost={} opacity={:.2} (was {:.2}) restore={:.2}",
-                self.id,
-                self.strip.opacity <= 0.005,
-                self.strip.opacity,
-                before,
-                self.strip.ghost_restore
-            ),
-        );
-    }
-
-    /// Undo/redo through the control, not through a shadow history.
-    ///
-    /// `Ctrl+Z` used to be left to RichEdit; routing it through the table too is
-    /// what makes the egui path (focus on the title strip) behave like the island
-    /// path. `can=` is logged because a redo with nothing to redo would otherwise
-    /// look identical to a working one.
-    fn history(&self, undo: bool) {
-        let Some(editor) = self.editor.as_ref() else {
-            self.log.mark(0, "note_history", "editor=none");
-            return;
-        };
-        let available = if undo {
-            editor.can_undo()
-        } else {
-            editor.can_redo()
-        };
-        if available {
-            if undo {
-                editor.undo(1);
-            } else {
-                editor.redo(1);
-            }
-        }
-        // `EM_UNDO` changes the document without a `WM_CHAR`, so the edit signal
-        // that normally starts the debounce never fires. Raising it here is what
-        // keeps an undo from waiting for the 2 s scan.
-        self.save.changed();
-        self.log.mark(
-            0,
-            "note_history",
-            &format!(
-                "id={} {} can={available} len={}",
-                self.id,
-                if undo { "undo" } else { "redo" },
-                editor.text().chars().count()
-            ),
-        );
     }
 
     /// Q5's criterion, walked up to the point where only the OS can finish it.

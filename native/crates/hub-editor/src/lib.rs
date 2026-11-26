@@ -34,6 +34,9 @@ use dispatch::Callbacks;
 
 pub use keys::KeyPress;
 pub use theme::Theme;
+// The press a caller may claim is reported with its coordinates and the control's
+// size; the type has to be nameable from outside for a callback to take it.
+pub use dispatch::{Press, Shape};
 // `position_of` is the bridge between a byte offset in the document and the
 // number `EM_SETSEL` wants; a caller that computed an offset needs it.
 pub use caret::position_of;
@@ -175,6 +178,8 @@ impl Editor {
                 on_wheel: None,
                 on_edit: None,
                 on_click: None,
+                on_press: None,
+                on_hover: None,
             }));
 
             // ~800 lines of safety: keep the callback box reachable from the
@@ -634,53 +639,6 @@ impl Editor {
     /// Insert one character the way the message loop would, with timing.
     pub fn append_char(&self, ch: char) -> measure::CharTiming {
         measure::append_char(self.hwnd, ch)
-    }
-
-    pub fn on_escape(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
-        unsafe {
-            (*self.callbacks).on_escape = Some(callback);
-        }
-    }
-
-    /// Install the window-level shortcut hook. The callback runs inside the
-    /// subclass proc, so it must only raise a flag — window code is not re-entered
-    /// from a message handler.
-    pub fn on_key(&mut self, callback: Box<dyn Fn(KeyPress) -> bool + Send + Sync>) {
-        unsafe {
-            (*self.callbacks).on_key = Some(callback);
-        }
-    }
-
-    /// Install the `Ctrl+wheel` hook. Same rule as [`Editor::on_key`]: raise a flag,
-    /// do not touch the window from inside the message handler.
-    pub fn on_wheel(&mut self, callback: Box<dyn Fn(i32) -> bool + Send + Sync>) {
-        unsafe {
-            (*self.callbacks).on_wheel = Some(callback);
-        }
-    }
-
-    /// Install the "the text may have changed" hook.
-    ///
-    /// Fires on the messages that can alter the document, never on the ones that
-    /// only move the caret. The callback is a hint, not the source of truth: the
-    /// shell compares the text against what it last wrote, so a message this list
-    /// misses costs latency (the next scan finds it) rather than content.
-    pub fn on_edit(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
-        unsafe {
-            (*self.callbacks).on_edit = Some(callback);
-        }
-    }
-
-    /// Install the "the body was clicked" hook (Q7: a click outside the tools
-    /// panel closes it).
-    ///
-    /// Same rule as the others, plus one of its own: this is reported and not
-    /// claimed, so the control still places the caret, selects a word on a double
-    /// click and drag-selects.
-    pub fn on_click(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
-        unsafe {
-            (*self.callbacks).on_click = Some(callback);
-        }
     }
 
     pub fn parent(&self) -> isize {

@@ -73,6 +73,17 @@ impl NoteShell {
                     // child window covering that rectangle. Dismisses the tools
                     // panel (Q7).
                     editor.on_click(self.clicks.handler(ctx.clone(), self.viewport));
+                    // Q3: the note's edge is the resize grip, and below the strip
+                    // that edge belongs to this control. The hook claims the press
+                    // so no caret moves and no selection starts while the window is
+                    // being resized under the pointer.
+                    self.edge.arm(ctx);
+                    let signal = self.edge.clone();
+                    editor.on_press(Box::new(move |press| signal.on_press(press)));
+                    // ...and *look* like a grip: the pointer over the band becomes
+                    // the resize cursor, so the edge is visible before it is used.
+                    let hover = self.edge.clone();
+                    editor.on_hover(Box::new(move |press| hover.on_hover(press)));
                     // Focus first: `EM_SETSEL`/`EM_SCROLLCARET` are no-ops without it,
                     // so the caret used to be parked at 0 and the first screenful
                     // was the only one that ever scrolled.
@@ -176,6 +187,49 @@ impl NoteShell {
         if let Some(editor) = self.editor.as_ref() {
             park(editor, self.id, &self.log);
         }
+    }
+
+    /// Undo/redo through the control, not through a shadow history.
+    ///
+    /// `Ctrl+Z` used to be left to RichEdit; routing it through the table too is
+    /// what makes the egui path (focus on the title strip) behave like the island
+    /// path. `can=` is logged because a redo with nothing to redo would otherwise
+    /// look identical to a working one.
+    ///
+    /// It lives here rather than in `note.rs` because every line of it is about the
+    /// control: the history, the document length, and the edit signal an undo does
+    /// not produce.
+    pub(super) fn history(&self, undo: bool) {
+        let Some(editor) = self.editor.as_ref() else {
+            self.log.mark(0, "note_history", "editor=none");
+            return;
+        };
+        let available = if undo {
+            editor.can_undo()
+        } else {
+            editor.can_redo()
+        };
+        if available {
+            if undo {
+                editor.undo(1);
+            } else {
+                editor.redo(1);
+            }
+        }
+        // `EM_UNDO` changes the document without a `WM_CHAR`, so the edit signal
+        // that normally starts the debounce never fires. Raising it here is what
+        // keeps an undo from waiting for the 2 s scan.
+        self.save.changed();
+        self.log.mark(
+            0,
+            "note_history",
+            &format!(
+                "id={} {} can={available} len={}",
+                self.id,
+                if undo { "undo" } else { "redo" },
+                editor.text().chars().count()
+            ),
+        );
     }
 }
 
