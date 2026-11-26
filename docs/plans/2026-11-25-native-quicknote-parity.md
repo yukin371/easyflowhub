@@ -129,7 +129,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | C2 | 透明度 + 幽灵模式 | `Ctrl+滚轮` 20% 一档；`Ctrl+Shift+H` 一键幽灵，再按恢复原值 | **留** | 升为 A 级 **Q28–Q29**；落地为 `quick_note.appearance.window_alpha`（新笔记的初值，默认 1.0），§5.4 写明它是**用户态设置**、不是主题装饰（模糊仍禁用） |
 | C3 | 预览态 + 图片条 | 编辑/预览切换、图片缩略条、拖图入窗插入 | **延后到 Phase 3** | Q8 挂起、右槽 T0 只有置顶；图片插入依赖 Markdown 渲染，与 Phase 3 一起做 |
 | C4 | 多标签页 | **现版没有**：每窗口一笔记 + 切换器 | **不做**（按现版对齐） | `UI_REQUIREMENTS.md` §1.2.2 的"多标签页 P0"不实现，已在原处加注记；标签页相关键位（Ctrl+W / Ctrl+Tab）同样不实现，切换职责归 C1 |
-| C5 | 窗口尺寸记忆 | 全局一组宽高存 `settings.quick_note`，不按窗口记 | **延后**（属增强，不属 parity） | Q2 仍按"全局一组宽高"判定；"每窗口记忆"另立增强项，不阻塞 T-Gate 0 |
+| C5 | 窗口尺寸记忆 | 全局一组宽高存 `settings.quick_note`，不按窗口记 | **已做**（2i，不按窗口记） | 拖动后静默 400 ms 写入 `quick_note.width/height`，同一进程的下一扇窗与下次启动的新笔记都用它；`quick_note.schema` 同批补上（首次写盘为 1）。**顺带发现**：无边框窗口的 `WM_NCHITTEST` 全返回 `HTCLIENT`，鼠标拖边缘改不了尺寸——这条属 Q3，另立一项 |
 
 三条"留"的共同点：都是**用户可感知的日常路径**（切笔记、调透明度、闪一下），缺了手感立刻不对；三条"延后/不做"的共同点：都要新造功能或渲染管线，与 parity 无关。
 
@@ -189,6 +189,7 @@ Q28 的"一档 20%"与 Q6 的"左槽显示百分比"是同一条链的两端：Q
 | 2026-11-26 | 2g Q10 拖动回填（✓）：`check-native-drag.py` 9/9（连跑 4 次）。`ViewportCommand::StartDrag` 在本环境不发车（`GetWindowRect` 不动，普通窗口探针同样不动），改由 `note/drag.rs` 每帧按光标位移 `SetWindowPos`，光标位置取 `GetCursorPos`（egui 的客户区坐标会跟着窗口跑，用它算位移恒为 0）。左/中/右槽位移逐轴精确、按钮起拖不动。实施记录见 §8.12 |
 | 2026-11-26 | 2h Q24 数据恢复回填（✓）：草稿写 `{store_root}/autosave/{id}.json`（与现版同形），`save` 在写库前落盘、成功后删除；打开时按"与行不同且不比行旧"判定，`hub-ui/recover` 手绘三按钮卡片、`note/recover` 执行三种回答。`check-native-recover.py` 15/15（连跑 3 次）。**与现版不互通（`localStorage` vs 文件）**，且"保留当前"会删文件（现版只关对话框、下次再问）。实施记录见 §8.13 |
 | 2026-11-26 | 2i 光标落点（Q19 的"末尾"修正）：带标签的笔记打开时光标停在标签行里，续写的字进了标签（§8.13 的遗留）。`note_text::caret_offset` 给出正文末尾，`hub-editor::caret.rs` 的 `position_of` 把字节换算成 RichEdit 的**字符位置**——`EM_SETSEL` 里一对 `CRLF` 只算 1，按 UTF-16 换算会正好落在标签行开头（实测 `at=8 of=17` vs 对的 `at=7 of=15`）。打开/切换/恢复草稿共用 `park_caret`。`check-native-notes.py` 25/25、`check-native-recover.py` 16/16、`check-native-switcher.py` 22/22、`cargo test` 212 项。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.14 |
+| 2026-11-26 | 2j C5 尺寸记忆（✓）+ `quick_note.schema`：拖动结束后静默 400 ms 才写盘（`note/size.rs`，读改写文件、`sized()` 夹到 150×60…8000×8000），同一进程靠 `Arc<Mutex<(u32,u32)>>`、下次启动靠文件；2 px 容差用来吸收 `逻辑→物理→逻辑` 的取整。`schema` 缺失按 1 处理，遇到更高版本不降级。`check-native-size.py` 11/11。**顺带实测出一个 Q3 的问题**：无边框窗口边缘的 `WM_NCHITTEST` 全返回 `HTCLIENT`（`style=0x16cf0000` 有 `WS_THICKFRAME`），鼠标拖边缘改不了尺寸，门禁因此记 `drag=programmatic`。实施记录见 [phase1-quicknote-shell.md](./2026-11-25-phase1-quicknote-shell.md) §8.15 |
 ## 9. 附：`collect-c2-env.ps1` 输入法漏检的修正（同日）
 
 同一轮对话里发现采集脚本把**已启用**的搜狗与微信输入法报成"未安装"。两个独立原因，都已在脚本里修掉：

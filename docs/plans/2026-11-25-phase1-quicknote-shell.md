@@ -622,7 +622,7 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 |---|---|
 | 工作台（列表 / 搜索 / 收件箱 / 待办 / 脚本 / 设置 / 回收站） | Phase 2 其余批次；`Ctrl+Alt+M` 仍只记 `note_manager target=none phase=2` |
 | `Ctrl+K` 切换器（Q25–Q27）与数据恢复（Q24） | 依赖列表与查询，属工作台批次 |
-| 每窗口记住透明度 | 要 `settings` 表的一行一窗口键；与窗口尺寸记忆（parity C5）一起做。裁定不做——调透明度是临时动作，C5 本身也刻意不按窗口记 |
+| 每窗口记住透明度 | 要 `settings` 表的一行一窗口键。裁定不做——调透明度是临时动作，收益低；尺寸记忆（C5）也只记全局一组宽高，不为窗口各造键（§8.15） |
 | `store` 的 schema 版本号 | 仍与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉 |
 | 正文长度上限 / 图片与 Markdown | 属 P3，与 1c 的结论无关 |
 
@@ -698,7 +698,7 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 
 | 项 | 为什么 |
 |---|---|
-| 每窗口记住透明度 | `QuickNotePage` 的 `opacity` 是 `useState`，旧版同样不持久化；原生侧只保留"新笔记初值"（`appearance.window_alpha`）。真要记，与窗口尺寸记忆（parity C5）一起做，别单独给 `settings` 表造一行一窗口的键 |
+| 每窗口记住透明度 | `QuickNotePage` 的 `opacity` 是 `useState`，旧版同样不持久化；原生侧只保留"新笔记初值"（`appearance.window_alpha`）。**裁定不做**：调透明度是临时动作，收益低；尺寸记忆（C5）也只记全局一组宽高（§8.15） |
 | `store` 的 schema 版本号 | 现库与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉。等两边共用一份迁移器时再定 |
 | 工作台按钮的端到端点按 / 改键的写盘方向 | 点一下要在 egui 布局里猜坐标，布局一改门禁就红、且红的原因与行为无关。写路径由 store 与 `manager` 的 `Action` 单测覆盖，窗口行为由 `check-native-manager.py` 覆盖 |
 | 收件箱与脚本分区 | 依赖 capture 与执行链路，属 P3；待办分区只读正文里的 `- [ ]` 行，不写回 |
@@ -1017,6 +1017,89 @@ editor_focus id=0 focused=true caret=(7, 7)
 
 `caret_offset` 与 `position_of` 都是纯函数，所以这一批的两条根因各有一组不需要窗口的测试；窗口里只剩"把数字交给 `EM_SETSEL`"这一步。
 
+## 8.15 尺寸记忆：一组宽高，等窗口停稳再写（2j，2026-11-26）
+
+C5 从"延后"变成"已做"。语义照 parity 原文：**全局一组宽高**，不按窗口记——拖完这扇窗，下一扇窗和下次启动的新笔记都用这个尺寸。
+
+### 什么时候写
+
+拖边缘一次会产生上百个 `WM_SIZE`，每个都写盘是上百次 rename，而文件是给**下一个进程**读的，重要的是拖动停在哪儿、不是经过哪儿。所以 `note/size.rs` 的做法是：
+
+1. 每帧读一次客户区（`GetClientRect`），除以 `pixels_per_point` 换成逻辑尺寸；
+2. 尺寸变了就记下"第一次看到它的时刻"，并 `request_repaint_after(400ms)`；
+3. 400 ms 内尺寸再变就重置计时；停住了才落盘。
+
+`request_repaint_after` 那一步不是保险，是必需：拖完手一松就没有输入事件了，没有这一帧，"停稳"这件事永远不会被观察到。
+
+### 三个容易写错的地方
+
+| 坑 | 处理 |
+|---|---|
+| 首帧的尺寸和 `spec` 差 1 px（`逻辑→物理→逻辑` 两次取整，加上 `place_note` 按工作区 clamp） | 第一帧只学基线、不比较；之后 2 px 以内算"没变"。否则每次启动都会写一次假的 resize |
+| 写文件会把工作台刚存的改键冲掉（同一份设置文件） | 读改写**文件**（`SpikeSettings::load` → 改 `quick_note` → `save`），不是写内存快照 |
+| 文件坏了（`{not json`）时 `load` 返回默认值，`save` 会把它变成一份默认文档 | 加载来源是 `Default` 且文件**存在** → 不写，日志 `saved=false reason=settings_unreadable`。这次 resize 在本进程内仍然生效 |
+
+`Sizer::persist` 成功后同时更新 `Arc<Mutex<(u32,u32)>>`，`Hub::spawn` 从这个 cell 读 spec——所以同一进程里拖完窗口再按 `Ctrl+Alt+N`，新窗口就是新尺寸，不必重启。
+
+### `quick_note.schema`
+
+同批补的版本号，`QUICK_NOTE_SCHEMA = 1`，放在 `quick_note` 第一个字段：
+
+- **缺失或 `0` 按 1 处理**。所有早于这个字段的设置文件，键的形状恰好就是版本 1 定义的，所以"没编号"不等于"不知道是什么"。
+- **比 1 大的不降级**。读到一个 `2` 就原样留着，下次写盘还写 `2`：这个版本认识的键含义没变，但那个数字是另一个版本的作者留下的记录，覆盖它就是把"向前兼容的读"变成"悄悄改坏"。
+
+`schema` 的存在不是为了现在分支，是为了将来某次"这个键含义变了"时**能**分支。`serde(default)` 只解决"缺键不报错"，解决不了"同一个键换了意思"。
+
+### 顺带发现：无边框窗口拖不了边缘
+
+门禁先试真拖（`SendInput` 按住右边框往左拖 160 px），再退回 `SetWindowPos`。实测拖不动，查了一下：
+
+```
+style=0x16cf0000 thick=True popup=False caption=True
+hit_test inset=1..12 at=right-1..right-12 -> 1 (HTCLIENT)
+```
+
+样式里有 `WS_THICKFRAME`，但 `WM_NCHITTEST` 对窗口边缘一律返回 `HTCLIENT`——所以 OS 的调整大小循环根本没有入口。这不是 C5 的缺陷（尺寸从哪来变，C5 都记），但它让 Q3 判据里的"拖到最小仍可点标题条三个按钮"少了前提：**鼠标拖边缘改不了尺寸**。
+
+修法有两条路，都不在 C5 内：一是像 `note/drag.rs` 那样自绘（边缘 4 px 内按下 → 每帧按光标增量 `SetWindowPos`，可被注入测到）；二是把边缘 hit test 交回 `DefWindowProc`（发 `WM_NCLBUTTONDOWN` 让 OS 接管，但 Q10 已经证明本机注入下 OS 移动/调整循环不接管，测不到）。**这条单独立项**，与 Q3 目视一起做。
+
+### 改在哪
+
+| 位置 | 改动 |
+|---|---|
+| `hub-core::settings` | `QUICK_NOTE_SCHEMA`、`MAX_NOTE_WIDTH/HEIGHT`、`QuickNoteSettings.schema`、`sized(宽,高)`（夹到 150×60…8000×8000）、`normalized()`（0 → 1，不降级）；3 个单测 |
+| `app/src/note/size.rs`（新） | `Sizer`：基线、静默期、2 px 容差、读改写文件、共享 cell；`NoteShell::track_size`；5 个单测 |
+| `app/src/note.rs` | `Spawn` 带 `size` 与 `settings_path`；每帧调用一次 `track_size`；`apply_alpha` 搬到 `panel.rs`（文件撞 800 行上限，行为不变） |
+| `app/src/hub.rs` | `note_size` 单元；`spawn` 从它读宽高（不是启动快照） |
+
+### 门禁
+
+`scripts/check-native-size.py`，11 项，两个进程：
+
+| 判什么 | 怎么判 |
+|---|---|
+| 按设置开窗 | 种子文件 `400×300`（无 `schema`），客户区（物理）= `round(400×scale)` |
+| 没拖就不写 | 启动 + 静默期后设置文件**逐字节**与种子相同 |
+| 拖了会写 | 新宽度写进 `quick_note.width`，高度不动 |
+| 写的时候带上版本 | `note_size` 日志 `saved=true schema=1`；文件里 `schema=1` |
+| 别的键不丢 | `appearance.font_pt`、`shortcuts.switcher`、`margin` 都在 |
+| 窗口不被弹回 | 写盘后客户区宽度 == 拖动后的宽度 |
+| 下一个进程接着用 | 重启后客户区 = 记住的宽度 × scale，且文件没被再写一次 |
+
+`drag=real|programmatic` 记在报告里，如实说明这次是哪种输入改的尺寸。
+
+### 证据
+
+| 门禁 | 结果 |
+|---|---|
+| `scripts/check-native-size.py` | 11/11（`drag=programmatic`，原因见上） |
+| `scripts/check-native-notes.py` | 25/25 |
+| `scripts/check-native-switcher.py` | 22/22 |
+| `scripts/check-native-recover.py` | 16/16 |
+| `scripts/check-native-tools.py` / `pin` / `drag` / `manager` | 8/8、11/11、9/9、19/19 |
+| `cargo test --release --workspace` | 220 项（新增 3 项设置、5 项 `Sizer`） |
+| `scripts/check-native-architecture.mjs` | 通过（5 crates，`note.rs` 779 行） |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -1039,3 +1122,4 @@ editor_focus id=0 focused=true caret=(7, 7)
 | 2026-11-26 | 2h Q24：`app/src/backup.rs`（草稿读写、判定、合并）+ `save::Saver::stash`/`clear_stash` + `hub-ui/src/recover.rs`（手绘卡片，返回按钮矩形）+ `note/recover.rs`（隐藏编辑器、三种回答）。`check-native-recover.py` 15/15，`save.rs` 拆成 `save/mod.rs` + `save/tests.rs`（§8.13） |
 | 2026-11-26 | 2f Q9：置顶走 `hub_win::window::set_topmost`（`ViewportCommand::WindowLevel` 会按 winit 缓存的 `WindowFlags` 重写整套样式，把 `with_visible(false)` 建、`move_on_screen` 显示的笔记窗口直接抹掉——Q16 只读日志所以一直显示正常）；新增 `scripts/lib/winshot.py`（`PrintWindow` 取像素）与 `scripts/check-native-pin.py`（11/11，连跑 3 次）。`toggle_pin` 移入 `note/panel.rs`（§8.11） |
 | 2026-11-26 | 2i 光标落点：`hub-core::note_text::caret_offset` 把光标放在正文末尾而非标签行内；`hub-editor::caret.rs`（从 `lib.rs` 拆出）加 `set_caret`/`position_of`——`EM_SETSEL` 数的是字符位置，`CRLF` 只算 1，按 UTF-16 换算会正好落到标签行开头（实测）。打开、切换、恢复草稿三条路径共用 `park_caret`。`check-native-notes.py` 25/25（Q-L 改判"字进正文、标签不动"）、`check-native-recover.py` 16/16；`cargo test` 212 项（§8.14） |
+| 2026-11-26 | 2j C5 + schema：`note/size.rs`（每帧读客户区、静默 400 ms 才写、2 px 容差、读改写设置文件、`Arc<Mutex<(u32,u32)>>` 供同进程下一扇窗）；`hub-core::settings` 加 `QUICK_NOTE_SCHEMA`/`sized()`/`normalized()`（缺号按 1、更高版本不降级）。`check-native-size.py` 11/11；`cargo test` 220 项。**顺带实测**：无边框窗口边缘 `WM_NCHITTEST` 全返回 `HTCLIENT`（`style=0x16cf0000`），鼠标拖边缘改不了尺寸——属 Q3，另立一项（§8.15） |

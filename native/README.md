@@ -78,7 +78,7 @@ cargo run --release -p app -- --note --settings my-note.json
 
 Phase 2 的笔记门禁是 `scripts/check-native-notes.py`（parity Q20–Q23 + 按 id 重开）：一条命令出 `RESULT: PASS/FAIL`，退出码 0/1。它把真实库**复制**到 `native/target/p2-gate/root/` 再驱动二进制，所以不碰 `%APPDATA%`；每个场景单独起进程，因为这台机器上跑着 shipped 版，它持有 `Ctrl+Alt+N`（原生壳 `RegisterHotKey` 得 1409）。两条来自实测的约束写在脚本里：`WM_CHAR 0x0D` 不产生换行（要 `WM_KEYDOWN VK_RETURN` + `WM_CHAR` + `WM_KEYUP` 三连）；跨进程读不到 RichEdit 文本（`GetWindowTextW` 回空串，`SetWindowTextW` 返回成功却什么都不改），所以"笔记里是什么"一律用数据库往返回答。
 
-另外三个门禁走的是**真按键/真点击**，因为面板、工作台和标题条上的按钮长在 egui 里，投消息到不了那儿：
+其余门禁大多走**真按键/真点击**，因为面板、工作台和标题条上的按钮长在 egui 里，投消息到不了那儿：
 
 ```bash
 python scripts/check-native-switcher.py     # Q25 同键开关、Q13 Esc 只关面板、Q26 正文/标签命中、Q27 选中与新建（22 项）
@@ -86,8 +86,11 @@ python scripts/check-native-manager.py      # Q16 工作台开/数/关、K1 配�
 python scripts/check-native-tools.py        # Q7 工具面板：按钮开、按钮关、点正文关，岛随之让位与复位（8 项）
 python scripts/check-native-pin.py          # Q9 置顶：OS 的 topmost 位 + 图标实心/空心两态，窗口不消失（11 项）
 python scripts/check-native-drag.py         # Q10 拖动：左/中/右槽位移等于光标行程，按钮上起拖不动（9 项）
-python scripts/check-native-recover.py      # Q24 数据恢复：卡片出现、模态、三个按钮各自的结果、陈旧草稿静默删（15 项）
+python scripts/check-native-recover.py      # Q24 数据恢复：卡片出现、模态、三个按钮各自的结果、陈旧草稿静默删（16 项）
+python scripts/check-native-size.py         # C5 尺寸记忆：拖完写盘、schema 补号、别的键不丢、重启后新笔记照用（11 项）
 ```
+
+`check-native-size.py` 是例外：它先试真拖窗口边缘，拖不动再 `SetWindowPos`，报告里记 `drag=real|programmatic`（原因见"已知捷径"里无边框窗口那条）。
 
 `scripts/lib/wininput.py` 是共用注入层，脚本头部记了这条链上的四条实测：`hub-editor` 用 `GetKeyState` 读修饰键，所以投消息只会得到"一个没修饰的字母"；egui 的键与文本来自 winit，所以字符必须作为输入到达；`INPUT` 在 x64 上必须是 40 字节（写错 `SendInput` 返回 0 + 87，且静默不投递）；**合成点击在 RichEdit 上释放会留下鼠标捕获状态**，之后父窗口收到的光标坐标按子窗口原点解释（client (300,176) 报成 (182,31)），所以 `check-native-tools.py` 把"点正文"放在最后一步——真实鼠标的释放会清掉这个状态，用户看不到。第五条也来自失败：**两次合成点击若落在同一个 4 px 双击框内、间隔小于 `GetDoubleClickTime`（本机 500 ms），会被系统配成双击**，egui 的 `clicked()` 只对前半次为真（实测 0.4 s 连点 8 次丢了 3 次），`check-native-pin.py` 因此把间隔压到 ≥0.6 s 并左右交替偏 8 px。工作台门禁还把 `open_manager` 改成 `Ctrl+Alt+J` 再用它开窗——本机 `Ctrl+Alt+M` 属于 shipped 版，而"文件里的键真的生效"正是这一批要证的事。
 
@@ -147,10 +150,11 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | `store` 保持 `journal_mode = delete`，不切 WAL | 切 WAL 会改文件头并留 `-wal`/`-shm`，影响备份/同步/"复制 db"的语义，属产品级决定 | 若要切，先写 ADR 并复验备份链路；并发已有 `IMMEDIATE` + 5 s `busy_timeout` 兜底 |
 | 文本岛无 Markdown 装饰、无图片粘贴 | 属 P3；装饰画在文本控件之上，不改变 S2 的结论 | P3 |
 | 输入法只验到 `ImmGetContext` 非空 | 三种输入法各 30 分钟需要人 | RC 前人工验收，结果回填 S2 文档 §9 |
-| 整窗透明度只活在窗口生命周期内 | 旧版同样不持久化（`QuickNotePage` 的 `opacity` 是 `useState`），关掉即回初值 | 原生侧已有"新笔记初值"（`quick_note.appearance.window_alpha`）；若要记住每个窗口最后的值，与窗口尺寸记忆（parity C5）一起做，不要单独给 `settings` 表造一行一窗口的键 |
+| 整窗透明度只活在窗口生命周期内 | 旧版同样不持久化（`QuickNotePage` 的 `opacity` 是 `useState`），关掉即回初值 | 原生侧只有"新笔记初值"（`quick_note.appearance.window_alpha`）。**每窗口透明度裁定不做**：调透明度是临时动作，收益低；C5 也只记全局一组宽高，不为窗口各造一行键 |
 | GHOST 的实际 alpha 是 1/255，不是 0 | `LWA_ALPHA = 0` 的窗口不可命中（实测 `WindowFromPoint` 答背后的窗口），幽灵会点不回来 | 保留地板。曾试过"背景色键消除 + 内容 20%"（`LWA_COLORKEY \| LWA_ALPHA`），技术上成立但观感不对，已回退；结论见计划文档 §8.7 |
 | 工作台里的按钮没有端到端点按门禁 | 点一下需要在 egui 布局里猜坐标，布局一改门禁就红，且红的原因与行为无关 | 写路径由 `hub-core` 的 store 单测（置顶/移入回收站/恢复/彻底删除都不动正文）与 `hub-ui::manager` 的 `Action` 单测覆盖；窗口行为（开、计数、`Esc` 关）由 `check-native-manager.py` 判。标题条上那两个按钮**有**点击门禁（`check-native-tools.py`），因为它们的坏法（拖拽面盖住按钮）只有真点击能发现 |
 | 拖动自己搬窗口，不用 `ViewportCommand::StartDrag` | 那条命令把活交给 OS 的模态移动循环，而本机这套注入环境下它根本不接管：`GetWindowRect` 不动，连普通 `WS_OVERLAPPEDWINDOW` 也不动（2026-11-26 实测三种投法） | `note/drag.rs` 每帧按 `GetCursorPos` 的位移 `SetWindowPos`；光标必须用屏幕坐标，egui 的客户区坐标会跟着窗口走、算出的位移恒为 0 |
+| 鼠标拖边缘改不了窗口尺寸 | 样式里有 `WS_THICKFRAME`（`style=0x16cf0000`），但 `WM_NCHITTEST` 对边缘一律回 `HTCLIENT`（2026-11-26 实测 inset 1…12 全是 1），OS 的调整大小循环没有入口 | 属 Q3，单独立项：自绘（边缘 4 px 内按下 → 每帧按光标增量 `SetWindowPos`，与 `note/drag.rs` 同构，注入可测）或把 hit test 交回 `DefWindowProc`（注入环境测不到）。C5 不受影响——尺寸从哪来变，它都记 |
 | 草稿备份是文件，不是 `localStorage` | 原生窗口没有 origin，也读不到 WebView 的 profile；两边**互相恢复不了对方的草稿** | `{store_root}/autosave/{id}.json`，字段与现版 `BackupDraft` 逐个相同（`title`/`content`/`tags`/`timestamp`），将来搬进表时列名已经对齐 |
 | 工具面板的"点外部"只覆盖正文 | 标题条按住是拖窗（Q10），把 strip 也算"外部点击"会和拖动抢手势 | `•••`、`Ctrl+.` 与正文点击三个入口都能关；header 区的点击归拖动。旧版是页面上任意 `click`，那在 React 里没有"标题栏拖动"这个冲突 |
 | 恢复卡片是手绘矩形 | egui 的自动布局不给按钮坐标，而门禁必须点中按钮 | `hub-ui/recover` 返回三个 `Rect`，`note/recover` 以物理像素写进 `recover_rect`，门禁读日志再点——按钮画到哪里就点哪里，padding 改了也不用改脚本 |
