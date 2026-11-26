@@ -171,6 +171,20 @@ def _mouse(dx, dy, flags):
         raise RuntimeError(f"SendInput(mouse flags=0x{flags:X}) failed: {ctypes.get_last_error()}")
 
 
+def move_to(x, y):
+    """Move the cursor to a screen point **without pressing**.
+
+    The cursor is what decides `WM_SETCURSOR`, so a hover check has to move it the
+    same way a hand does. `MOUSEEVENTF_ABSOLUTE` is normalised to 0..65535 over the
+    desktop, like [`click`].
+    """
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+    ax = int(round(x * 65535 / max(width - 1, 1)))
+    ay = int(round(y * 65535 / max(height - 1, 1)))
+    _mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)
+
+
 def click(x, y):
     """A real left click at a **screen** point, in physical pixels.
 
