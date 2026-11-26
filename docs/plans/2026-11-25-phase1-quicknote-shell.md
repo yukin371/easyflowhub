@@ -704,6 +704,57 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | 数据恢复（Q24） | 三选一对话框依赖"检测未合并备份"，属 P3 |
 | 收件箱与脚本分区 | 依赖 capture 与执行链路，属 P3；待办分区只读正文里的 `- [ ]` 行，不写回 |
 
+## 8.10 工具面板：点得到的按钮，点得掉的浮层（2e，2026-11-26）
+
+Q7 在 parity 里挂了很久，挂的理由是"点面板外部也关"没做。这一批去补它，结果门禁先撞出一个更大的问题：**标题条上的两个按钮根本点不动**。
+
+### 真 bug：拖拽区盖住了按钮
+
+`quicknote::draw` 先注册两个按钮（`Sense::click()`），再注册整条 strip 的拖拽区（`Sense::drag()`）。egui 的规则是：指针下的多个控件里，**后注册的在上**。于是拖拽区盖住了两个按钮，鼠标按下去命中的是拖拽面：`drag_started()` 为真（被 `!on_button` 挡掉，所以也不拖），而按钮的 `clicked()` 永远不来。
+
+键盘因此成了唯一入口——`Ctrl+T` 能置顶、`Ctrl+.` 能开面板，鼠标点同一个位置什么都不发生。这类缺陷单元测试一般不覆盖，人眼也容易以为"点了没反应是没做"，因为代码里明明写着 `if tools.clicked()`。
+
+修法是两条一起：
+
+1. **拖拽区先注册**，按钮后注册，点击才落在按钮上；
+2. **`on_button` 守卫保留**——排序解决点击归属，但不解决 `drag_started`：egui 对同一次按下仍会给拖拽控件一个 `drag_started`，于是点按钮会顺手把窗口交给 `StartDrag`。实测后果是窗口被挪几像素，**下一次点击**就落到空处（日志里第二次 `note_tools` 永远不出现）。
+
+新单测 `a_click_on_a_button_is_not_swallowed_by_the_drag_surface` 用 `Context::run` + `RawInput` 造一次真实的三帧点击（move / press / release），断言 `toggle_pin` 与 `toggle_tools` 都为真、`drag` 为假。把顺序改回去，这条测试立刻红——本批验证过。
+
+### 点正文关闭：消息到不了 egui
+
+"外部"基本就是正文，而正文是 RichEdit **子窗口**：按下发生在子窗口，父窗口的 winit 什么也收不到。所以关闭信号只能从岛的 subclass proc 发出来，和 `Ctrl+滚轮` 同一条路：
+
+- `hub-editor` 新增 `on_click` 回调，接 `WM_LBUTTONDOWN`，**只上报不吞**（否则光标定位、双击选词、拖选全没了）；
+- `app::click::Clicks` 把点击记成计数并 `request_repaint_of(viewport)`——和 `esc`/`wheel`/`keys::Bus` 同一个理由：消息处理器里不能进窗口代码，且不带 viewport 的重绘请求会唤醒别的窗口；
+- `note/panel.rs` 的 `set_tools(open, reason)` 成为唯一写 `tools_open` 的地方，日志因此能分清 `reason=button|shortcut|body`。三个入口一个出口，是"为什么这次关了"可回答的前提。
+
+### 门禁为什么把正文点击放在最后
+
+这是实测逼出来的顺序，不写下来下一个改脚本的人会重新踩：**合成的一次点击如果在 RichEdit 上释放，会留下鼠标捕获状态，之后父窗口收到的光标坐标会按子窗口原点解释**——把 client (300,176) 报成 (182,31)，于是"点正文之后再点按钮"必然落空，还会顺手把窗口拖走。真实鼠标的释放会清掉这个状态，所以用户看不到；门禁看到的是注入层的毛病。
+
+因此 `check-native-tools.py` 的判定顺序是：按钮开 → 岛让位 → 按钮关 → 岛复位 → **最后**才点正文。这条约束写在脚本头部，和"为什么必须真按键"写在一起。
+
+### 顺带
+
+`scripts/lib/wininput.py` 长出 `click` / `click_client` / `client_box`：`MOUSEEVENTF_ABSOLUTE` 的坐标是全桌面 0..65535，换算放在库里；`INPUT` 的 40 字节从注释变成了断言（写错时 `SendInput` 返回 0 + 87 且静默）。
+
+### 证据
+
+| 门禁 | 判什么 | 结果 |
+|---|---|---|
+| `scripts/check-native-tools.py` | Q7 开/关/点外部关、岛让位与复位、点击不关窗 | 8/8（连跑 3 次稳定） |
+| `scripts/check-native-notes.py` | 1d 的 Q20–Q23 + 按 id 重开（回归） | 24/24 |
+| `scripts/check-native-switcher.py` / `check-native-manager.py` | 2b/2c 回归 | 22/22、19/19 |
+| `cargo test --release --workspace` | 含新的 z-order 单测与 `WM_LBUTTONDOWN` 上报单测 | 193 项 |
+
+### 与旧版的差异（有意）
+
+| 项 | 旧版 | 本批 | 为什么 |
+|---|---|---|---|
+| 点外部关闭 | 页面任意处 `click` 关面板 | 正文点击 + `•••` + `Ctrl+.`；标题条本身按住是拖窗，不算"外部点击" | 标题条是标题栏语义（按住拖动），把它也当"外部"会与拖动打架 |
+| 按钮点击 | React 按钮，天然可点 | egui 控件 + 拖拽面排序 + `StartDrag` 守卫 | 原生侧控件叠放由注册顺序决定，不写清楚就会静默失灵 |
+
 ## 9. 变更记录
 
 | 日期 | 变更 |
@@ -721,3 +772,4 @@ note_ghost id=0 ghost=false opacity=0.40 (was 0.00)   ← 回到 40%，不是 20
 | 2026-11-25 | 1c.2 试做"背景完全消除 + 文字 20%"（`LWA_COLORKEY \| LWA_ALPHA`，面板色作键）：技术上成立（背景与桌面逐值相等），但用户实测观感不对——文字像被描边、背景仍有薄片残留——当日回退到 alpha 1 的幽灵。Mica 会挡色键、子窗口命中不跟随父窗口色键两条实测结论留在 §8.7 供后续参考 |
 | 2026-11-26 | 1d 落地正文写库：`hub-core` 加 `clock` / `note_text` / `save_note_body`，`app` 加 `save.rs`（900 ms 防抖 + 2 s 扫描 + 关闭 flush + 失败退避）与 `--note-id`；`note.rs` 拆出 `note/island.rs` 回到 800 行内。Q20–Q23 由 `scripts/check-native-notes.py` 判（24/24）。工作台、切换器、每窗口透明度记忆留给后续批次（§8.8） |
 | 2026-11-26 | 2a–2d 落地交互层：`hub-core::shortcuts` 一张表（11 命令 / 2 作用域 / 冲突先者胜）、`hub-ui` 的 `hint`（功能名 + 键位）、`switcher`、`manager` 与 `keys`，`app` 的 `note/panel.rs`、`manager.rs`、`hub/commands.rs`；新建笔记改成立刻 `flush(reason=seed)`（门禁实测缺陷）。Q13/Q16/Q25–Q27 由 `check-native-switcher.py`（22/22）与 `check-native-manager.py`（19/19）判（§8.9） |
+| 2026-11-26 | 2e Q7：`hub-editor::on_click`（`WM_LBUTTONDOWN` 上报不吞）、`app::click`、`note/panel.rs::set_tools`；修掉拖拽区盖住按钮的真 bug（顺序 + `StartDrag` 守卫，附 z-order 单测）。`scripts/check-native-tools.py` 8/8（§8.10） |
