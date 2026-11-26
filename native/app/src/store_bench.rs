@@ -42,6 +42,9 @@ pub struct Evidence {
     pub encoding: String,
     pub counts_before: CountsView,
     pub counts_after: CountsView,
+    /// Which rungs of the schema ladder this file has. Measured, not stamped; see
+    /// `hub_core::store::schema`.
+    pub schema: SchemaView,
     /// Full `sqlite_master` dump before and after the write. Kept as text, not a
     /// hash, so a failure can be read as a diff.
     pub schema_before: String,
@@ -64,6 +67,33 @@ pub struct CountsView {
     pub settings: i64,
     pub inbox_items: i64,
     pub inbox_attachments: i64,
+}
+
+/// The schema report, flattened for JSON: `Schema` keeps `&'static str` rung names,
+/// which is right for the library and awkward to serialise.
+#[derive(Default, Clone)]
+pub struct SchemaView {
+    pub version: u32,
+    pub expected: u32,
+    pub missing: Vec<String>,
+    pub ahead: Vec<String>,
+    pub legacy_capture_kinds: bool,
+}
+
+impl SchemaView {
+    fn of(schema: &hub_core::store::Schema) -> Self {
+        Self {
+            version: schema.version,
+            expected: hub_core::store::SCHEMA_VERSION,
+            missing: schema.missing.iter().map(|name| name.to_string()).collect(),
+            ahead: schema.ahead.clone(),
+            legacy_capture_kinds: schema.legacy_capture_kinds,
+        }
+    }
+
+    fn current(&self) -> bool {
+        self.version == self.expected && self.missing.is_empty()
+    }
 }
 
 pub struct NotesView {
@@ -211,6 +241,7 @@ fn counts_view(counts: &hub_core::Counts) -> CountsView {
 
 fn capture(store: &mut Store) -> Result<Evidence, String> {
     let contract = store.contract().map_err(|e| e.to_string())?;
+    let measured = store.schema().map_err(|e| e.to_string())?;
     let counts = store.counts().map_err(|e| e.to_string())?;
     let before = store.schema_fingerprint().map_err(|e| e.to_string())?;
 
@@ -265,6 +296,7 @@ fn capture(store: &mut Store) -> Result<Evidence, String> {
         encoding: contract.encoding,
         counts_before: counts_view(&counts),
         counts_after: counts_view(&counts),
+        schema: SchemaView::of(&measured),
         schema_before: before.clone(),
         schema_after: before,
         schema_same: true,
@@ -491,6 +523,12 @@ fn sort_breakdown(notes: &[NoteRow]) -> (bool, bool) {
 fn judge(evidence: &Evidence, wrote: bool) -> bool {
     let mut pass = true;
 
+    // The schema ladder has to have ended where this build says it ends. This is the
+    // machine-checked version of "we mirror the Tauri migrations". `legacy_capture_kinds`
+    // is deliberately *not* a condition: the CHECK rebuild is Tauri's to run, so
+    // reporting it is the contract and failing on it would be blaming the wrong process.
+    pass &= evidence.schema.current();
+
     // Read side: the three counts that can be checked without knowing the data.
     pass &= evidence.integrity_before;
     pass &= evidence.notes.sort_ok;
@@ -530,6 +568,22 @@ fn report(evidence: &Evidence) -> String {
         evidence.user_version,
         evidence.page_size,
         evidence.encoding
+    ));
+    out.push_str(&format!(
+        "  schema version={}/{} missing={} ahead={} legacy_capture_kinds={}\n",
+        evidence.schema.version,
+        evidence.schema.expected,
+        if evidence.schema.missing.is_empty() {
+            "-".to_string()
+        } else {
+            evidence.schema.missing.join(",")
+        },
+        if evidence.schema.ahead.is_empty() {
+            "-".to_string()
+        } else {
+            evidence.schema.ahead.join(",")
+        },
+        evidence.schema.legacy_capture_kinds
     ));
     out.push_str(&format!(
         "  counts before notes={} deleted={} settings={} inbox={} attachments={}\n",
@@ -621,11 +675,16 @@ fn report_json(evidence: &Evidence, include_dump: bool) -> String {
         .join(",");
 
     format!(
-        r#"{{"kind":"native-s3-store","root":"{}","db":"{}","db_bytes":{},"sqlite":"{}","contract":{{"journal_mode":"{}","user_version":{},"page_size":{},"encoding":"{}"}},"counts_before":{{"notes":{},"deleted":{},"settings":{},"inbox_items":{},"inbox_attachments":{}}},"counts_after":{{"notes":{},"deleted":{},"settings":{},"inbox_items":{},"inbox_attachments":{}}},"notes":{{"live":{},"with_deleted":{},"sorted":{},"pinned_first":{},"updated_desc":{}}},"todo":{{"found":{},"id":"{}","open":{},"done":{},"content_bytes":{}}},"settings":{{"keys":[{}],"objects":{},"scalars":{},"autostart":{}}},"writes":{{"created":{},"updated_at_changed":{},"soft_deleted":{},"attachment":"{}","attachment_bytes":{},"attachment_row":{}}},"schema_same":{},"integrity":{{"before":{},"after":{}}},"pass":{},"notes_dump":[{}]}}"#,
+        r#"{{"kind":"native-s3-store","root":"{}","db":"{}","db_bytes":{},"sqlite":"{}","schema":{{"version":{},"expected":{},"missing":[{}],"ahead":[{}],"legacy_capture_kinds":{}}},"contract":{{"journal_mode":"{}","user_version":{},"page_size":{},"encoding":"{}"}},"counts_before":{{"notes":{},"deleted":{},"settings":{},"inbox_items":{},"inbox_attachments":{}}},"counts_after":{{"notes":{},"deleted":{},"settings":{},"inbox_items":{},"inbox_attachments":{}}},"notes":{{"live":{},"with_deleted":{},"sorted":{},"pinned_first":{},"updated_desc":{}}},"todo":{{"found":{},"id":"{}","open":{},"done":{},"content_bytes":{}}},"settings":{{"keys":[{}],"objects":{},"scalars":{},"autostart":{}}},"writes":{{"created":{},"updated_at_changed":{},"soft_deleted":{},"attachment":"{}","attachment_bytes":{},"attachment_row":{}}},"schema_same":{},"integrity":{{"before":{},"after":{}}},"pass":{},"notes_dump":[{}]}}"#,
         json_escape(&evidence.root),
         json_escape(&evidence.db),
         evidence.db_bytes,
         json_escape(&evidence.sqlite_version),
+        evidence.schema.version,
+        evidence.schema.expected,
+        json_list(&evidence.schema.missing),
+        json_list(&evidence.schema.ahead),
+        evidence.schema.legacy_capture_kinds,
         json_escape(&evidence.journal_mode),
         evidence.user_version,
         evidence.page_size,
@@ -669,6 +728,16 @@ fn report_json(evidence: &Evidence, include_dump: bool) -> String {
         evidence.pass,
         if include_dump { dump } else { String::new() }
     )
+}
+
+/// A JSON array of strings. Empty stays empty (`[]`), which is how the schema report
+/// says "nothing missing" and "nothing ahead".
+fn json_list(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn json_escape(value: &str) -> String {

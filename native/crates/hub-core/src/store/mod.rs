@@ -17,6 +17,12 @@
 //! * **`busy_timeout` is not optional.** Two processes on one file is the normal
 //!   case (the resident shell plus the Tauri app during the migration). Without the
 //!   timeout, a momentary lock becomes a hard error in the middle of a save.
+//! * **The schema version is measured, not stamped.** `schema.rs` keeps the
+//!   migrations as a ladder of rungs and reports which ones are on the file; see
+//!   that module for why `PRAGMA user_version` is the wrong place for the number.
+//!   [`Store::open`] refuses a connection whose ladder did not end at
+//!   [`SCHEMA_VERSION`], so "we mirror the Tauri migrations" is checked on every
+//!   open instead of being asserted in a comment.
 //!
 //! Nothing here changes `journal_mode`, `user_version`, `page_size` or `encoding`.
 //! Switching to WAL would rewrite the file header and leave `-wal`/`-shm` siblings,
@@ -25,6 +31,7 @@
 
 mod attachments;
 mod notes;
+mod schema;
 mod settings;
 
 use std::path::{Path, PathBuf};
@@ -34,6 +41,7 @@ use rusqlite::Connection;
 
 pub use attachments::{StoredAttachment, ATTACHMENT_DIR};
 pub use notes::{NoteRow, NoteWrite};
+pub use schema::{init_schema, schema, Schema, NOTES_DDL, SCHEMA_VERSION, SETTINGS_DDL};
 pub use settings::SettingRow;
 
 /// The `identifier` from `easyflowhub-app/src-tauri/tauri.conf.json`.
@@ -105,11 +113,23 @@ pub struct Store {
 impl Store {
     /// Open (or create) the database at an explicit path and bring the schema to
     /// the shape the Tauri build expects.
+    ///
+    /// Fails rather than hands out a half-migrated connection: if a rung could not
+    /// be built, every later query would answer with a shape nobody declared, and
+    /// the failure would surface as "column not found" inside a save instead of
+    /// here, where the cause is still visible.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let conn = Connection::open(&path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
-        init_schema(&conn)?;
+        let report = init_schema(&conn)?;
+        if let Some(rung) = report.missing.first() {
+            return Err(StoreError::Missing(format!(
+                "schema rung `{rung}` (at {} of {SCHEMA_VERSION} after migrating {})",
+                report.version,
+                path.display()
+            )));
+        }
         Ok(Self { conn, path })
     }
 
@@ -138,6 +158,15 @@ impl Store {
 
     pub fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Which rungs this file has, and what is on it that this build does not know.
+    ///
+    /// Re-measured on demand rather than cached from `open`: another process can
+    /// migrate the file while we are running, and a cached "we are current" would
+    /// then be a claim about a database that no longer exists.
+    pub fn schema(&self) -> Result<Schema> {
+        schema::schema(&self.conn)
     }
 
     /// Version of the SQLite actually linked into this binary. Archived on every
@@ -207,7 +236,9 @@ impl Store {
     pub fn counts(&self) -> Result<Counts> {
         Ok(Counts {
             notes: self.count("notes")?,
-            notes_deleted: if self.table_exists("notes")? && column_exists(&self.conn, "notes", "deleted_at")? {
+            notes_deleted: if self.table_exists("notes")?
+                && schema::column_exists(&self.conn, "notes", "deleted_at")?
+            {
                 self.count_where("notes", "deleted_at IS NOT NULL")?
             } else {
                 None
@@ -236,12 +267,7 @@ impl Store {
     }
 
     fn table_exists(&self, table: &str) -> Result<bool> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            [table],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
+        schema::table_exists(&self.conn, table)
     }
 }
 
@@ -268,117 +294,6 @@ pub fn default_root() -> Result<PathBuf> {
     let appdata = std::env::var("APPDATA")
         .map_err(|_| StoreError::Missing("APPDATA is not set".to_string()))?;
     Ok(PathBuf::from(appdata).join(DEFAULT_APP_DIR))
-}
-
-/// The exact DDL the Tauri build runs, plus its two column-probe migrations.
-///
-/// Kept as one string so a reader can diff it against `notes.rs` and see it is the
-/// same statement; the drift test below parses that file so a column added there
-/// but not here fails the build instead of silently producing a narrower schema.
-pub const NOTES_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS notes (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL DEFAULT '',
-    content TEXT NOT NULL DEFAULT '',
-    tags TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    is_pinned INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_notes_pinned ON notes(is_pinned DESC);
-CREATE INDEX IF NOT EXISTS idx_notes_title ON notes(title);
-"#;
-
-pub const SETTINGS_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-)
-"#;
-
-/// Idempotent: safe on a fresh file, on the live database, and on a database the
-/// Tauri build is about to open again. Deliberately touches nothing else.
-pub fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(NOTES_DDL)?;
-    conn.execute_batch(SETTINGS_DDL)?;
-
-    // Migration 1: `tags`. Mirrors notes.rs by probing rather than assuming, because
-    // the live table may be either shape depending on which build created it.
-    if !column_exists(conn, "notes", "tags")? {
-        conn.execute(
-            "ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
-            [],
-        )?;
-    }
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_notes_tags ON notes(tags)",
-        [],
-    )?;
-
-    // Migration 2: `deleted_at` (soft delete).
-    if !column_exists(conn, "notes", "deleted_at")? {
-        conn.execute("ALTER TABLE notes ADD COLUMN deleted_at TEXT DEFAULT NULL", [])?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notes_deleted_at ON notes(deleted_at)",
-            [],
-        )?;
-    }
-
-    // Inbox tables are owned by the Tauri build's `inbox/schema.rs`. They are created
-    // here so a fresh native-side write can attach a file, and so reading a database
-    // that predates Inbox does not fail. The DDL is the same text; the probes upstream
-    // add `deleted_at` and `source_path` and are mirrored below.
-    conn.execute_batch(INBOX_DDL)?;
-    if !column_exists(conn, "inbox_items", "deleted_at")? {
-        conn.execute(
-            "ALTER TABLE inbox_items ADD COLUMN deleted_at TEXT DEFAULT NULL",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_inbox_items_deleted_at ON inbox_items(deleted_at DESC)",
-            [],
-        )?;
-    }
-    if !column_exists(conn, "inbox_attachments", "source_path")? {
-        conn.execute(
-            "ALTER TABLE inbox_attachments ADD COLUMN source_path TEXT",
-            [],
-        )?;
-    }
-
-    Ok(())
-}
-
-const INBOX_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS inbox_items (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('text', 'link', 'image', 'file', 'audio')),
-    title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
-    source TEXT NOT NULL DEFAULT 'manager', context TEXT NOT NULL DEFAULT '',
-    captured_at TEXT NOT NULL, archived_at TEXT DEFAULT NULL,
-    converted_note_id TEXT DEFAULT NULL
-);
-
-CREATE TABLE IF NOT EXISTS inbox_attachments (
-    id TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL REFERENCES inbox_items(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('image', 'file', 'audio', 'transcript')),
-    name TEXT NOT NULL, mime_type TEXT NOT NULL, filename TEXT NOT NULL UNIQUE,
-    size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_inbox_items_captured_at ON inbox_items(captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_inbox_items_archived_at ON inbox_items(archived_at, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_inbox_attachments_item_id ON inbox_attachments(item_id, created_at);
-"#;
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let sql = format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1");
-    let count: i64 = conn.query_row(&sql, [column], |row| row.get(0))?;
-    Ok(count > 0)
 }
 
 #[cfg(test)]
@@ -441,27 +356,87 @@ mod tests {
 
     #[test]
     fn the_legacy_migrations_are_all_mirrored() {
-        // Drift guard. `notes.rs` grows columns by `ALTER TABLE notes ADD COLUMN x`;
-        // this fails to compile if that file moves, and fails at run time if it names
-        // a column this module does not create.
-        const LEGACY: &str = include_str!("../../../../../easyflowhub-app/src-tauri/src/notes.rs");
+        // Drift guard, against both shapes the Tauri build grows a column in:
+        //   * `CREATE TABLE` (one column per line, `source_path` arrived this way);
+        //   * `ALTER TABLE ... ADD COLUMN` (the 0.1.x migrations).
+        // Either one landing upstream without landing here means the two processes
+        // disagree about the same file, and the one that opened it first wins.
+        const NOTES: &str = include_str!("../../../../../easyflowhub-app/src-tauri/src/notes.rs");
+        const INBOX: &str =
+            include_str!("../../../../../easyflowhub-app/src-tauri/src/inbox/schema.rs");
+
+        for (source, table, declared) in [
+            (NOTES, "notes", schema::NOTES_COLUMNS),
+            (INBOX, "inbox_items", schema::INBOX_ITEM_COLUMNS),
+            (INBOX, "inbox_attachments", schema::INBOX_ATTACHMENT_COLUMNS),
+        ] {
+            let upstream = upstream_columns(source, table);
+            assert_eq!(
+                upstream, declared,
+                "{table}: hub-core does not declare the columns the Tauri build creates"
+            );
+        }
+
+        // And the file the DDL claims to produce really has them, in that order.
         let store = memory();
-        let mut checked = 0;
-        for line in LEGACY.lines() {
-            let Some(rest) = line.split("ALTER TABLE notes ADD COLUMN").nth(1) else {
+        for (table, declared) in [
+            ("notes", schema::NOTES_COLUMNS),
+            ("inbox_items", schema::INBOX_ITEM_COLUMNS),
+            ("inbox_attachments", schema::INBOX_ATTACHMENT_COLUMNS),
+        ] {
+            let actual = schema::columns(&store.conn, table).expect("probe");
+            assert_eq!(actual, declared, "{table}: physical column order differs");
+        }
+    }
+
+    /// Columns a table gets in `notes.rs` / `inbox/schema.rs`, in physical order: the
+    /// ones the base `CREATE TABLE` names, then the ones an `ALTER` appends.
+    fn upstream_columns(source: &str, table: &str) -> Vec<&'static str> {
+        // Leaked on purpose: the assertion compares against `&'static str` tables, and
+        // a test process leaking a few dozen bytes is cheaper than a second type.
+        let source: &'static str = Box::leak(source.to_string().into_boxed_str());
+        let mut out: Vec<&'static str> = Vec::new();
+
+        let marker = format!("CREATE TABLE IF NOT EXISTS {table} (");
+        if let Some(start) = source.find(&marker) {
+            let body = &source[start + marker.len()..];
+            if let Some(end) = body.find(");") {
+                for line in body[..end].lines() {
+                    let line = line.trim();
+                    let Some(first) = line.split_whitespace().next() else {
+                        continue;
+                    };
+                    // Table-level constraints, not columns.
+                    if matches!(first, "CHECK" | "FOREIGN" | "PRIMARY" | "UNIQUE") {
+                        continue;
+                    }
+                    let name = first.trim_end_matches(',');
+                    if !name.is_empty() {
+                        out.push(name);
+                    }
+                }
+            }
+        }
+
+        let alter = format!("ALTER TABLE {table} ADD COLUMN ");
+        for line in source.lines() {
+            let Some(rest) = line.split(&alter).nth(1) else {
                 continue;
             };
-            let column = rest.split_whitespace().next().unwrap_or("");
-            if column.is_empty() {
-                continue;
+            if let Some(name) = rest.split_whitespace().next() {
+                out.push(name);
             }
-            assert!(
-                column_exists(&store.conn, "notes", column).expect("probe"),
-                "notes.rs migrates column `{column}` but hub-core::store does not create it"
-            );
-            checked += 1;
         }
-        assert!(checked >= 2, "expected at least two legacy migrations, saw {checked}");
+
+        // `tags` is both in the base statement and in an `ALTER` (the 0.1.x path), so
+        // the union keeps the first position and drops the repeat.
+        let mut unique: Vec<&'static str> = Vec::new();
+        for name in out {
+            if !unique.contains(&name) {
+                unique.push(name);
+            }
+        }
+        unique
     }
 
     #[test]
