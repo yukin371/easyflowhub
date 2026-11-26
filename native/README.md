@@ -89,6 +89,7 @@ python scripts/check-native-drag.py         # Q10 拖动：左/中/右槽位移�
 python scripts/check-native-recover.py      # Q24 数据恢复：卡片出现、模态、三个按钮各自的结果、陈旧草稿静默删（16 项）
 python scripts/check-native-size.py         # C5 尺寸记忆：拖完写盘、schema 补号、别的键不丢、重启后新笔记照用（11 项）
 python scripts/check-native-edge.py         # Q3 边缘 resize：四条边各改各的、下限 150×60、光标形状、认领按下（23 项）
+python scripts/check-native-store-schema.py # store schema：六级梯子量出版本、旧库迁移、未知列只报不删、开门不写盘（24 项）
 ```
 
 `check-native-size.py` 是例外：它先试真拖窗口边缘，而这条路在 2k 之前是不通的（报告记 `drag=real|programmatic`，原因见"已知捷径"里无边框窗口那条）。Q3 之后边缘由应用自己画（`app/src/note/edge.rs`），`check-native-edge.py` 直接用 `SendInput` 拖边，不再需要 `SetWindowPos` 兜底。
@@ -146,7 +147,9 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | 首帧不是"直接 blit 上一帧纹理" | eframe 不暴露目标帧缓冲 | 实测量不足 60 ms 时改 `egui_glow` 手动循环接管 swap + blit |
 | 面板内容是静态样例 | 只为预热真实字符集与布局，不代表最终 UI | Phase 2 换成真实动作/最近项 |
 | 无中键钩子 | 不在 60 ms 路径上，属 T0 parity | Phase 1 与功能一起落地（托盘已在 1b.3 落地，见计划文档 §8.6） |
-| `store` 没有 schema 版本号，只有与 Tauri 同文的幂等列探测 | 现库 `user_version = 0`，单方面打版本号会让两套迁移体系分叉 | Phase 2 统一迁移器与版本号，原生与 Tauri 共用一份 |
+| `store` 的 schema 版本号不写进文件，而是从形状量出来 | 现库 `user_version = 0`，而 S3 门禁断言原生写之后它仍是 0；再打一个只有原生维护的号，Tauri 加了迁移时它就会撒谎 | `store/schema.rs` 六级梯子：`SCHEMA_VERSION` 是构建的上限，`Schema::version` 是"最高一级探测通过的编号"，`Store::open` 在梯子没到顶时直接拒绝连接。门禁 `check-native-store-schema.py`（旧库/新列/索引缺失/重复开门四个场景） |
+| `store` 不跑收件箱的 `CHECK` 重建，只报告 | SQLite 改不了 `CHECK`，那条迁移要 `RENAME` 两张表、重建、按位置搬数据——全产品最危险的一段 DDL，不该由只来读一条笔记的进程做 | `Schema::legacy_capture_kinds` 从 `sqlite_master.sql` 里找 `'audio'`／`'transcript'` 并上报；重建仍归 Tauri 下次启动 |
+| `store` 没开 `PRAGMA foreign_keys` | 与 Tauri 的 `inbox::init_db` 不一致，所以 `ON DELETE CASCADE` 对原生写无效 | `store_attachment` 显式查父行（`StoreError::Missing`）。这是连接级行为，独立于 schema 版本号，尚未立项 |
 | `store` 只覆盖 notes / settings / 附件的写入，不含 Inbox 完整 capture 路径 | S3 只回答"文件还读不读得动"，capture 是产品逻辑 | Phase 2 随 Inbox 迁移一起搬 |
 | `store` 保持 `journal_mode = delete`，不切 WAL | 切 WAL 会改文件头并留 `-wal`/`-shm`，影响备份/同步/"复制 db"的语义，属产品级决定 | 若要切，先写 ADR 并复验备份链路；并发已有 `IMMEDIATE` + 5 s `busy_timeout` 兜底 |
 | 文本岛无 Markdown 装饰、无图片粘贴 | 属 P3；装饰画在文本控件之上，不改变 S2 的结论 | P3 |
@@ -162,7 +165,7 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 | 置顶用 `SetWindowPos`，不用 `ViewportCommand::WindowLevel` | winit 改 level 时按自己缓存的 `WindowFlags` 重算整套 `WS_*`，而本窗口是 `with_visible(false)` 建、`move_on_screen` 显示的；第一次改就把 `WS_VISIBLE` 抹掉，窗口从桌面消失（实测 2026-11-26，`IsWindowVisible` false） | `hub_win::window::set_topmost` 只动 z-order 位（`SWP_NOACTIVATE`）。**同样是这条约束**：任何让 winit 重算样式的 viewport 命令（decorations、visible）都会隐藏笔记窗口，要加这类命令先读 §8.11 |
 | 改键的"写盘"方向没有端到端门禁 | 需要点设置页里的键位再按新键，同上一条的坐标问题 | 反向（文件 → 表 → OS 注册 → 真按键生效）由 `check-native-manager.py` 的 K1/K2 判；写盘一侧由 `SpikeSettings::save`（tmp + rename）与 `Table::rebind` 的单测钉住 |
 | 工作台只做了笔记 / 回收站 / 待办 / 设置四个分区 | 收件箱与脚本分区依赖 capture 与执行链路，属 P3 | 随 P3 迁移一起补；待办分区只读正文里的 `- [ ]` 行，不写回 |
-| `store` 的 schema 版本号仍未打 | 现库与 Tauri 同文、`user_version = 0`；单方面打版本号会让两套迁移分叉 | 与 Tauri 共用一份迁移器时一起定，见上一处说明 |
+| `store` 的迁移梯子只装在原生侧 | Tauri 仍按列探测迁移，两边共用一份迁移器属 Phase 2 | 这版只能保证"量出来的版本 == Tauri 建出来的形状"：漂移守卫比 `notes.rs` / `inbox/schema.rs` 的列、`check-native-store-schema.py` 比真实场景，`Schema::ahead` 报出新版本加的列 |
 
 ## 度量口径
 
