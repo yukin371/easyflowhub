@@ -16,7 +16,8 @@ use hub_core::{Chord, Command, Scope, SpikeSettings};
 use hub_ui::LauncherAction;
 use hub_ui::manager::Tab;
 
-use super::{register_hotkeys, Hub, Request};
+use super::boot::register_hotkeys;
+use super::{Hub, Request};
 use crate::manager;
 
 /// The queue entry a global command posts.

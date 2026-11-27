@@ -39,6 +39,9 @@ pub struct Args {
     pub editor: bool,
     /// Open the Phase 1 quick-note shell instead of the spike (batch 1a).
     pub note: bool,
+    /// Bring up the product process with **no** note window: hotkeys, tray and the
+    /// parked panel, nothing on screen. The shape a login entry starts in.
+    pub resident: bool,
     /// Open this note id in the quick-note shell instead of creating a new note.
     pub note_id: Option<String>,
     /// Run this many timed keystrokes in the island, then print the distribution.
@@ -83,6 +86,7 @@ impl Default for Args {
             no_vsync: false,
             editor: false,
             note: false,
+            resident: false,
             note_id: None,
             editor_bench: None,
             launcher_bench: None,
@@ -119,6 +123,7 @@ easyflowhub-native — S1 shell spike
   --no-vsync             diagnostic: measure without vsync
   --editor               draw the RichEdit island instead of the action grid
   --note                 open the Phase 1 quick-note shell (title strip + island)
+  --resident             same process, no note window: tray + hotkeys + parked panel
   --note-id <uuid>       open that note in the shell instead of a new one
   --editor-bench <N>     type N timed characters into the island, print, exit
   --launcher-bench <N>   reveal the launcher N times (product path), print, exit
@@ -196,6 +201,13 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
             "--no-vsync" => args.no_vsync = true,
             "--editor" => args.editor = true,
             "--note" => args.note = true,
+            "--resident" => {
+                // The resident process *is* the product process, minus the first
+                // window. Implying `note` here is what keeps one code path: the
+                // alternative is a second composition root that would drift.
+                args.resident = true;
+                args.note = true;
+            }
             "--note-id" => args.note_id = Some(value("--note-id")?),
             "--editor-budget-p95" => {
                 args.editor_budget_p95_ms = value("--editor-budget-p95")?
@@ -242,6 +254,13 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
             "-h" | "--help" => args.help = true,
             other => return Err(format!("unknown argument '{other}'; try --help")),
         }
+    }
+
+    // Refused rather than ignored: `--resident --note-id x` says "open x" and "open
+    // nothing" at once, and the only silent resolution would be the one that makes
+    // the flag look broken.
+    if args.resident && args.note_id.is_some() {
+        return Err("--resident opens no window, so --note-id has nothing to open".to_string());
     }
 
     Ok(args)
@@ -298,6 +317,19 @@ mod tests {
         let args = parse_args(&["app", "--launcher-bench", "50"]).unwrap();
         assert_eq!(args.launcher_bench, Some(50));
         assert!(args.note);
+    }
+
+    #[test]
+    fn resident_is_the_product_process_without_the_first_note() {
+        let args = parse_args(&["app", "--resident"]).unwrap();
+        assert!(args.resident);
+        assert!(args.note, "one composition root, not a second one");
+        assert!(args.note_id.is_none());
+    }
+
+    #[test]
+    fn resident_refuses_a_note_to_open() {
+        assert!(parse_args(&["app", "--resident", "--note-id", "abc"]).is_err());
     }
 
     #[test]

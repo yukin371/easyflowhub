@@ -132,9 +132,17 @@ impl Handle {
         if self.visible.swap(false, Ordering::SeqCst) {
             // Hiding needs the UI thread (see the module comment); the epoch rides
             // along so a show that happens first is not undone by this hide.
+            self.log.mark(epoch, "launcher_toggle", "action=hide");
             self.push(Request::LauncherHidden { epoch });
             return;
         }
+
+        // One line per press, on the hotkey thread, before any work. The hide path
+        // used to leave no trace at all, so "the key did nothing" and "the key hid
+        // the panel" read the same in the log -- and a press that never becomes a
+        // `WM_HOTKEY` leaves nothing behind either. `launcher_shown` follows this
+        // line by the move's duration, which is where a slow reveal hides.
+        self.log.mark(epoch, "launcher_toggle", "action=show");
 
         let cursor = hub_win::cursor_pos().unwrap_or((0, 0));
         let (work, monitor_scale) = {

@@ -4,13 +4,13 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
-- `2026-11-27` **T-Gate 0 的 Tauri 侧关闭：本进程只剩一个按需 Manager，宿主 18 MB、0 个 WebView2 子进程**。退出条件是"Tauri 版必须停止创建 launcher / 快速笔记的 webview"，做法是从配置层拿掉，不是启动后藏起来。
-  - **默认接管，回退要显式**：`--legacy-ui` 或 `EFH_LEGACY_UI=1`（flag 压过环境变量，有单测）。默认"继续做旧事"的开关会让过渡永久化——两个栈都能用，没人知道是谁应的键。
-  - **门禁读的计划就是注册用的计划**：`shell::shortcut_plan` 单一来源；`--shell-report` 在 `tauri::Builder` 之前返回，不碰单实例互斥、不拉 WebView，于是能在"用户那份正在跑"的机器上判构建行为。
-  - **运行时抓到结构门禁抓不到的**：第一版把 `Ctrl+Alt+M` 留在 Tauri，结构门禁 15/15 全绿，真跑起来原生壳当场 `RegisterHotKey failed (1409)`；改成接管态零热键后 `hotkeys registered=5 failed=0`，`Ctrl+Alt+Space` 落到原生面板 `shown_ms=6.94`。
-  - **证据**：`check-tauri-takeover.py` 16/16；同机实测宿主 18 MB / 0 webview（旧构建 58.9 MB + webview）、`cargo test --lib` 100 项。一次偶发 `logging` 单测（单跑复跑均过）照实记下。
-  - **已知差异**：选区→翻译随 webview 下线（下一批迁移）、Manager 里"新建快速笔记"报错、两个托盘。**还没做**：原生壳没有"常驻但不开笔记"的入口（无参跑的是 S1 spike，产品壳在 `--note` 且启动即 spawn 一个笔记窗口）。详见 [plans/active/2026-11-27-tauri-handover-t-gate-0.md](../plans/active/2026-11-27-tauri-handover-t-gate-0.md)。
-
+- `2026-11-27` **原生常驻入口 `--resident`：零窗口、满热键，`hub.rs` 顺带拆回硬顶之下**。登录自启要的是"什么都没有，但什么都能叫出来"——托盘在、五个组合在、面板已建好藏在屏外。
+  - `--resident` 在解析参数时把 `note` 置真，`main` 仍只有一条 `hub::run`：另起一个入口跑同一套控制器，迟早和笔记那条分叉，而它们抢的是同一批热键。"零笔记"复用 `settle()`（有托盘是静止态，没托盘就退）；`--resident --note-id` 拒绝，不猜。开库 / 键表 / 注册 / 托盘四件"只做一次"的搬进 `hub/boot.rs`（228 行），`hub.rs` 795 → 605 行。
+  - 证据：`check-native-resident.py` 16/16 连跑 2 次（零窗口启动 → 面板已 parked → F9 唤起 → F10 出笔记且 PID 不变 → F11 关掉仍在原地 → 再唤起）；回归 notes 25 / manager 19 / switcher 22 / store-schema 24 / launcher 25、`cargo test` 265 项。详见 [plans/active/2026-11-27-tauri-handover-t-gate-0.md](../plans/active/2026-11-27-tauri-handover-t-gate-0.md) §7。
+- `2026-11-27` **T-Gate 0 的 Tauri 侧关闭：本进程只剩一个按需 Manager，宿主 18 MB、0 个 WebView2 子进程**。退出条件"停止创建 launcher / 快速笔记的 webview"在配置层兑现（`app.windows` 清空），不是启动后藏起来。
+  - **默认接管、回退显式**：`--legacy-ui` 或 `EFH_LEGACY_UI=1`（flag 压过环境变量，有单测）。默认"继续做旧事"的开关会让过渡永久化——两个栈都能用，没人知道是谁应的键。
+  - **连 `Ctrl+Alt+M` 也要让，这是运行时抓到的**：第一版把它留在 Tauri，结构门禁 15/15 全绿，真跑起来原生壳当场 `RegisterHotKey failed (1409)`；改成零热键后 `hotkeys registered=5 failed=0`。
+  - **证据**：`check-tauri-takeover.py` 16/16；同机实测宿主 18 MB / 0 webview（旧构建 58.9 MB + webview）。**还没做**：选区 / 翻译迁移（见 §5 已知差异）。详见 [plans/active/2026-11-27-tauri-handover-t-gate-0.md](../plans/active/2026-11-27-tauri-handover-t-gate-0.md)。
 - `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
   - **关闭 = 挪到 `-30000,-30000`，不是 `SW_HIDE`**：后者停掉 `WM_PAINT` 投递，winit 收不到重绘、eframe 循环停摆，藏起来的第九次唤起会显示第八次的画面；"已关闭"的判据因此是矩形在任何显示器之外。
   - **揭示在热键线程、隐藏在 UI 线程**：四步 Win32 调用省下 30–47 ms；`GetFocus` 只回答调用线程，故隐藏走 `Request::LauncherHidden { epoch }` 由 UI 线程 `park`，`epoch` 挡住"按一下、UI 醒来前又按一下"的交叉。

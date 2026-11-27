@@ -55,7 +55,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-c2-ime-acceptance.md](./active/2026-11-25-c2-ime-acceptance.md)：C2 三种输入法人机验收清单（**待执行**，Phase 1 第一周硬性）
 - [2026-11-25-native-quicknote-parity.md](./active/2026-11-25-native-quicknote-parity.md)：快速笔记 T0 parity 28 条 A 级判据 + 6 条允许差异（G1 的判据对象）
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
-- [2026-11-27-tauri-handover-t-gate-0.md](./active/2026-11-27-tauri-handover-t-gate-0.md)：Tauri 版停掉 launcher / 快速笔记 / 待办卡片 webview（T-Gate 0；还剩原生常驻入口与选区翻译迁移）
+- [2026-11-27-tauri-handover-t-gate-0.md](./active/2026-11-27-tauri-handover-t-gate-0.md)：Tauri 版停掉 launcher / 快速笔记 / 待办卡片 webview；原生 `--resident` 补上（T-Gate 0 只剩选区翻译迁移）
 
 ### Completed（20）
 

@@ -1,6 +1,6 @@
 # T-Gate 0：Tauri 版停掉那些 webview（默认接管，`--legacy-ui` 回退）
 
-> 状态：`active`（Tauri 侧已交付并门禁化；T-Gate 0 还剩两件：原生常驻入口、选区/翻译迁移）
+> 状态：`active`（Tauri 侧已交付并门禁化；原生常驻入口见 §7；T-Gate 0 只剩选区 / 翻译迁移一件）
 >
 > 上游判据：[原生重构总设计](./2026-11-24-native-runtime-redesign.md) §Phase 1 过渡期约束表 T-Gate 0——「Tauri 版必须停止创建 launcher / 快速笔记的 webview，只保留一个按需的 Manager 实例」
 > 归属批次：Phase 1 收口（C2 通过、Launcher 产品化之后）
@@ -79,6 +79,44 @@ Tauri 版从"两个栈都在服务"改成"只有一个按需的 Manager"：启�
 
 ## 6. 没做的（T-Gate 0 真正关闭还缺两件）
 
-1. **原生壳没有"常驻但不开笔记"的入口**。`easyflowhub-native.exe` 无参跑的是 S1 spike 面板，产品壳在 `--note` 分支，而 `hub::new` 启动时无条件 `spawn` 一个笔记窗口。要让安装器/自启动拉起"只有托盘 + parked 面板"的壳，需要 `--resident`（不 spawn 首窗；`settle()` 已经能在 notes=0 且有托盘时留在原地）。
-2. **选区与翻译迁移**（见上）。
+1. ~~**原生壳没有"常驻但不开笔记"的入口**~~ —— 已交付，见 §7。
+2. **选区与翻译迁移**（见 §5）。
 3. 之外：`--shell-report` 只证明构建行为，不证明"启动之后 0 个 webview"——后者靠本文第 4 节那次实测。把实测脚本化需要先解决单实例互斥（第二个进程会转发 argv 并退出），留待 T-Gate 1。
+
+## 7. 原生常驻入口 `--resident`：零窗口、满热键
+
+登录自启要的不是"打开一个笔记"，而是"什么都没有，但什么都能叫出来"：托盘在、五个组合在、面板已经建好藏在屏外。`easyflowhub-native.exe --resident` 就是这个形状。
+
+**改在哪**
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/args.rs` | `--resident`（隐含 `--note`，即同一个组合根）；`--resident` + `--note-id` 直接拒绝（退出码 64） |
+| `app/src/hub.rs` | `Config.resident`；`Hub::new` 第一帧不 `spawn`，改为调 `settle()`；`hub_start` 记 `notes=0 resident=true` |
+| `app/src/hub/boot.rs`（新，228 行） | 把"只做一次"的四件事从 `hub.rs` 搬出来：开库、解析键表、注册热键、装托盘。`hub.rs` 795 → 605 行，回到硬顶之下 |
+| `app/src/launcher.rs` | 每次按键在热键线程打一行 `launcher_toggle action=show|hide`：`launcher_shown` 是 UI 线程写的，两者之间那段延迟本身是另一个问题 |
+| `scripts/check-native-resident.py`（新） | 16 项 |
+
+**三个不显然的决定**
+
+1. **常驻不是一个新模式，是同一个进程少开一个窗口。** `--resident` 在 `args` 里就把 `note` 置真，`main` 只有一条 `hub::run` 路径。另起一个"常驻入口"来跑同一套控制器，迟早和笔记那条分叉——而它们要抢的是同一批热键。
+2. **`settle()` 原样复用，不新写判据。** 它的语义本来就是"没有笔记了：有托盘是静止态，没托盘是用户够不着的进程，得结束"。启动时直接问它，就不用第二处判断"什么时候该退"。证据是 `hub_idle notes=0 tray=0x…` 与 `hub_exit` 计数为 0。
+3. **`--resident --note-id x` 拒绝，不猜。** 一句话说"打开 x"又说"什么都不开"，唯一的静默解法总有一半是错的。退出码 64 + 一句原因，写在 `parse` 里而不是 `main` 里，这样单测就能钉住。
+
+**证据（`check-native-resident.py` 16/16，连跑 2 次）**
+
+| 判什么 | 结果 |
+|---|---|
+| 启动零窗口 | `hub_start notes=0 resident=true`，1.5 s 后笔记窗口 0 个 |
+| 面板先于任何笔记存在 | `launcher_window parked=true`，`rect=(-30000,-30000,660,1290)` |
+| 零笔记是静止态 | `hub_idle notes=0 tray=0x29081C`，进程仍活 |
+| 三个组合都注册上 | launcher / new_note / close_all → F9/F10/F11 |
+| 热键唤起面板 | `launcher_shown shown_ms=2.93 move_ms=… focused=true`，且不产生笔记 |
+| 热键开笔记 | `note_spawn id=0 live=1`，窗口 1 个，PID 不变 |
+| 关掉最后一个笔记仍在 | `hub_idle`（第二次）+ `tray=0x…`，窗口 0 个，进程活 |
+| 之后还能用 | 第二次 `launcher_shown`，面板回到屏内 |
+| 全程没把自己当该退的进程 | `hub_exit` 行数 = 0 |
+
+**门禁顺手抓到的一件事**：面板落定（`park`）后 50 ms 内注入的组合，系统会整个丢掉——日志里连 `launcher_toggle` 都没有。用上一提交的二进制复测同样丢，所以它是注入与隐藏抢同一个前台切换的竞速，不是产品回归；真人下一次按键是秒级之后。`check-native-launcher.py` 的 `reveal()` 因此先等"已 parked"再等 250 ms 才按，`check-native-resident.py` 也在 Esc 后等落地。
+
+**还没做**：原生壳没有单实例互斥。自启 + 手动启动会得到第二个托盘图标和一轮 `RegisterHotKey failed (1409)`。这是 Tauri 版有、原生版还没有的一件，做它之前不该把自启真指向原生 exe。

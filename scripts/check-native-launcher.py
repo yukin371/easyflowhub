@@ -250,6 +250,15 @@ class Session:
         return last
 
     def reveal(self, timeout: float = 5.0) -> bool:
+        # An injected chord pressed within ~50 ms of the panel parking is dropped
+        # by the OS: the foreground changed under the input, the key never becomes
+        # a `WM_HOTKEY`, and the log shows no `launcher_toggle` line at all. It was
+        # measured identically on this build and on the one before it, so it is the
+        # injection racing the hide rather than the product -- and a hand presses
+        # again seconds later, not 50 ms later. Settle first, then measure.
+        if off_screen(rect(self.panel())):
+            wininput.wait_for(lambda: off_screen(rect(self.panel())), 2)
+            time.sleep(0.25)
         before = self.count("launcher_shown")
         self.press()
         if not self.later("launcher_shown", before, timeout):

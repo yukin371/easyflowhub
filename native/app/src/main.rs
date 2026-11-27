@@ -113,7 +113,8 @@ fn main() {
     };
     // Phase 1: the quick note is its own process model now -- a parked controller
     // window owns the event loop and every note is a viewport of it (batch 1b.2),
-    // so closing one note no longer ends the process by accident.
+    // so closing one note no longer ends the process by accident. `--resident`
+    // comes through this same branch and skips only the first spawn.
     if parsed.note {
         let log_path = parsed
             .log_path
@@ -139,6 +140,7 @@ fn main() {
             log,
             store_root: parsed.store_root.clone(),
             note_id: parsed.note_id.clone(),
+            resident: parsed.resident,
             settings_path: settings_path.clone(),
             no_font: parsed.no_font,
             font_heap: parsed.font_heap,

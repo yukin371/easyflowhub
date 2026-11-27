@@ -37,8 +37,8 @@ use hub_core::{
     place_note, Command, NoteRow, NoteSpec, Rect, SpikeSettings, Store, Table,
 };
 use hub_ui::LauncherAction;
-use hub_win::hotkey::{Binding, HotkeySet, PressHandler};
-use hub_win::tray::{Tray, TrayCommand};
+use hub_win::hotkey::HotkeySet;
+use hub_win::tray::Tray;
 use hub_win::MonitorCache;
 
 use crate::launcher;
@@ -46,6 +46,7 @@ use crate::log::Log;
 use crate::manager;
 use crate::note::{self, NoteShell, Shared};
 
+mod boot;
 mod commands;
 
 /// Title of the controller window. Never shown, never activated.
@@ -54,21 +55,6 @@ pub const HUB_TITLE: &str = "easyflowhub-hub";
 /// Same debounce the spike uses: QQ/WeChat hook the same combinations, so one
 /// physical press can arrive as two or three `WM_HOTKEY` messages.
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(250);
-
-/// The app icon, embedded so the tray needs no file next to the executable.
-///
-/// This is the `.ico` the Tauri build shipped, moved here because the native build
-/// is now the thing that has to draw it. `hub_win::tray` parses the frame it wants;
-/// an unreadable asset falls back to the system icon and says so in the log.
-const APP_ICON: &[u8] = include_bytes!("../assets/icon.ico");
-
-/// The tray's hover text.
-///
-/// It deliberately does **not** name a combination. The tooltip is set once, when
-/// the icon is installed, so any key printed here would be the key in force at
-/// startup -- and after a rebind it would be a lie the user cannot fix without a
-/// restart. The workbench shows the live table.
-const TRAY_TOOLTIP: &str = "EasyFlowHub · 快速笔记";
 
 /// Work that has to be executed on the event-loop thread.
 ///
@@ -111,6 +97,13 @@ pub struct Config {
     pub store_root: Option<PathBuf>,
     /// `--note-id`: open an existing note instead of a new one.
     pub note_id: Option<String>,
+    /// `--resident`: start without creating a note.
+    ///
+    /// The controller is the same either way -- this only decides whether the first
+    /// frame spawns a window. It exists because the login entry must own the keys
+    /// and the tray without putting a note on screen, and because "nothing is open"
+    /// with a tray is a resting state, not a reason to exit (`settle`).
+    pub resident: bool,
     /// Where the settings file lives. Needed by the workbench to persist a
     /// rebind; the notes only ever read the values loaded at startup.
     pub settings_path: PathBuf,
@@ -210,6 +203,9 @@ struct Hub {
 impl Hub {
     fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
         let ctx = cc.egui_ctx.clone();
+        // Read before the struct literal moves the fields it needs: whether to open
+        // a window on the first pass is the only difference between the two modes.
+        let resident = config.resident;
 
         // Fonts live on the `Context`, which every viewport shares. Installing
         // them per note would rebuild the atlas once per window for no gain.
@@ -242,8 +238,8 @@ impl Hub {
                 .mark(0, "hub_window", "parked=false reason=handle_not_found"),
         }
 
-        let table = build_shortcuts(&config);
-        let store = open_store(&config);
+        let table = boot::build_shortcuts(&config);
+        let store = boot::open_store(&config);
         // Resolved before the first window exists: a note that cannot find its row
         // must open as a new note and say so, not open empty and overwrite the id.
         let existing = config.note_id.as_ref().map(|id| match store.as_ref() {            Some(store) => {
@@ -295,25 +291,34 @@ impl Hub {
             launcher,
             released: None,
         };
-        hub._hotkeys = register_hotkeys(
+        hub._hotkeys = boot::register_hotkeys(
             hub.inbox.clone(),
             ctx.clone(),
             &hub.log,
             &hub.shortcuts.read().unwrap_or_else(|poisoned| poisoned.into_inner()),
             hub.launcher.handle(),
         );
-        hub.tray = install_tray(hub.inbox.clone(), ctx.clone(), &hub.log);
+        hub.tray = boot::install_tray(hub.inbox.clone(), ctx.clone(), &hub.log);
         hub.log.mark(
             0,
             "hub_start",
             &format!(
-                "notes=1 lite={} scale={:.2} root={HUB_TITLE} tray={} launcher=viewport",
+                "notes={} resident={resident} lite={} scale={:.2} root={HUB_TITLE} tray={} launcher=viewport",
+                if resident { 0 } else { 1 },
                 hub.lite,
                 hub.scale,
                 if hub.tray.is_some() { "on" } else { "off" }
             ),
         );
-        hub.spawn(&ctx, existing.flatten());
+        if resident {
+            // Nothing to open. `settle` is the same decision the last note's close
+            // makes: with a tray this is a resting state, without one it is a
+            // windowless process nobody can reach, so it ends here instead of
+            // sitting invisible with no icon.
+            hub.settle();
+        } else {
+            hub.spawn(&ctx, existing.flatten());
+        }
         hub
     }
 
@@ -595,200 +600,6 @@ impl eframe::App for Hub {
         // so the controller keeps nudging until every note is attached.
         if self.notes.iter().any(|handle| !handle.lock().attached()) {
             ctx.request_repaint_after(Duration::from_millis(50));
-        }
-    }
-}
-
-/// Resolve the shortcut table from the settings file and say what it resolved to.
-///
-/// Logged line by line because this is the only place the effective binding of
-/// anything is knowable: the tooltips show it too, but a support question ("my
-/// key does nothing") needs the table that was actually in force, including the
-/// overrides that were rejected and the conflicts.
-fn build_shortcuts(config: &Config) -> Table {
-    let table = Table::build(&config.settings.shortcuts);
-    for (command, chord) in table.globals() {
-        config.log.mark(
-            0,
-            "shortcut",
-            &format!("scope=global command={} key={}", command.id(), chord.display()),
-        );
-    }
-    for (command, chord) in table.window() {
-        config.log.mark(
-            0,
-            "shortcut",
-            &format!("scope=window command={} key={}", command.id(), chord.display()),
-        );
-    }
-    for note in table.notes() {
-        config.log.mark(0, "shortcut_rejected", note);
-    }
-    table
-}
-
-/// The queue entry a global command posts (see `commands::request_for`).
-fn request_for(command: Command) -> Option<Request> {
-    commands::request_for(command)
-}
-/// Open `notes.db` once for the process.
-///
-/// A failure is not fatal: the note windows are the product, and a shell that refused
-/// to open because the database was locked or corrupt would take the notes down with
-/// it. The log line is what makes "my notes are not being saved" answerable -- without
-/// it, a silent in-memory note looks exactly like a broken save.
-fn open_store(config: &Config) -> Option<Arc<Mutex<Store>>> {
-    let opened = match &config.store_root {
-        Some(root) => Store::open_in(root),
-        None => Store::open_default(),
-    };
-    match opened {
-        Ok(store) => {
-            config.log.mark(
-                0,
-                "store",
-                &format!(
-                    "open=true path={} sqlite={} notes={:?}",
-                    store.path().display(),
-                    store.sqlite_version(),
-                    store.counts().ok().and_then(|counts| counts.notes)
-                ),
-            );
-            Some(Arc::new(Mutex::new(store)))
-        }
-        Err(error) => {
-            config.log.mark(
-                0,
-                "store",
-                &format!("open=false error=\"{error}\" notes=memory-only"),
-            );
-            None
-        }
-    }
-}
-
-/// One closure per combination: it appends the request and wakes ROOT.
-///
-/// `request_repaint_of(ROOT)` rather than `request_repaint()`: outside a pass the
-/// context's "current viewport" is whatever ran last, and waking a note would leave
-/// the request sitting in the queue until that note's own 500 ms tick.
-fn press_handler(inbox: Arc<Mutex<Vec<Request>>>, ctx: egui::Context, request: Request) -> PressHandler {
-    // A press handler is an `Fn`, so it runs many times and cannot move its
-    // payload out. `Request` gained a `String` variant in 2c (opening a note by
-    // id), which is what ended the `Copy` it used to have.
-    let request = Arc::new(request);
-    Arc::new(move || {
-        inbox
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push((*request).clone());
-        ctx.request_repaint_of(egui::ViewportId::ROOT);
-    })
-}
-
-fn register_hotkeys(
-    inbox: Arc<Mutex<Vec<Request>>>,
-    ctx: egui::Context,
-    log: &Log,
-    table: &Table,
-    launcher: Arc<launcher::Handle>,
-) -> Option<HotkeySet> {
-    let mut bindings: Vec<Binding> = Vec::new();
-    for (command, chord) in table.globals() {
-        // The launcher is not a queue entry: its handler moves the window on the
-        // hotkey thread (see `launcher::binding`).
-        if command == Command::Launcher {
-            bindings.push(launcher::binding(&chord, launcher.clone()));
-            continue;
-        }
-        let Some(request) = request_for(command) else {
-            log.mark(
-                0,
-                "hotkey_skipped",
-                &format!("command={} reason=no_request", command.id()),
-            );
-            continue;
-        };
-        if table.shadowed().contains(&command) {
-            // Two commands on one combination cannot both be registered; the
-            // table already decided which one owns the key, so registering the
-            // loser would only produce a second `RegisterHotKey` failure.
-            log.mark(
-                0,
-                "hotkey_skipped",
-                &format!("command={} key={} reason=conflict", command.id(), chord.display()),
-            );
-            continue;
-        }
-        bindings.push(Binding::new(
-            chord.display(),
-            press_handler(inbox.clone(), ctx.clone(), request),
-        ));
-    }
-
-    match HotkeySet::spawn(bindings, HOTKEY_DEBOUNCE) {
-        Ok(set) => {
-            for combo in set.combos() {
-                log.mark(0, "hotkey", &format!("combo={combo} registered=true"));
-            }
-            // Not fatal, one line each: another program owning one combination is the
-            // user's problem to see, not a reason to refuse the other three.
-            for failure in set.failures() {
-                log.mark(0, "hotkey", &format!("registered=false {failure}"));
-            }
-            log.mark(
-                0,
-                "hotkeys",
-                &format!(
-                    "registered={} failed={} thread={}",
-                    set.combos().len(),
-                    set.failures().len(),
-                    set.thread_id()
-                ),
-            );
-            Some(set)
-        }
-        Err(error) => {
-            log.mark(0, "hotkeys", &format!("registered=0 {error}"));
-            None
-        }
-    }
-}
-
-fn install_tray(
-    inbox: Arc<Mutex<Vec<Request>>>,
-    ctx: egui::Context,
-    log: &Log,
-) -> Option<Tray> {
-    let sink = Arc::new(move |command: TrayCommand| {
-        let request = match command {
-            TrayCommand::NewNote => Request::NewNote,
-            TrayCommand::CloseAll => Request::CloseAll,
-            TrayCommand::Quit => Request::Quit,
-        };
-        inbox
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(request);
-        ctx.request_repaint_of(egui::ViewportId::ROOT);
-    });
-
-    match Tray::install(TRAY_TOOLTIP, Some(APP_ICON), sink) {
-        Ok(tray) => {
-            log.mark(
-                0,
-                "tray",
-                &format!(
-                    "installed=true hwnd=0x{:X} icon={} tip={TRAY_TOOLTIP}",
-                    tray.hwnd(),
-                    tray.icon_source()
-                ),
-            );
-            Some(tray)
-        }
-        Err(error) => {
-            log.mark(0, "tray", &format!("installed=false {error}"));
-            None
         }
     }
 }
