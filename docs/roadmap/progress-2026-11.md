@@ -4,6 +4,15 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
+- `2026-11-27` **C1 关闭：字库不再计入私有内存，常驻 130.1 → 91.5 MB，一个字没少**。S1 记的 37.7 MB「字体 + 图集」拆开看，字库字节是全部、图集只有 0.5 MB（`16384x32`），所以杠杆在字库本身。根因在 epaint：`FontData::from_owned` 走 `Cow::Owned`，`ab_glyph_font_from_font_data` 会 `bytes.clone()` 再建一个 `FontVec`——`msyh.ttc` 19.7 MB 至少一份常驻私有堆。
+  - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 做只读映射，`FontData::from_static` 取 `&'static [u8]` 走 `FontRef` 零拷贝。不做子集化有三条理由——微软字体子集化产物是分发物（授权另说）、固定子集会丢掉用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具与产物校验的构建链。方向没变，C1 里"三种口径都要记"照旧执行。
+  - **数字（同一次会话，三次采样取中位数）**：快速笔记进程 mapped **91.5** / heap 129.1 / none 91.5（Commit）；私有工作集 56.4 / 94.0 / 56.4；工作集 90.6 / 128.0 / 90.7。Launcher 面板 mapped **92.6**（S1 归档的 130.1 就是它的旧值）。**mapped − none = 0.0 MB**，即字库不再向进程要私有内存；工作集只降 37.4 MB 中的一部分，被碰过的映射页仍常驻，只是文件支持、可回收——这一条不掩饰。
+  - **波动写进门禁**：同一份二进制连续启动 Commit 在 91.5–99.3 MB 之间跳（GL 暂存、字形缓存时序），幅度与要证明的差值同量级。所以 `check-native-font.py` 每配置跑三次取中位数、打印 min–max，判据用差值而不是绝对值；100 MB 线仍照实断言，但它只是"目标"。
+  - **门禁 11 项，核心是三次受控对照**（mapped / heap / none，只差加载路径）：光判"commit 小于 100"会在"字库静默加载失败、面板全是豆腐块"时也变好。另外三项是像素——mapped 与 heap 差 ≤1%（同一张脸，只有字节住处变了）、mapped 与 none 差 ≥2%（实测 4.65%，豆腐块与汉字分得开）。**变异验证**：把 `if !heap` 改成 `if false && !heap` 后四项转红（`RESULT: FAIL`），像素三项仍绿——只有内存那半边的判据该红，符合预期。它也抓到自己第一个缺陷：`capture()` 起初没接 `extra`，三次截图全走 mapped，等于拿一张图和自己比还判了"通过"。
+  - **口径补齐**：`hub_win::ProcessProbe` 改读 `PROCESS_MEMORY_COUNTERS_EX2`，一次给出 Commit（`PrivateUsage`）/ 私有工作集 / 工作集三项——G0 §6 记的"原生只记了 Commit，私有工作集没记"到此修掉。
+  - **顺带两件**：①`--no-font` 之前只对 spike 生效，产品路径无条件装字体，于是"在 spike 上量成本"与"产品实际行为"是两个程序——现在两条路径共用 `app::font::install_and_log`；②七个原生门禁（notes/pin/tools/manager/switcher/drag/recover）加 edge/size/store-schema 的工作目录默认值从 `native/target/<gate>` 挪到 `%TEMP%`，与 2026-11-26 修的 `measure-native-store.ps1` 同一缺陷：门禁临时状态长在产物目录里。
+  - **未做**：65 MB 解释线（属 G1，必须写 ADR）、多屏混合 DPI（C3）、8 小时泄漏（G1）、`lite` 档、字体热替换（映射持文件对象，下次启动才换）。验证：`check-native-font.py` 11/11、`cargo test --workspace` 249、架构门禁 5 crates、回归 notes 25 / pin 11 / tools 8 / manager 19 / switcher 22 / edge 23 / size 11 / recover 16 / drag 9 / store-schema 24 全绿。详见 [plans/completed/2026-11-27-c1-font-not-private.md](../plans/completed/2026-11-27-c1-font-not-private.md)。
+
 - `2026-11-27` **ADR 有了生命周期与季度复查；先盘点的结论是「整篇取代 0 份」**。9 份决策没有一份失效，真问题是记账：ADR-0004 §2 的"背景模糊"实现手段已被 ADR-0009 接管，而 0009 写的是 `supersedes: 无`（单向指针）；`decisions/README.md` 只列 7 条，ADR-0001/0002 不在索引里（ADR-0002 全仓零引用）；三处正文过期——ADR-0007 把 `scriptmgr/` 写成旧目录名、ADR-0006/0008 的 adapter 名与实际 trait `TranscriptionTransport` 不符、ADR-0001 第 6 条还写着 plans 平铺。
   - **状态词表五个，关键是 `amended`**：没有它，"方向还对、手段已换"的 ADR 只有两个坏选择——整篇标 `superseded`（把还生效的条款一起作废）或不动（让已死的条款继续被引用）。`amends` 必须带小节号，否则部分取代与整篇取代在读者眼里没有区别。
   - **关系双向**：A 写 `supersedes: B`，B 必须写 `superseded-by: A`。这条直接修掉 0004/0009 的不对称，报错文案点明代价（`one-way pointers are how a replaced decision keeps getting cited`）。

@@ -156,7 +156,7 @@
 
 ## Native Runtime Track（`accepted`，ADR-0009）
 
-> 状态：**G0 已通过（有条件，2026-11-25）**，进入 Phase 1。四项 spike（S1 壳 + S2 文本岛 + S3 数据 + S4 门禁）全部完成；裁决与 5 条退出条件（C1 字体子集化 / C2 三种输入法人机验收 / C3 多屏混合 DPI / C4 门禁常绿 / C5 内存线收口）见 [plans/completed/2026-11-25-g0-review.md](plans/completed/2026-11-25-g0-review.md) §9。栈版本锁定：egui/eframe **0.31**、`rusqlite 0.32 bundled`、RichEdit（系统组件不锁）。
+> 状态：**G0 已通过（有条件，2026-11-25）**，进入 Phase 1。四项 spike（S1 壳 + S2 文本岛 + S3 数据 + S4 门禁）全部完成；5 条退出条件（C1 字库 / C2 三种输入法人机验收 / C3 多屏混合 DPI / C4 门禁常绿 / C5 内存线收口）见 [plans/completed/2026-11-25-g0-review.md](plans/completed/2026-11-25-g0-review.md) §9，其中 **C1 已于 2026-11-27 关闭**（[记录](plans/completed/2026-11-27-c1-font-not-private.md)）。栈版本锁定：egui/eframe **0.31**、`rusqlite 0.32 bundled`、RichEdit（系统组件不锁）。
 >
 > - 设计：[plans/active/2026-11-24-native-runtime-redesign.md](plans/active/2026-11-24-native-runtime-redesign.md)
 > - 决策：[decisions/ADR-0009-windows-native-runtime.md](./decisions/ADR-0009-windows-native-runtime.md)
@@ -196,7 +196,7 @@
 |---|---|---|---|
 | P0. 度量与 Spike | `[done]` 2026-11-25 | ~~三姿态内存基线~~（已完成，见设计 §2.2.1）+ ~~计时契约~~（已完成）+ ~~S1 壳（含预热路径）~~（**已完成，p95 48.9 ms，见 §7.1**）+ ~~S2 编辑器~~（**已完成，键入 p95 4.95 ms，2 项人工未测**）+ ~~S3 数据~~（**已完成，39 项检查，双向兼容 + 无 schema 破坏**）+ ~~S4 门禁~~（**已完成，23 项自检 + 8 次变异，补 3 个真实缺口**）；**G0 已通过（有条件）**，未闭合项转为 C1–C5 | `G0` ✅ |
 | P0.5. 先行止血 | `[done]` 2026-11-24 | 现版本窗口生命周期改造：**manager 不预创建 + 关闭即销毁**、临时窗口关闭即销毁（launcher 仍预创建，不动主门禁）；**修复开机自启动失效**（偏好持久化 + 启动对账 + 写入校验）。实测静置 600 → 262–283 MB（−53% ~ −56%） | — |
-| P1. 常驻壳 | `[in_progress]` 2026-11-25 启动 | 主题 token、托盘、热键、**预创建 Launcher**、快速笔记、待办卡片、`lite` 降级；Manager 暂由 Tauri 按需启动。**启动项**：C1 字体子集化（Commit ≤ 100 MB，同时记录三种内存口径）、C2 三种输入法人机验收（第一周硬性） | `G1` |
+| P1. 常驻壳 | `[in_progress]` 2026-11-25 启动 | 主题 token、托盘、热键、**预创建 Launcher**、快速笔记、待办卡片、`lite` 降级；Manager 暂由 Tauri 按需启动。**启动项**：C1 字库映射 ✅ 2026-11-27（Commit 130.1 → 91.5 MB，[记录](plans/completed/2026-11-27-c1-font-not-private.md)）、C2 三种输入法人机验收（第一周硬性，**待执行**） | `G1` |
 | P2. 工作台 | `[pending]` | 笔记 / 收集箱 / 待办 / 脚本 / 设置 / 回收站原生，低频面板只留最小入口 | `G2` |
 | P3. 编辑器 | `[pending]` | RichEdit 文本岛、Markdown 装饰、图片、预览、自动保存 | `G3` |
 | P4. 下线 Tauri | `[pending]` | 删除 WebView 依赖，更新器与安装器切换，回滚演练 | `G4` |
@@ -211,7 +211,7 @@
 
 - 无待确认项。后续仅由 G0–G4 实测驱动调整；偏离主门禁的取舍必须走 ADR 例外。
 - **WAL 切换的前置条件（G0-D3 裁决）**：当前保持 `journal_mode=delete`。出现下列任一情形时，**先写 ADR 再改**，不得在实现里顺手切：①原生与 Tauri 同时写同一库（双写者）；②引入同步 / 备份 / 云盘工具并发访问 `notes.db`；③需要读写不互斥才能满足的延迟目标。改动会改文件头 write version 并留下 `-wal`/`-shm`，备份与"复制 db"的语义都随之变化。
-- **内存线复核（G0-C5）**：C1 落地后若 Commit 仍 > 100 MB，必须给出下一项可压缩项与预估收益，或提出改线 ADR；65 MB 解释线在此之前不改。
+- **内存线复核（G0-C5）**：C1 落地后 Commit **91.5 MB**（≤ 100），触发条件未成立，故不要求列下一项压缩；**65 MB 解释线仍未动**，它是否可达由 G1 裁决且必须写 ADR。
 
 
 ## Candidate Next Version

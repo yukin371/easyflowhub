@@ -138,6 +138,8 @@ S3 的门禁是三层而不是一层，缺一层就不算"兼容"：**L1** nativ
 - **正文是子 HWND，不是 egui 自绘**：IME、撤销、选区、光标、无障碍都是系统的事，重写它们正是"快的编辑器变慢"的地方。父窗口补 `WS_CLIPCHILDREN`，否则每次 `swap_buffers` 都会把子控件盖掉一帧（表现为"打字时闪"）。
 - **文本岛创建后立刻 `SetFocus`**：`EM_SCROLLCARET` 在没有焦点时是空操作，不拿焦点就会出现"输入超过一屏后光标不跟随"。
 
+- **字库映射进地址空间，不读进堆**：epaint 的 `FontData::from_owned` 会让 `ab_glyph` 再 `clone()` 一份（19.7 MB 变两份），`from_static` 才走 `FontRef` 零拷贝。所以 `hub-win::font` 做只读文件映射、`hub-ui::theme` 只接 `&'static [u8]`，Commit 因此少 **37.6 MB**（130.1 → 91.5）。诊断开关 `--font-heap` 是同一字体的旧路径（对照运行），`--no-font` 是"没有中文"的下界；门禁 `check-native-font.py` 同时判内存与像素，因为只判数字会让"字库静默加载失败"也变成"优化成功"。
+
 ## 已知捷径（Phase 1 必须还掉）
 
 | 捷径 | 原因 | 还法 |

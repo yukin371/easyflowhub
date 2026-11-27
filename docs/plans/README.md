@@ -54,7 +54,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-24-native-runtime-redesign.md](./active/2026-11-24-native-runtime-redesign.md)：WebView → Windows 原生单进程的重构总设计（ADR-0009，G0 已过，当前 Phase 1）
 - [2026-11-25-c2-ime-acceptance.md](./active/2026-11-25-c2-ime-acceptance.md)：C2 三种输入法人机验收清单（**待执行**，Phase 1 第一周硬性）
 - [2026-11-25-native-quicknote-parity.md](./active/2026-11-25-native-quicknote-parity.md)：快速笔记 T0 parity 28 条 A 级判据 + 6 条允许差异（G1 的判据对象）
-- [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 第一批：窗口与几何 + 标题条（1a 已落地，1b–1d 未开始）
+- [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 
 ### Completed（17）
 
@@ -75,6 +75,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-notes-db-compat-spike.md](./completed/2026-11-25-notes-db-compat-spike.md)：S3 数据兼容（39 项门禁检查）
 - [2026-11-25-richedit-island-spike.md](./completed/2026-11-25-richedit-island-spike.md)：S2 文本岛（键入 p95 4.95 ms）
 - [2026-11-26-notes-db-shared-migrator.md](./completed/2026-11-26-notes-db-shared-migrator.md)：`notes.db` 统一迁移器（批 1–3；批 4 `user_version` 未做）
+- [2026-11-27-c1-font-not-private.md](./completed/2026-11-27-c1-font-not-private.md)：C1 字库映射（Commit 130.1 → 91.5 MB，一个字没少）
 
 ### Rejected（1）
 
