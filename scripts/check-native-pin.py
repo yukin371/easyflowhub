@@ -39,6 +39,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -230,7 +231,7 @@ def click_for_line(session: Session, button: PinButton) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
-    parser.add_argument("--work", default=os.path.join("native", "target", "p2-pin-gate"))
+    parser.add_argument("--work", default=os.path.join(tempfile.gettempdir(), "p2-pin-gate"))
     args = parser.parse_args()
 
     exe = os.path.abspath(args.exe)

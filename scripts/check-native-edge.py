@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from ctypes import wintypes
 
@@ -272,7 +273,7 @@ def changed(before: tuple, after: tuple) -> tuple:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
-    parser.add_argument("--work", default=os.path.join("native", "target", "q3-edge-gate"))
+    parser.add_argument("--work", default=os.path.join(tempfile.gettempdir(), "q3-edge-gate"))
     args = parser.parse_args()
 
     exe = os.path.abspath(args.exe)

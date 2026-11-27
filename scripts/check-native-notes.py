@@ -44,6 +44,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from ctypes import wintypes
 
@@ -271,7 +272,7 @@ def main() -> int:
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
     parser.add_argument(
         "--work",
-        default=os.path.join("native", "target", "p2-gate"),
+        default=os.path.join(tempfile.gettempdir(), "p2-gate"),
         help="scratch directory; the database copy lives here",
     )
     parser.add_argument(

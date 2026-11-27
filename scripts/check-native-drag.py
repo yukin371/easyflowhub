@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from ctypes import wintypes
 
@@ -184,7 +185,7 @@ def drag_and_check(report: Report, hwnd: int, label: str, x: float, y: float, de
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
-    parser.add_argument("--work", default=os.path.join("native", "target", "p2-drag-gate"))
+    parser.add_argument("--work", default=os.path.join(tempfile.gettempdir(), "p2-drag-gate"))
     args = parser.parse_args()
 
     exe = os.path.abspath(args.exe)

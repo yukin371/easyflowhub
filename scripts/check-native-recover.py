@@ -42,6 +42,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -258,7 +259,7 @@ def press(session: Session, window: int, rect, attempts: int = 3) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
-    parser.add_argument("--work", default=os.path.join("native", "target", "p2-recover-gate"))
+    parser.add_argument("--work", default=os.path.join(tempfile.gettempdir(), "p2-recover-gate"))
     args = parser.parse_args()
 
     exe = os.path.abspath(args.exe)

@@ -31,6 +31,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -227,7 +228,7 @@ def open_panel(session: Session, window: int, tries: int = 3) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
-    parser.add_argument("--work", default=os.path.join("native", "target", "p2-switcher-gate"))
+    parser.add_argument("--work", default=os.path.join(tempfile.gettempdir(), "p2-switcher-gate"))
     args = parser.parse_args()
 
     exe = os.path.abspath(args.exe)

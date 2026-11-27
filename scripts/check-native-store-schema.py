@@ -33,6 +33,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 
 # The shape a fresh file must have, written out here rather than imported from the
 # Rust constants: a gate that reads its expectation from the code under test cannot
@@ -319,7 +320,7 @@ def main() -> int:
     parser.add_argument("--exe", default=os.path.join("native", "target", "release", "easyflowhub-native.exe"))
     parser.add_argument(
         "--work",
-        default=os.path.join("native", "target", "store-schema-gate"),
+        default=os.path.join(tempfile.gettempdir(), "store-schema-gate"),
         help="scratch directory; every scenario gets its own subdirectory",
     )
     parser.add_argument("--keep", action="store_true", help="keep the scratch databases")

@@ -33,6 +33,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -225,7 +226,7 @@ def open_workbench(session: Session, window: int, before: int = 0, tries: int = 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default="native/target/release/easyflowhub-native.exe")
-    parser.add_argument("--work", default=os.path.join("native", "target", "p2-manager-gate"))
+    parser.add_argument("--work", default=os.path.join(tempfile.gettempdir(), "p2-manager-gate"))
     args = parser.parse_args()
 
     exe = os.path.abspath(args.exe)
