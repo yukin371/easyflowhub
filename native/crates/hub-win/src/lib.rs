@@ -15,6 +15,7 @@
 pub mod alpha;
 pub mod dpi;
 pub mod dwm;
+pub mod font;
 pub mod hotkey;
 pub mod monitor;
 pub mod probe;

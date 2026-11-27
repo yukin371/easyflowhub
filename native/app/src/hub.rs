@@ -105,6 +105,11 @@ pub struct Config {
     /// Where the settings file lives. Needed by the workbench to persist a
     /// rebind; the notes only ever read the values loaded at startup.
     pub settings_path: PathBuf,
+    /// `--no-font`: skip the CJK font, so the font+atlas share of the footprint
+    /// can be attributed instead of guessed. Diagnostic only.
+    pub no_font: bool,
+    /// `--font-heap`: hold the font in the heap, the C1 control run.
+    pub font_heap: bool,
 }
 
 /// Create the controller and run until the user quits from the tray.
@@ -192,12 +197,11 @@ impl Hub {
 
         // Fonts live on the `Context`, which every viewport shares. Installing
         // them per note would rebuild the atlas once per window for no gain.
-        match hub_ui::theme::install_fonts(&ctx) {
-            Some(font) => config.log.mark(0, "fonts", &format!("cjk={font}")),
-            None => config
-                .log
-                .mark(0, "fonts", "no CJK font found; text renders as tofu"),
-        }
+        //
+        // The *product* path honours `--no-font` too: measuring the font's cost on
+        // the spike while the product loads it differently would be measuring a
+        // different program (this is what C1 tripped over).
+        crate::font::install_and_log(&ctx, &config.log, config.no_font, config.font_heap);
 
         // `Ctrl+wheel` belongs to window opacity (Q28), not to UI zoom. egui turns
         // that gesture into `set_zoom_factor`, and the zoom factor is global to the
@@ -488,6 +492,11 @@ impl eframe::App for Hub {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // C1 is about the font *and* the atlas, and from outside the process the
+        // two are one indistinguishable delta. The render thread deposits the
+        // atlas size every pass so `--probe` can report it at snapshot time.
+        crate::probe_json::record_atlas(ctx);
+
         // Evidence for the window that went away last pass. Measured here rather
         // than in `NoteShell::close` because at that point the window still exists
         // -- "asked to close" and "closed" must not look the same in the log.

@@ -78,29 +78,47 @@ fn rgb(color: Rgb) -> Color32 {
     Color32::from_rgb(color[0], color[1], color[2])
 }
 
-/// Windows ships Microsoft YaHei; loading it is a file read, not a platform call,
-/// which is why it belongs here and not in `hub-win`.
-const CJK_CANDIDATES: [&str; 3] = [
+/// Windows ships Microsoft YaHei. Which file to pick is a policy question, and
+/// the *loading* of it is a platform question -- so the candidates live here (the
+/// UI decides what it wants to look like) while `hub-win::font` does the mapping.
+pub const CJK_CANDIDATES: [&str; 3] = [
     r"C:\Windows\Fonts\msyh.ttc",
     r"C:\Windows\Fonts\msyhl.ttc",
     r"C:\Windows\Fonts\simhei.ttf",
 ];
 
-/// Install a CJK font and return the path that was used, if any.
+/// Install a CJK font that is already mapped into the address space.
+///
+/// This is the path that matters: epaint keeps `FontData` in a `Cow`, and a
+/// `Cow::Borrowed` buffer becomes an `ab_glyph::FontRef` -- zero copies, glyphs
+/// read straight from the file pages. See `hub_win::font` for why that is worth a
+/// win32 call.
 ///
 /// Chinese text with the default egui font stack renders as tofu, which would
 /// make the timing meaningless in a different way: the atlas would have nothing
 /// to rasterise. A missing font is logged by the caller and the panel still runs.
-pub fn install_fonts(ctx: &egui::Context) -> Option<String> {
-    let (path, bytes) = CJK_CANDIDATES.iter().find_map(|path| {
-        std::fs::read(path).ok().map(|bytes| (*path, bytes))
-    })?;
+pub fn install_mapped(ctx: &egui::Context, bytes: &'static [u8], index: u32) {
+    let mut data = FontData::from_static(bytes);
+    data.index = index;
+    install(ctx, data);
+}
 
+/// Install a CJK font from bytes this process owns.
+///
+/// Kept as the fallback for a mapping that failed, and as the `--font-heap`
+/// baseline the C1 gate compares against: same face, same glyphs, one full copy
+/// in the heap (plus the clone epaint makes).
+pub fn install_owned(ctx: &egui::Context, bytes: Vec<u8>, index: u32) {
+    let mut data = FontData::from_owned(bytes);
+    data.index = index;
+    install(ctx, data);
+}
+
+fn install(ctx: &egui::Context, data: FontData) {
     let mut definitions = FontDefinitions::default();
-    definitions.font_data.insert(
-        "cjk".to_string(),
-        Arc::new(FontData::from_owned(bytes)),
-    );
+    definitions
+        .font_data
+        .insert("cjk".to_string(), Arc::new(data));
     for family in [FontFamily::Proportional, FontFamily::Monospace] {
         definitions
             .families
@@ -109,5 +127,4 @@ pub fn install_fonts(ctx: &egui::Context) -> Option<String> {
             .insert(0, "cjk".to_string());
     }
     ctx.set_fonts(definitions);
-    Some(path.to_string())
 }

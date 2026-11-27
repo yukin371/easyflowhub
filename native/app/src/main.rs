@@ -14,6 +14,7 @@ mod bench;
 mod click;
 mod editor_bench;
 mod esc;
+mod font;
 mod hub;
 mod keys;
 mod log;
@@ -129,6 +130,8 @@ fn main() {
             store_root: parsed.store_root.clone(),
             note_id: parsed.note_id.clone(),
             settings_path: settings_path.clone(),
+            no_font: parsed.no_font,
+            font_heap: parsed.font_heap,
         });
     }
     let spec = PanelSpec {
@@ -178,6 +181,7 @@ fn main() {
         budget_p95_ms: parsed.budget_p95_ms,
         budget_p99_ms: parsed.budget_p99_ms,
         skip_font: parsed.no_font,
+        font_heap: parsed.font_heap,
         demo: parsed.demo,
         burst: parsed.burst,
         editor: parsed.editor,
@@ -279,9 +283,13 @@ fn spawn_probe_reporter(idle_seconds: u64) {
             .collect();
 
         println!(
-            "{{\"kind\":\"native-s1-probe\",\"private_mb\":{:.1},\"working_set_mb\":{:.1},\"start_private_mb\":{:.1},\"handles\":{},\"cpu_ms\":{:.0},\"idle_cpu_ms\":{:.0},\"windows\":{},\"visible_windows\":{},\"window_titles\":{}}}",
+            "{{\"kind\":\"native-s1-probe\",\"private_mb\":{:.1},\"private_ws_mb\":{:.1},\"working_set_mb\":{:.1},\"atlas\":\"{}x{}\",\"atlas_mb\":{:.1},\"start_private_mb\":{:.1},\"handles\":{},\"cpu_ms\":{:.0},\"idle_cpu_ms\":{:.0},\"windows\":{},\"visible_windows\":{},\"window_titles\":{}}}",
             last.private_mb,
+            last.private_ws_mb,
             last.working_set_mb,
+            last.atlas_w,
+            last.atlas_h,
+            last.atlas_w as f64 * last.atlas_h as f64 / (1024.0 * 1024.0),
             first.private_mb,
             last.handles,
             last.cpu_ms,

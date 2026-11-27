@@ -27,6 +27,12 @@ pub struct Args {
     pub burst: usize,
     /// Diagnostic: skip the CJK font so font/atlas cost can be measured separately.
     pub no_font: bool,
+    /// Diagnostic: load the font the old way (owned bytes, copied into ab_glyph).
+    ///
+    /// This is the control run for C1: the same face and the same glyphs, held in
+    /// the heap instead of a file mapping. Without it, "the font costs 19.7 MB"
+    /// can only be compared against a number somebody remembers.
+    pub font_heap: bool,
     /// Disable vsync — diagnostic only, it changes what the number means.
     pub no_vsync: bool,
     /// Draw the text island instead of the action grid (S2).
@@ -71,6 +77,7 @@ impl Default for Args {
             demo: false,
             burst: 0,
             no_font: false,
+            font_heap: false,
             no_vsync: false,
             editor: false,
             note: false,
@@ -105,6 +112,7 @@ easyflowhub-native — S1 shell spike
   --demo                 open the panel once and stay open (screenshot aid)
   --burst <N>            post N hotkey messages 60 ms apart (debounce check)
   --no-font              diagnostic: skip the CJK font (font/atlas cost probe)
+  --font-heap            diagnostic: read the font into the heap instead of mapping it
   --no-vsync             diagnostic: measure without vsync
   --editor               draw the RichEdit island instead of the action grid
   --note                 open the Phase 1 quick-note shell (title strip + island)
@@ -180,6 +188,7 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
                     .map_err(|_| "--burst expects a number".to_string())?;
             }
             "--no-font" => args.no_font = true,
+            "--font-heap" => args.font_heap = true,
             "--no-vsync" => args.no_vsync = true,
             "--editor" => args.editor = true,
             "--note" => args.note = true,

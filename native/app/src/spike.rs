@@ -104,6 +104,8 @@ pub struct Config {
     pub budget_p99_ms: f64,
     /// Diagnostic only: skip the CJK font to attribute its memory cost.
     pub skip_font: bool,
+    /// Diagnostic only: load it into the heap instead of mapping it (C1 control).
+    pub font_heap: bool,
     /// Show the panel once after warm-up and keep it open.
     pub demo: bool,
     /// See `Args::burst`.
@@ -167,16 +169,7 @@ impl SpikeApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: Config, bench_total: Option<usize>) -> Self {
         let ctx = cc.egui_ctx.clone();
 
-        if config.skip_font {
-            config.log.mark(0, "fonts", "skipped (--no-font)");
-        } else {
-            match hub_ui::theme::install_fonts(&ctx) {
-                Some(font) => config.log.mark(0, "fonts", &format!("cjk={font}")),
-                None => config
-                    .log
-                    .mark(0, "fonts", "no CJK font found; panel renders tofu"),
-            }
-        }
+        crate::font::install_and_log(&ctx, &config.log, config.skip_font, config.font_heap);
 
 
         let hwnd = match hub_win::window::find_by_title(WINDOW_TITLE) {
