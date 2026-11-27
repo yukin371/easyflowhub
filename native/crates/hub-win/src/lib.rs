@@ -13,6 +13,7 @@
 //!   from a hotkey callback costs tens of milliseconds under mixed DPI.
 
 pub mod alpha;
+pub mod clipboard;
 pub mod dpi;
 pub mod dwm;
 pub mod font;
@@ -20,6 +21,7 @@ pub mod hotkey;
 pub mod instance;
 pub mod monitor;
 pub mod probe;
+pub mod selection;
 pub mod tray;
 pub mod window;
 

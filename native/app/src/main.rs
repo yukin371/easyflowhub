@@ -25,6 +25,7 @@ mod probe_json;
 mod save;
 mod spike;
 mod store_bench;
+mod translate;
 mod wheel;
 
 use std::path::PathBuf;

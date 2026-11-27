@@ -296,6 +296,49 @@ pub fn foreground() -> isize {
     unsafe { GetForegroundWindow() as isize }
 }
 
+/// The control that has the keyboard **inside** `hwnd`'s thread (`0` = none).
+///
+/// `current_focus` only answers for the calling thread, which is useless here:
+/// the launcher wants to know which edit box a *note* had focused, from the hotkey
+/// thread. `GetGUIThreadInfo` is the cross-thread form of that question.
+///
+/// This matters because the panel and the notes share one thread. Parking the
+/// panel calls `SetFocus(NULL)` to give the keyboard up, and that clears the
+/// thread's focus window -- which was the note's editor. Putting the window back in
+/// front does not bring the editor's focus back; Windows had already handed it
+/// away. Remembering the child is what makes "Esc returns you to your note"
+/// mean the caret, not just the z-order.
+pub fn focused_child(hwnd: isize) -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO};
+
+    if hwnd == 0 {
+        return 0;
+    }
+    let thread = unsafe { GetWindowThreadProcessId(hwnd as HWND, std::ptr::null_mut()) };
+    if thread == 0 {
+        return 0;
+    }
+    let mut info: GUITHREADINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+    if unsafe { GetGUIThreadInfo(thread, &mut info) } == 0 {
+        return 0;
+    }
+    info.hwndFocus as isize
+}
+
+/// Give `hwnd` the keyboard, if it lives on the calling thread.
+///
+/// `SetFocus` is a thread-local call by design: a process cannot move another
+/// process's focus, and that is fine -- a foreign application restores its own
+/// focus when it is activated. The caller is the launcher's UI thread, which is
+/// the thread the notes run on, so the case that needs this is exactly the case
+/// where it works.
+pub fn set_focus(hwnd: isize) -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+
+    hwnd != 0 && unsafe { SetFocus(hwnd as HWND) != std::ptr::null_mut() }
+}
+
 /// Collapse a note into the taskbar (`Ctrl+Alt+H`).
 ///
 /// `SW_MINIMIZE` rather than `SW_HIDE`: hiding a note would stop `WM_PAINT` for it

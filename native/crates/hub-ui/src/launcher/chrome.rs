@@ -13,6 +13,7 @@ use crate::theme::Theme;
 
 pub(super) const HEADER_HEIGHT: f32 = 44.0;
 pub(super) const SEARCH_HEIGHT: f32 = 42.0;
+pub(super) const SELECTION_HEIGHT: f32 = 26.0;
 pub(super) const FOOTER_HEIGHT: f32 = 34.0;
 
 /// Width of the accent bar on a selected row.
@@ -114,6 +115,67 @@ pub(super) fn search(ui: &mut egui::Ui, state: &mut State) {
         state.take_focus = false;
     }
     state.keyboard = response.has_focus();
+}
+
+/// What the panel grabbed from the application underneath, if anything.
+///
+/// Drawn at all only when a capture succeeded, because "nothing was selected" is
+/// the normal case and a permanent empty row would read as a missing feature. The
+/// count comes first and the text second: the question the user is asking at that
+/// moment is *did it take my selection*, not *what did it take*.
+///
+/// Truncation is the galley's job rather than a hand-rolled character budget --
+/// the preview is arbitrary text in an arbitrary font, and a byte count would cut
+/// a wide glyph in half.
+pub(super) fn selection(ui: &mut egui::Ui, state: &State) -> Option<egui::Rect> {
+    let text = state.selection.as_deref()?;
+    let palette = state.palette;
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), SELECTION_HEIGHT), Sense::hover());
+    let radius = CornerRadius::same(palette.radius.row);
+    ui.painter().rect_filled(rect, radius, palette.accent_soft);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0, palette.accent),
+        StrokeKind::Inside,
+    );
+
+    let label = format!("已选中 {} 字", text.chars().count());
+    let font = FontId::proportional(11.5);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.clone(), font.clone(), palette.ink);
+    let left = rect.left() + 10.0;
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - galley.size().y / 2.0),
+        galley.clone(),
+        palette.ink,
+    );
+
+    let start = left + galley.size().x + 10.0;
+    let room = rect.right() - 10.0 - start;
+    if room <= 8.0 {
+        return Some(rect);
+    }
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        text.to_string(),
+        FontId::proportional(12.0),
+        palette.ink_soft,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: room,
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    let preview = ui.painter().layout_job(job);
+    ui.painter().galley(
+        egui::pos2(start, rect.center().y - preview.size().y / 2.0),
+        preview,
+        palette.ink_soft,
+    );
+    Some(rect)
 }
 
 /// A section title with its count.

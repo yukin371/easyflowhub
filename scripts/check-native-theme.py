@@ -67,6 +67,11 @@ CANVAS_RGB = (24, 27, 33)
 # wrong token is off by 10-40.
 TOL = 4
 
+# How many VK_DOWNs the notes scenario will spend looking for the note rows. Not
+# the expected count -- a ceiling, so a cursor that never arrives fails the check
+# instead of hanging the gate.
+NOTE_WALK_LIMIT = 24
+
 
 def text(path: str) -> str:
     if not os.path.exists(path):
@@ -213,6 +218,28 @@ class Shot:
         if not (0 <= x < self.width and 0 <= y < self.height):
             return None
         return winshot.rgb(self.raw, self.width, x, y)
+
+    def bluest(self, slot: str, dx: float, dy: float, span: float, step: float = 0.25):
+        """The bluest pixel down a short vertical span, with its offset.
+
+        A one-point border is thinner than two pixels at the 125% scaling this
+        machine runs at, and `chrome` fills a field before it strokes the ring,
+        so one sample can land on the fill just inside the border and report a
+        grey where the accent is. Measured: the search field's top border is one
+        row at `#7EA5D6`, the next row blends, and the row after that is the
+        surface -- `dy=1.0` read the surface and the ring looked absent.
+
+        Scanning `span` points instead of picking a `dy` keeps the gate from
+        depending on which side of a rounding the border fell, and on this
+        machine's scaling factor.
+        """
+        best, best_offset, offset = None, None, 0.0
+        while offset <= span + 1e-9:
+            pixel = self.at(slot, dx, dy + offset)
+            if pixel is not None and (best is None or pixel[2] - pixel[0] > best[2] - best[0]):
+                best, best_offset = pixel, offset
+            offset += step
+        return best_offset, best
 
 
 class Session:
@@ -429,11 +456,14 @@ def scenario_standard(session: Session, shot, report: Report) -> None:
         f"field={show(field)} page={show(canvas)}",
     )
 
-    ring = shot.at("search", layout["search"][2] / 2.0, 1.0)
+    # The ring is one logical point wide; sample across it rather than hoping a
+    # half-point lands on the right row. See `Shot.bluest`.
+    ring_at, ring = shot.bluest("search", layout["search"][2] / 2.0, 0.0, 3.0)
     report.check(
         "a focused field is outlined in the accent, so the caret has a home",
         ring is not None and ring[2] - ring[0] > 20,
-        f"top edge={show(ring)} (accent is blue: b > r by a wide margin)",
+        f"top border={show(ring)} at dy={ring_at} "
+        f"(accent is blue: b > r by a wide margin)",
     )
 
     # -- cards -----------------------------------------------------------------
@@ -495,8 +525,16 @@ def scenario_hover(session: Session, report: Report, rest_rgb) -> None:
 
 def scenario_notes(session: Session, report: Report, report_name: str) -> None:
     """Walk down to the note rows: the same three states, on the same tokens."""
-    for _ in range(5):
+    # How far the cursor walks is a property of the command list, and that list
+    # grows whenever a command is added: five presses were right until the sixth
+    # card landed, then they stopped one short of the notes and three checks
+    # failed with `selected_note=None`. Press until the frame says the cursor is
+    # on a note instead of counting cards, and report the count so a cursor that
+    # is stuck or too slow is visible in the detail, not only in the verdict.
+    presses = 0
+    while presses < NOTE_WALK_LIMIT and not session.layout().get("selected_note"):
         wininput.tap(0x28)  # VK_DOWN
+        presses += 1
         time.sleep(0.08)
     time.sleep(0.25)
 
@@ -511,7 +549,7 @@ def scenario_notes(session: Session, report: Report, report_name: str) -> None:
     report.check(
         f"{report_name}: the cursor reaches the note rows",
         layout.get("selected_note") is not None,
-        f"selected_note={layout.get('selected_note')}",
+        f"selected_note={layout.get('selected_note')} after {presses} presses",
     )
     report.check(
         f"{report_name}: a selected note and an unselected note differ",

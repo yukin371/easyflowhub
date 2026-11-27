@@ -23,6 +23,21 @@ rusqlite = "0.32"
 # identical no matter which process wrote them.
 uuid = { version = "1", features = ["v4"] }
 
+# Only `app` may depend on this (the guard bans it below `app`): translation talks
+# to the local Relay over HTTP, and a network stack is the kind of thing that must
+# not creep into `hub-core`. `blocking` because the launcher has no async runtime
+# and does not want one for one request at a time.
+#
+# `native-tls`, not `rustls`: the Tauri build pins `rustls`, which drags in
+# `aws-lc-rs` -- a C and assembly crypto library with its own cmake/nasm build step,
+# carried by a process whose only request goes to 127.0.0.1. `native-tls` is SChannel
+# here, so https still works and the trust store is the OS one, with no second TLS
+# implementation compiled into the binary.
+reqwest = { version = "0.13", default-features = false, features = [
+  "blocking",
+  "native-tls",
+] }
+
 # Pinned on purpose: a spike must be reproducible, and the stack version is only
 # frozen after G0. Bumping this invalidates every archived latency sample.
 egui = "0.31"

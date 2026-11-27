@@ -52,6 +52,7 @@ use crate::manager::Tab;
 use crate::theme::Theme;
 
 mod chrome;
+mod translate;
 
 /// Inner padding; must match `hub-core::layout::PanelSpec::padding`, because the
 /// column maths counts it.
@@ -75,6 +76,28 @@ pub enum Action {
     NewNote,
     OpenManager(Tab),
     OpenNote(String),
+    /// Translate the text the panel captured when it opened.
+    Translate,
+    /// Write the finished translation over that text, in the application it came
+    /// from. The one action here that changes somebody else's window.
+    ReplaceSelection,
+    /// Put the translation on the clipboard. The fallback for a replace that has
+    /// nowhere to go -- a target window that has closed, or a selection that was
+    /// never there.
+    CopyTranslation,
+}
+
+/// What the panel knows about the translation it asked for.
+///
+/// No `Problem` here on purpose: the failure arrives as the sentence the user
+/// reads, mapped from the status code by the layer that made the request. This
+/// crate draws; it does not decide what went wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Translate {
+    /// Sent; no answer yet.
+    Running,
+    Done { text: String },
+    Failed { message: String },
 }
 
 /// One row in the panel: a command card or a recent note.
@@ -135,6 +158,15 @@ pub struct Layout {
     /// The content rect, inside the panel padding. Its top-left corner is page.
     pub canvas: Option<Rect>,
     pub search: Option<Rect>,
+    /// The captured-selection row, present only on a reveal that took text. Its
+    /// presence is what a gate samples: the row's fill is a different colour from
+    /// the page behind it, so "the capture reached the panel" is a pixel rather
+    /// than an inference from a log line.
+    pub selection: Option<Rect>,
+    /// The translation card, when one is running or has arrived.
+    pub translation: Option<Rect>,
+    /// The 替换选区 button inside it, which is the one a gate has to click.
+    pub replace: Option<Rect>,
     pub selected_card: Option<Rect>,
     pub rest_card: Option<Rect>,
     pub selected_note: Option<Rect>,
@@ -161,9 +193,12 @@ impl Layout {
             None => "-".to_string(),
         };
         format!(
-            "canvas={} search={} selected_card={} rest_card={} selected_note={} rest_note={}",
+            "canvas={} search={} selection={} translation={} replace={} selected_card={} rest_card={} selected_note={} rest_note={}",
             slot(self.canvas),
             slot(self.search),
+            slot(self.selection),
+            slot(self.translation),
+            slot(self.replace),
             slot(self.selected_card),
             slot(self.rest_card),
             slot(self.selected_note),
@@ -202,6 +237,16 @@ pub struct State {
     /// the frame this flips to true: that is the first moment typing lands, and a
     /// gate that types earlier is measuring its own impatience.
     pub keyboard: bool,
+    /// Text the panel took from the application underneath when it was opened,
+    /// if any. Shown above the list so the user can see the capture landed before
+    /// asking an action to use it -- a translate that fails because nothing was
+    /// selected should be visible as "nothing was selected", not as an error.
+    pub selection: Option<String>,
+    /// The translation in flight or on screen, if any. Cleared by [`State::on_open`]
+    /// for the same reason the selection is: a result belongs to the reveal that
+    /// asked for it, and a stale one under a fresh selection reads as "this is the
+    /// translation of what I have selected now".
+    pub translate: Option<Translate>,
     /// Geometry of the frame just drawn (see [`Layout`]).
     pub layout: Layout,
 }
@@ -224,15 +269,23 @@ impl State {
             take_focus: false,
             drawn_rows: 0,
             keyboard: false,
+            selection: None,
+            translate: None,
             layout: Layout::default(),
         }
     }
 
     /// A fresh panel: no query, cursor on the first row, keyboard wanted.
+    ///
+    /// The selection is cleared here rather than by the caller: a panel that keeps
+    /// the previous capture would offer to translate text from an application the
+    /// user has since left.
     pub fn on_open(&mut self) {
         self.query.clear();
         self.cursor = 0;
         self.take_focus = true;
+        self.selection = None;
+        self.translate = None;
     }
 
     /// Replace the rows and keep the selection valid.
@@ -313,6 +366,19 @@ pub fn first_screen_text(items: &[Item]) -> Vec<String> {
         "方向键 选择".to_string(),
         "没有匹配的结果".to_string(),
         "试试 笔记 / 工作台 / 新建".to_string(),
+        // The selection row's label only. Its preview is arbitrary text from
+        // another application and cannot be pre-rasterised; the label is what
+        // decides whether the row reads as a sentence or as tofu.
+        "已选中".to_string(),
+        "字".to_string(),
+        // The translation card's fixed words. The translation itself is arbitrary
+        // and arrives later, so only the labels are here.
+        "正在翻译".to_string(),
+        "正在翻译…".to_string(),
+        "译文".to_string(),
+        "翻译失败".to_string(),
+        "替换选区".to_string(),
+        "复制".to_string(),
     ];
     for item in items.iter().filter(|item| !item.is_note) {
         out.push(item.title.clone());
@@ -339,6 +405,18 @@ pub fn draw(ctx: &egui::Context, state: &mut State) -> Action {
             chrome::header(ui, state);
             ui.add_space(6.0);
             chrome::search(ui, state);
+            if state.selection.is_some() {
+                ui.add_space(6.0);
+                let row = chrome::selection(ui, state);
+                state.layout.selection = row;
+            }
+            if state.translate.is_some() {
+                ui.add_space(6.0);
+                let acted = translate::card(ui, state);
+                if !matches!(acted, Action::None) {
+                    action = acted;
+                }
+            }
             ui.add_space(SECTION_GAP);
 
             let visible = state.visible();
@@ -676,6 +754,11 @@ mod tests {
         assert!(state.query.is_empty());
         assert_eq!(state.cursor, 0);
         assert!(state.take_focus);
+        assert!(state.selection.is_none(), "a capture belongs to one reveal");
+        assert!(
+            state.translate.is_none(),
+            "a translation from the previous reveal would be shown against this one's selection"
+        );
     }
 
     #[test]

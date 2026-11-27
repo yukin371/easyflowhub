@@ -33,16 +33,19 @@ use std::time::{Duration, Instant};
 
 use hub_core::{Command, Placement, Table};
 use hub_ui::launcher;
+use hub_ui::launcher::Translate;
 use hub_ui::{LauncherAction, LauncherItem, LauncherState};
 use hub_win::MonitorCache;
 
 use crate::bench::{self, Samples};
 use crate::hub::Request;
 use crate::log::Log;
+use crate::translate::{self, Engine};
 use hub_core::Store;
 
 mod handle;
 mod recent;
+mod translation;
 
 pub use handle::{binding, Handle};
 
@@ -64,6 +67,13 @@ const WARM_FRAMES: u32 = 3;
 /// notice within one glance, and costs nothing measurable: the panel is on screen
 /// for seconds at a time.
 const BLUR_POLL: Duration = Duration::from_millis(200);
+
+/// While a translation is in flight, how often the answer channel is checked.
+///
+/// Only the *check* is this frequent; a parked or idle panel stays at [`BLUR_POLL`].
+/// 30 ms because below roughly that a waiting user starts to read the spinner as
+/// frozen, and above it the result visibly lags the network.
+const TRANSLATE_POLL: Duration = Duration::from_millis(30);
 
 pub fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("launcher")
@@ -109,6 +119,7 @@ impl Launcher {
             inbox.clone(),
             ctx.clone(),
             config.log.clone(),
+            wiring.bench.is_none(),
         );
         let shell = Shell::new(
             Spawn {
@@ -120,6 +131,11 @@ impl Launcher {
                 spec: wiring.spec,
                 inbox,
                 handle: handle.clone(),
+                translation: config.settings.translation.clone(),
+                // One client for the life of the process: building it per request
+                // would re-read the TLS configuration on every keystroke, and the
+                // pool it keeps is what makes a second translation cheap.
+                transport: Arc::new(translate::Relay::new()),
             },
             wiring.bench,
             wiring.budget_p95_ms,
@@ -162,6 +178,26 @@ impl Launcher {
         self.with(|shell| shell.hide(reason));
     }
 
+    /// Close the panel and hand the keyboard back to the application underneath.
+    pub fn dismiss(&self, reason: &str) {
+        self.with(|shell| shell.dismiss(reason));
+    }
+
+    /// Run the captured selection through the Relay.
+    pub fn translate(&self, ctx: &egui::Context) {
+        self.with(|shell| shell.start_translation(ctx));
+    }
+
+    /// Write the finished translation over the text it came from.
+    pub fn replace_selection(&self, ctx: &egui::Context) {
+        self.with(|shell| shell.replace_selection(ctx));
+    }
+
+    /// Put the finished translation on the clipboard.
+    pub fn copy_translation(&self) {
+        self.with(|shell| shell.copy_translation());
+    }
+
     /// Declare the panel's viewport for this pass.
     ///
     /// Deferred, like a note's: the window has to exist before a hotkey can move
@@ -194,6 +230,11 @@ pub struct Spawn {
     pub spec: hub_core::PanelSpec,
     pub inbox: Arc<Mutex<Vec<Request>>>,
     pub handle: Arc<Handle>,
+    /// Where to translate to, which model to ask for, and which Relay to ask.
+    pub translation: hub_core::TranslationSettings,
+    /// The HTTP half, as a trait object so the gate can run the panel against a
+    /// stub server without a compile-time switch.
+    pub transport: Arc<dyn translate::Transport>,
 }
 
 /// A reveal waiting for its first painted frame.
@@ -267,6 +308,10 @@ pub struct Shell {
     /// Needed to turn the physical spec into the viewport's own points, which is
     /// the unit eframe gives to `with_inner_size`.
     scale: f32,
+    /// Target language, model and Relay base, read once at startup.
+    translation: hub_core::TranslationSettings,
+    /// The request threads and the answers the panel still wants.
+    engine: Engine,
 }
 
 impl Shell {
@@ -281,6 +326,8 @@ impl Shell {
             table: spawn.table,
             inbox: spawn.inbox,
             handle: spawn.handle,
+            translation: spawn.translation,
+            engine: Engine::new(spawn.transport),
             recent: Vec::new(),
             warm_left: WARM_FRAMES,
             drawn: false,
@@ -409,6 +456,12 @@ impl Shell {
             }
             self.warm_left -= 1;
             ctx.request_repaint_of(viewport_id());
+        } else if self.poll_translation() {
+            // Asked for before the draw, not after: the frame the answer arrives on
+            // is the frame that should show it, and a poll after `draw` would put
+            // the result on screen one pass later -- which for a parked viewport
+            // means "not until the next keystroke".
+            ctx.request_repaint_of(viewport_id());
         }
 
         let action = launcher::draw(ctx, &mut self.state);
@@ -457,7 +510,16 @@ impl Shell {
             if Some(hub_win::window::foreground()) == self.hwnd {
                 self.focused_once = true;
             }
-            ctx.request_repaint_after(BLUR_POLL);
+            // A translation in flight is the one thing the panel is waiting for, so
+            // it looks at the channel more often than it looks at the focus. 30 ms
+            // is under the threshold at which a spinner looks stuck; the idle rate
+            // stays at 5 Hz.
+            let wait = if matches!(self.state.translate, Some(Translate::Running)) {
+                TRANSLATE_POLL
+            } else {
+                BLUR_POLL
+            };
+            ctx.request_repaint_after(wait);
         }
 
         if !matches!(action, LauncherAction::None) {
@@ -477,6 +539,9 @@ impl Shell {
         self.state.open_hint = self.hint(Command::Launcher);
         self.state.reveal_count = shown.epoch;
         self.state.on_open();
+        // After `on_open`, which clears it: the capture belongs to *this* reveal,
+        // and one taken in a previous session must not survive a new open.
+        self.state.selection = self.handle.selection().map(|capture| capture.text);
         self.state.set_items(self.items());
         self.pending = Some(Pending {
             at: shown.at,
@@ -504,6 +569,15 @@ impl Shell {
                 &format!("first=false retry={again}"),
             );
         }
+
+        // The OS keyboard focus belongs to a *thread*, and the notes run on this
+        // one. A dismissal hands that focus back to the note's editor (see `park`),
+        // so on the next reveal the panel can be in front while the keys still go
+        // to the note behind it -- the window takes the focus, the keyboard does
+        // not follow. One call here, on the thread that owns both, fixes it; the
+        // hotkey thread cannot, because `SetFocus` never crosses threads.
+        let hwnd = self.hwnd.unwrap_or(0);
+        hub_win::window::set_focus(hwnd);
         ctx.request_repaint_of(viewport_id());
     }
 
@@ -524,35 +598,74 @@ impl Shell {
         // its flag off. The epoch check above is the guard for this path -- it proves
         // this is still the newest intent, which is the thing `visible` was being
         // asked to approximate.
-        self.park(reason);
+        self.park(reason, true);
     }
 
     pub fn hide(&mut self, reason: &str) {
         if !self.handle.visible() {
             return;
         }
-        self.park(reason);
+        self.park(reason, false);
     }
+
+    /// Dismissal: park the panel **and give the keyboard back** to what had it.
+    ///
+    /// The distinction from [`hide`] is the caller's intent, not cosmetics.
+    /// `hide` is used when something is about to take over -- an action opening the
+    /// workbench or a note -- and focusing the old application first would make
+    /// this process stop being the foreground process, which is exactly the
+    /// permission `SetForegroundWindow` needs a moment later. `dismiss` is the
+    /// opposite case: the user closed the panel and expects their next keystroke to
+    /// land where it was going before they pressed the key.
+    pub fn dismiss(&mut self, reason: &str) {
+        if !self.handle.visible() {
+            return;
+        }
+        self.park(reason, true);
+    }
+
 
     /// Move the window off every monitor and give the keyboard back.
     ///
     /// `park` releases the keyboard with `SetFocus`, and `GetFocus` only answers for
     /// the calling thread -- which is why this runs on the UI thread and why the
     /// hotkey path queues instead of doing it itself. See the module comment.
-    fn park(&mut self, reason: &str) {
+    fn park(&mut self, reason: &str, give_back: bool) {
         let hwnd = self.hwnd.unwrap_or(0);
+        // Asked *before* parking, not after: `park` calls `SetFocus(NULL)`, and
+        // clearing the focus lets Windows hand the foreground to somebody else --
+        // so the same question one line later answers "no" for the very case this
+        // is here to detect.
+        let owned = hwnd != 0 && hub_win::window::foreground() == hwnd;
         let released = if hwnd != 0 {
             hub_win::window::park(hwnd)
         } else {
             0
         };
+        // Only when the panel still owned the foreground. A blur is the other way
+        // round: the click that dismissed the panel already moved the foreground,
+        // and forcing the remembered window would undo the user's click.
+        let previous = self.handle.previous();
+        let gave_back = give_back
+            && owned
+            && previous != 0
+            && hub_win::window::focus(previous);
+        // And the control inside it, which the same `SetFocus(NULL)` above had
+        // cleared. A no-op for another process's window -- Windows refuses the
+        // call, and the activated application restores its own focus.
+        let gave_caret = gave_back && hub_win::window::set_focus(self.handle.previous_focus());
         self.handle.set_visible(false);
         self.focused_once = false;
+        // A late answer belongs to nothing once the panel is gone: the next reveal
+        // clears the card anyway, and cancelling here keeps an answer to a question
+        // asked in a previous session from being accepted by a later one.
+        self.engine.cancel();
+        self.state.translate = None;
         self.log.mark(
             0,
             "launcher_hide",
             &format!(
-                "reason={reason} focus_released={released} focus_after={}",
+                "reason={reason} focus_released={released} focus_after={} refocus={previous}:{gave_back} caret={gave_caret}",
                 hub_win::window::current_focus()
             ),
         );

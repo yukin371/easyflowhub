@@ -81,7 +81,9 @@ impl Hub {
     pub(super) fn launcher_action(&mut self, ctx: &egui::Context, action: LauncherAction) {
         match action {
             LauncherAction::None => {}
-            LauncherAction::Close => self.hide_launcher("esc"),
+            // Esc is a dismissal, not a hand-over: the keyboard goes back to the
+            // application the panel was summoned over.
+            LauncherAction::Close => self.launcher.dismiss("esc"),
             LauncherAction::NewNote => {
                 self.hide_launcher("action:new_note");
                 self.spawn(ctx, None);
@@ -94,6 +96,13 @@ impl Hub {
                 self.hide_launcher("action:open_note");
                 self.open_note(ctx, &id, "launcher");
             }
+            // The three translation actions stay inside the panel: the request
+            // threads, the card and the captured selection all live in that shell,
+            // and routing them through the controller would mean handing out four
+            // fields it has no other use for.
+            LauncherAction::Translate => self.launcher.translate(ctx),
+            LauncherAction::ReplaceSelection => self.launcher.replace_selection(ctx),
+            LauncherAction::CopyTranslation => self.launcher.copy_translation(),
         }
     }
 

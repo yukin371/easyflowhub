@@ -2,7 +2,7 @@
 
 > 状态：`completed`
 >
-> 上游判据：[T-Gate 0 交接方案](../active/2026-11-27-tauri-handover-t-gate-0.md) §6「T-Gate 0 真正关闭还缺两件」的第 2 件、§7「还没做」
+> 上游判据：[T-Gate 0 交接方案](../completed/2026-11-27-tauri-handover-t-gate-0.md) §6「T-Gate 0 真正关闭还缺两件」的第 2 件、§7「还没做」
 > 归属批次：Phase 1 收口（主题 token 之后）
 > 门禁：`python scripts/check-native-single-instance.py --exe <release exe>`（17 项）
 > 数字来源：本机单屏 3840×2160 @150%、Win11 26300、release 构建

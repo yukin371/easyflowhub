@@ -23,3 +23,5 @@ hub-editor.workspace = true
 egui.workspace = true
 eframe.workspace = true
 serde_json.workspace = true
+# Translation only (see `src/translate.rs`); the guard bans it in every other crate.
+reqwest.workspace = true

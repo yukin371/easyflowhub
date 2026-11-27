@@ -30,6 +30,31 @@ pub struct Handle {
     hwnd: AtomicIsize,
     visible: AtomicBool,
     epoch: AtomicU64,
+    /// What the last reveal took from the application underneath.
+    ///
+    /// Held here rather than in the request because the capture happens on this
+    /// thread, between showing the window and focusing it, and the UI thread asks
+    /// for it while it handles the show. Keeping it on `Handle` also means the
+    /// only writer is the code that did the capture.
+    selection: Mutex<Option<hub_win::selection::Capture>>,
+    /// The window that had the focus when the panel was summoned.
+    ///
+    /// Not the same as `selection.target`: that one only exists when text was
+    /// captured, and the keyboard has to go back to the application either way.
+    /// Without this, dismissing the panel leaves the foreground on a parked window,
+    /// so the user's next keystroke goes nowhere -- the panel is gone and nothing
+    /// else has the keyboard.
+    previous: AtomicIsize,
+    /// The control that had the keyboard inside `previous`, if any.
+    ///
+    /// `park` clears the thread's focus to give the keyboard up, and that is the
+    /// same focus a note's editor was using. Putting the window back in front does
+    /// not bring the editor's focus back, so the child is remembered too.
+    previous_focus: AtomicIsize,
+    /// Whether a reveal should try to take the selection. Off for `--launcher-bench`:
+    /// a hundred synthetic reveals would drive the clipboard a hundred times and
+    /// measure the clipboard rather than the panel.
+    capture: bool,
     inbox: Arc<Mutex<Vec<Request>>>,
     ctx: egui::Context,
     log: Arc<Log>,
@@ -42,6 +67,7 @@ impl Handle {
         inbox: Arc<Mutex<Vec<Request>>>,
         ctx: egui::Context,
         log: Arc<Log>,
+        capture: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             spec,
@@ -49,10 +75,32 @@ impl Handle {
             hwnd: AtomicIsize::new(0),
             visible: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
+            selection: Mutex::new(None),
+            previous: AtomicIsize::new(0),
+            previous_focus: AtomicIsize::new(0),
+            capture,
             inbox,
             ctx,
             log,
         })
+    }
+
+    /// The selection the last reveal took, for the UI thread and for a replace.
+    pub fn selection(&self) -> Option<hub_win::selection::Capture> {
+        self.selection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// The window that was in front when the panel was summoned, `0` if unknown.
+    pub fn previous(&self) -> isize {
+        self.previous.load(Ordering::SeqCst)
+    }
+
+    /// The control that was typing inside [`Handle::previous`], `0` if unknown.
+    pub fn previous_focus(&self) -> isize {
+        self.previous_focus.load(Ordering::SeqCst)
     }
 
     /// Called by the shell once the OS window exists.
@@ -191,6 +239,16 @@ impl Handle {
         };
         let placement = place(cursor, work, &self.spec);
 
+        // Read before the move, not after: once the panel is on screen the answer
+        // is allowed to be the panel, and then the window we owe the keyboard to
+        // would be the one we are about to take it from.
+        let previous = hub_win::window::foreground();
+        if previous != 0 && previous != hwnd {
+            self.previous.store(previous, Ordering::SeqCst);
+            self.previous_focus
+                .store(hub_win::window::focused_child(previous), Ordering::SeqCst);
+        }
+
         hub_win::window::move_on_screen(
             hwnd,
             placement.x,
@@ -200,6 +258,32 @@ impl Handle {
             true,
         );
         let moved_us = at.elapsed().as_micros() as u64;
+
+        // Between the move and the focus, and nowhere else. `SendInput` goes to the
+        // foreground window: the app the user was reading still owns it here,
+        // because `move_on_screen` shows the panel without activating it. Focus
+        // first and the copy would ask the panel for its own (empty) selection.
+        //
+        // On the reveal path this costs what the copy costs -- 5-15 ms measured --
+        // and `shown_ms` therefore includes it. That is the honest number: the
+        // panel is not answering the keyboard until the capture returns, so a
+        // budget that excluded it would be measuring a panel the user cannot type
+        // into yet.
+        let capture = if self.capture {
+            let outcome = hub_win::selection::capture(hwnd);
+            self.log.mark(epoch, "launcher_selection", &outcome.describe());
+            match outcome {
+                hub_win::selection::Outcome::Captured(capture) => Some(capture),
+                hub_win::selection::Outcome::Miss { .. } => None,
+            }
+        } else {
+            None
+        };
+        *self
+            .selection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = capture;
+
         let focused = hub_win::window::focus(hwnd);
         let shown_us = at.elapsed().as_micros() as u64;
         self.visible.store(true, Ordering::SeqCst);

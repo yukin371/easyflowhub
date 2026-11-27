@@ -76,6 +76,12 @@ pub(super) fn items(shell: &Shell) -> Vec<Item> {
             LauncherAction::OpenManager(Tab::Notes),
         ),
         Item::command(
+            "翻译选中内容",
+            "",
+            "translate 翻译 译文 中文 英文",
+            LauncherAction::Translate,
+        ),
+        Item::command(
             "待办清单",
             "",
             "todo 待办 清单 任务",

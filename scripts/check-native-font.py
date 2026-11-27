@@ -71,10 +71,23 @@ VK_K = 0x4B
 # Medians of three runs: one run has a 8 MB spread on this machine, so a single
 # sample would make the thresholds below a coin toss.
 SAMPLES = 3
-# The atlas is 0.5 MB and is the only thing the mapped font should add: glyph
-# pages are file-backed, not private. 6 MB leaves room for the atlas to grow with
-# a longer note and still fails if the mapping ever starts being charged.
-MAPPED_EXTRA_MB = 6.0
+# What `mapped - none` is allowed to be: **drawing the panel's text**, not the
+# mapping. `--no-font` renders tofu, so it pays for no glyphs at all, and the
+# difference between the two runs is the glyph cache plus the 0.5 MB atlas.
+#
+# This threshold used to be 6.0, under the belief that the atlas was the only
+# thing the two runs differed by. That was true of the spike panel, which drew a
+# title and a list; it stopped being true when the panel became a real surface
+# (theme tokens: six cards, chips, a footer, note rows). Measured 2026-11-27 on
+# two binaries built from different commits, both 6.7-6.9 MB -- so it is the UI,
+# not a regression in one batch.
+#
+# The claim "the 19.7 MB file is not charged to commit" is not answered here: it
+# is answered by `heap - mapped`, where the same glyphs are painted from a
+# different loader and the pixels differ by 0.00%. This number only has to stay
+# far below the font size, which it does: if the mapping were ever charged, the
+# difference would jump to ~26 MB.
+TEXT_AND_ATLAS_MB = 12.0
 # Measured 37.7 MB. Anything under 25 means the heap run did not actually take the
 # expensive path, and then this gate proves nothing about what was removed.
 HEAP_EXTRA_MB = 25.0
@@ -323,12 +336,14 @@ def main() -> int:
     report.check(
         "the heap path costs what was removed",
         heap_extra >= HEAP_EXTRA_MB,
-        f"heap - mapped = {heap_extra:.1f} MB (>= {HEAP_EXTRA_MB})",
+        f"heap - mapped = {heap_extra:.1f} MB (>= {HEAP_EXTRA_MB}) "
+        f"-- same glyphs, same pixels, different loader",
     )
     report.check(
-        "the mapped font costs the process almost nothing",
-        mapped_extra <= MAPPED_EXTRA_MB,
-        f"mapped - none = {mapped_extra:.1f} MB (<= {MAPPED_EXTRA_MB}), atlas included",
+        "drawing the panel's text is not the font walking into commit",
+        mapped_extra <= TEXT_AND_ATLAS_MB,
+        f"mapped - none = {mapped_extra:.1f} MB (<= {TEXT_AND_ATLAS_MB}), "
+        f"glyph cache + atlas (tofu costs nothing, so this is text, not the mapping)",
     )
     report.check(
         f"C1 target: commit <= {args.budget_commit_mb:.0f} MB",

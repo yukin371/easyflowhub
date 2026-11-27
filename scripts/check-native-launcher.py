@@ -262,7 +262,13 @@ class Session:
         before = self.count("launcher_shown")
         self.press()
         if not self.later("launcher_shown", before, timeout):
-            return False
+            # Same race as above, one step worse: the deadline is short and the
+            # press can still be swallowed after the settle. A hand presses again;
+            # so does this, once, and the second press is the measurement.
+            time.sleep(0.4)
+            self.press()
+            if not self.later("launcher_shown", before, timeout):
+                return False
         # The window is on screen before the query box has the keyboard -- ~80 ms
         # of paint separate them. Typing inside that gap is swallowed by egui, so
         # every reveal waits for `launcher_ready` before the next keystroke.
@@ -496,10 +502,23 @@ def scenario_a(session: Session, report: Report) -> None:
     before = session.count("launcher_hide reason=esc")
     wininput.tap(0x1B)
     esc = session.later("launcher_hide reason=esc", before, 3.0)
+    # `focus_after=0` used to be the assertion here: the panel let go of the
+    # keyboard and nothing took it. That is now only half the story -- a dismissal
+    # also hands the keyboard back to the window the panel was summoned over, so
+    # the honest statement is "the keyboard is on that window, not on the panel".
+    refocus = 0
+    for part in esc.split():
+        if part.startswith("refocus="):
+            value, _, ok = part.partition("=")[2].partition(":")
+            if ok == "true" and value.isdigit():
+                refocus = int(value)
     report.check(
-        "Esc hides it and releases the keyboard",
-        bool(esc) and off_screen(rect(session.panel())) and "focus_after=0" in esc,
-        esc[-110:] or "no launcher_hide reason=esc",
+        "Esc hides it and hands the keyboard to the window underneath",
+        bool(esc)
+        and off_screen(rect(session.panel()))
+        and refocus != 0
+        and user32.GetForegroundWindow() == refocus,
+        f"{esc[-110:] or 'no launcher_hide reason=esc'} foreground={user32.GetForegroundWindow()}",
     )
 
     # --- a click outside does the same --------------------------------------

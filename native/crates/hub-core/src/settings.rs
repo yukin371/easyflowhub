@@ -214,6 +214,41 @@ impl QuickNoteSettings {
     }
 }
 
+/// Translation preferences.
+///
+/// `target_language` and `model` are named after the shipped Tauri
+/// `TranslationSettings` for the reason given on [`QuickNoteSettings`]: the two
+/// shells will eventually read one file, and a renamed key is a setting that
+/// silently reverts. An empty `model` is meaningful -- it is what makes the panel
+/// say "先填写模型" instead of asking Relay for a route that cannot match.
+///
+/// `relay_url` has no counterpart in the Tauri struct: there the base URL comes
+/// from the sidecar handshake (`ensure_scriptmgr`), and the native shell has no
+/// sidecar to ask yet. It is a setting rather than a constant for two reasons --
+/// a user running Relay on another port should not need a rebuild, and the
+/// translation gate points it at a stub server it starts itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TranslationSettings {
+    pub target_language: String,
+    pub model: String,
+    pub relay_url: String,
+}
+
+impl Default for TranslationSettings {
+    fn default() -> Self {
+        Self {
+            // The shipped default, kept verbatim. `zh-CN` is also a hint that reads
+            // worse in the instruction sentence than a language name would, but the
+            // value is shared state: defaulting to something else here would make the
+            // file depend on which shell wrote it last.
+            target_language: "zh-CN".to_string(),
+            model: String::new(),
+            relay_url: crate::translation::DEFAULT_RELAY_URL.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SpikeSettings {
@@ -235,6 +270,8 @@ pub struct SpikeSettings {
     pub bench_visible_ms: u64,
     /// Note window size (parity Q2), logical pixels.
     pub quick_note: QuickNoteSettings,
+    /// Translation target, model and Relay base (T-Gate 0 §5).
+    pub translation: TranslationSettings,
     /// Key overrides, `command id → "Ctrl+Alt+N"`.
     ///
     /// A map rather than a struct with one field per command on purpose: the
@@ -257,6 +294,7 @@ impl Default for SpikeSettings {
             hotkey_debounce_ms: 260,
             bench_visible_ms: 240,
             quick_note: QuickNoteSettings::default(),
+            translation: TranslationSettings::default(),
             shortcuts: BTreeMap::new(),
         }
     }
@@ -361,6 +399,64 @@ mod tests {
         let settings = SpikeSettings::default();
         assert_eq!(settings.quick_note.width, 400);
         assert_eq!(settings.quick_note.height, 300);
+    }
+
+    #[test]
+    fn translation_defaults_are_the_shipped_ones_and_the_local_relay() {
+        let settings = SpikeSettings::default();
+        assert_eq!(settings.translation.target_language, "zh-CN");
+        assert!(
+            settings.translation.model.is_empty(),
+            "an empty model is what makes the panel ask for one instead of guessing"
+        );
+        assert_eq!(settings.translation.relay_url, "http://127.0.0.1:8787");
+    }
+
+    #[test]
+    fn a_translation_block_written_by_the_other_shell_reads_back_unchanged() {
+        // The Tauri struct has two keys here and no `relay_url`. A file written by
+        // it must load without losing the defaults for the key it does not know,
+        // and must keep the two it set -- this is the whole reason the field names
+        // are shared rather than translated.
+        let dir = std::env::temp_dir().join("hub-core-settings-translation");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("translation.json");
+        std::fs::write(
+            &path,
+            r#"{"translation":{"target_language":"日本語","model":"gpt-4o-mini"}}"#,
+        )
+        .unwrap();
+
+        let (settings, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(settings.translation.target_language, "日本語");
+        assert_eq!(settings.translation.model, "gpt-4o-mini");
+        assert_eq!(
+            settings.translation.relay_url, "http://127.0.0.1:8787",
+            "a key the other shell never wrote must keep its default"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_writes_the_translation_block_back_intact() {
+        // A save is a whole-file write, so anything this process does not know
+        // about is gone. The two shells share the file; if this block were dropped
+        // on save, every rebind would silently reset the translation settings.
+        let dir = std::env::temp_dir().join("hub-core-settings-translation-save");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let mut settings = SpikeSettings::default();
+        settings.translation.model = "qwen-local".to_string();
+        settings.translation.relay_url = "http://127.0.0.1:9999".to_string();
+        settings.save(&path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"translation\""));
+        let (reloaded, source) = SpikeSettings::load(&path);
+        assert_eq!(source, SettingsSource::File);
+        assert_eq!(reloaded.translation, settings.translation);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

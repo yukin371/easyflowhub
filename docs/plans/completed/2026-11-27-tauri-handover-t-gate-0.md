@@ -1,8 +1,8 @@
 # T-Gate 0：Tauri 版停掉那些 webview（默认接管，`--legacy-ui` 回退）
 
-> 状态：`active`（Tauri 侧已交付并门禁化；原生常驻入口见 §7；单实例互斥见 [completed/2026-11-27-native-single-instance.md](../completed/2026-11-27-native-single-instance.md)；T-Gate 0 只剩选区 / 翻译迁移一件）
+> 状态：`completed`（Tauri 侧已交付并门禁化；原生侧三件全部交付——常驻入口见 §7、单实例互斥见 [completed/2026-11-27-native-single-instance.md](../completed/2026-11-27-native-single-instance.md)、选区与翻译见 [completed/2026-11-27-selection-capture-gate.md](../completed/2026-11-27-selection-capture-gate.md) 与 [completed/2026-11-27-translation-migration.md](../completed/2026-11-27-translation-migration.md)。T-Gate 0 关闭）
 >
-> 上游判据：[原生重构总设计](./2026-11-24-native-runtime-redesign.md) §Phase 1 过渡期约束表 T-Gate 0——「Tauri 版必须停止创建 launcher / 快速笔记的 webview，只保留一个按需的 Manager 实例」
+> 上游判据：[原生重构总设计](../active/2026-11-24-native-runtime-redesign.md) §Phase 1 过渡期约束表 T-Gate 0——「Tauri 版必须停止创建 launcher / 快速笔记的 webview，只保留一个按需的 Manager 实例」
 > 归属批次：Phase 1 收口（C2 通过、Launcher 产品化之后）
 > 门禁：`python scripts/check-tauri-takeover.py --exe <release exe>`（16 项）+ 一次运行时实测
 > 数字来源：本机单屏 3840×2160 @150%、Win11 26300、release 构建
@@ -72,16 +72,16 @@ Tauri 版从"两个栈都在服务"改成"只有一个按需的 Manager"：启�
 
 ## 5. 已知差异（都写出来，不留给用户发现）
 
-- **选区 → 翻译 / 替换选区下线**。Tauri launcher 会先抓前台应用的选中文字（Ctrl+C 往返 + 剪贴板恢复），面板顶部给翻译结果并可写回原窗口；原生动作面板没有这条链路。这是停掉 webview 的直接代价，下一批单独迁移（捕获、relay 调用、目标语言设置、结果面板、显式替换各是一块）。
-- **Manager 里的"新建快速笔记"入口会报错**。按约定选"拒绝并提示"而不是"转发给原生壳"：原生壳还没有单实例机制，转发会多出一个常驻进程互抢热键。
+- ~~**选区 → 翻译 / 替换选区下线**~~ —— **已交付**。原生壳现在有自己的捕获（`hub-win::selection`，45 ms 预算）与翻译（`hub-core::translation` 纯逻辑 + `app::translate` 网络 + 面板卡片），语义照 Tauri 版：同一份 `settings.json` 的 `target_language` / `model`、同一个 `/v1/chat/completions`、同一组状态码映射。与 Tauri 版的三处有意差异：原生没有 sidecar，因此多一个 `relay_url` 设置项（默认 `http://127.0.0.1:8787`）；序列号没动时**不**清理剪贴板（Tauri 版会 `empty()`，那会毁掉用户刚截的图）；`TLS` 用 `native-tls`（SChannel）而不是 `rustls`。详见 [completed/2026-11-27-selection-capture-gate.md](../completed/2026-11-27-selection-capture-gate.md) 与 [completed/2026-11-27-translation-migration.md](../completed/2026-11-27-translation-migration.md)。
+- **Manager 里的"新建快速笔记"入口会报错**。按约定选"拒绝并提示"而不是"转发给原生壳"：原生壳还没有单实例机制，转发会多出一个常驻进程互抢热键。（互斥已经就位，这条可以在 T-Gate 1 里改成转发。）
 - **两个托盘图标**。Tauri 的托盘留着（它是打开 Manager 的入口，因为接管后它没有热键），原生壳也有自己的托盘。Phase 2 Manager 迁进原生后删掉 Tauri 那个。
 - **Tauri 侧没有全局热键**。Manager 只能从托盘图标或开始菜单打开。
 
-## 6. 没做的（T-Gate 0 只剩一件）
+## 6. 没做的（T-Gate 0 已关闭）
 
 1. ~~**原生壳没有"常驻但不开笔记"的入口**~~ —— 已交付，见 §7。
 2. ~~**原生壳没有单实例互斥**~~ —— 已交付，见 [completed/2026-11-27-native-single-instance.md](../completed/2026-11-27-native-single-instance.md)。它顺带修掉一个从没被按过的入口：用热键隐藏面板从来没有真正停窗（三个既有隐藏路径都在 UI 线程直接调用，只有热键那条排队）。
-3. **选区与翻译迁移**（见 §5）—— 只剩这一件。
+3. ~~**选区与翻译迁移**~~ —— **已交付**（见 §5 第一条）。门禁 18 + 31 项，过程中修掉两个只有原生壳才会有的缺陷：修饰键未松开时注入裸 `c` 覆盖选区、同线程粘贴导致粘进上一份剪贴板。
 4. 之外：`--shell-report` 只证明构建行为，不证明"启动之后 0 个 webview"——后者靠本文第 4 节那次实测。把实测脚本化现在只差"脚本起第二个进程、看它转发后退出"，互斥已就位，留待 T-Gate 1。
 
 ## 7. 原生常驻入口 `--resident`：零窗口、满热键
