@@ -16,7 +16,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use hub_core::{clock, Store, Table};
-use hub_ui::manager::{self, Action, Row};
+use hub_ui::manager::{self, Action, Row, Tab};
 use hub_ui::Palette;
 
 use crate::hub::Request;
@@ -80,6 +80,18 @@ impl Shell {
 
     pub fn closing(&self) -> bool {
         self.closing
+    }
+
+    /// Show a specific section. The launcher's "待办清单" / "回收站" / "设置"
+    /// cards are shortcuts into this window, not separate windows: one workbench
+    /// with a different starting tab is the shipped behaviour, and a second
+    /// window per card would leave four of them behind.
+    pub fn show_tab(&mut self, tab: Tab) {
+        self.state.tab = tab;
+        self.state.selected = None;
+        self.state.status.clear();
+        self.log
+            .mark(0, "manager_tab", &format!("tab={}", tab.id()));
     }
 
     /// Constant across frames: eframe diffs the builder against the one it

@@ -7,6 +7,7 @@
 
 pub mod hint;
 pub mod keys;
+pub mod launcher;
 pub mod manager;
 pub mod panel;
 pub mod quicknote;
@@ -14,6 +15,9 @@ pub mod recover;
 pub mod switcher;
 pub mod theme;
 
+// `panel` is the S1 measurement surface: fixed content, no input, kept because the
+// latency bench still runs against it. The shipped panel is `launcher`.
+pub use launcher::{Action as LauncherAction, Item as LauncherItem, State as LauncherState};
 pub use panel::{first_screen_text, PanelState, PANEL_PADDING};
 pub use quicknote::{opacity_label, slots, StripState};
 pub use theme::Palette;

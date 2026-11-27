@@ -36,10 +36,12 @@ use std::time::Duration;
 use hub_core::{
     place_note, Command, NoteRow, NoteSpec, Rect, SpikeSettings, Store, Table,
 };
+use hub_ui::LauncherAction;
 use hub_win::hotkey::{Binding, HotkeySet, PressHandler};
 use hub_win::tray::{Tray, TrayCommand};
 use hub_win::MonitorCache;
 
+use crate::launcher;
 use crate::log::Log;
 use crate::manager;
 use crate::note::{self, NoteShell, Shared};
@@ -86,6 +88,13 @@ pub enum Request {
     /// A key was rebound. Handled here because the table, the settings file and
     /// the OS registrations all belong to the controller.
     Rebind { command: Command, chord: String },
+    /// The panel is already on screen; rebuild its rows and draw it. The payload
+    /// is what the hotkey thread measured, so the shell never re-derives it.
+    LauncherShown(launcher::Shown),
+    /// Hide the panel, unless a newer show has happened since `epoch`.
+    LauncherHidden { epoch: u64 },
+    /// Something was clicked or Entered in the panel.
+    LauncherAction(LauncherAction),
     Quit,
 }
 
@@ -110,6 +119,10 @@ pub struct Config {
     pub no_font: bool,
     /// `--font-heap`: hold the font in the heap, the C1 control run.
     pub font_heap: bool,
+    /// Everything the panel needs from the environment: the cached monitor
+    /// layout (the reveal path must not enumerate displays, §5.1.1), the panel's
+    /// physical size, and the `--launcher-bench` budget.
+    pub launcher: launcher::Wiring,
 }
 
 /// Create the controller and run until the user quits from the tray.
@@ -174,6 +187,9 @@ struct Hub {
     /// closing it drops the shell, which is what makes a later `Ctrl+Alt+M`
     /// create a fresh one instead of revealing a stale list.
     manager: Option<manager::Shell>,
+    /// The action panel: a viewport of this process, pre-created and parked, so a
+    /// reveal is a move rather than a window creation (§5.8).
+    launcher: launcher::Launcher,
     /// Where a rebind is written. Read-modify-write on the file rather than on the
     /// in-memory settings: the notes hold their own copy of the geometry and
     /// appearance, and a second source of truth for keys is the thing this batch
@@ -254,22 +270,29 @@ impl Hub {
             config.settings.quick_note.height,
         );
 
+        // One queue for the hotkey thread, the tray and the launcher's own clicks,
+        // created before any of them so they all post into the same ordering.
+        let inbox: Arc<Mutex<Vec<Request>>> = Arc::new(Mutex::new(Vec::new()));
+        let shortcuts = Arc::new(RwLock::new(table));
+        let launcher = launcher::Launcher::new(&config, store.clone(), shortcuts.clone(), inbox.clone(), &ctx);
+
         let mut hub = Self {
             log: config.log,
             settings: Arc::new(config.settings),
             lite: config.lite,
             scale: config.scale,
             store,
-            shortcuts: Arc::new(RwLock::new(table)),
+            shortcuts,
             settings_path: config.settings_path,
             note_size,
             notes: Vec::new(),
-            inbox: Arc::new(Mutex::new(Vec::new())),
+            inbox,
             next_id: 0,
             spawned: 0,
             _hotkeys: None,
             tray: None,
             manager: None,
+            launcher,
             released: None,
         };
         hub._hotkeys = register_hotkeys(
@@ -277,13 +300,14 @@ impl Hub {
             ctx.clone(),
             &hub.log,
             &hub.shortcuts.read().unwrap_or_else(|poisoned| poisoned.into_inner()),
+            hub.launcher.handle(),
         );
         hub.tray = install_tray(hub.inbox.clone(), ctx.clone(), &hub.log);
         hub.log.mark(
             0,
             "hub_start",
             &format!(
-                "notes=1 lite={} scale={:.2} root={HUB_TITLE} tray={}",
+                "notes=1 lite={} scale={:.2} root={HUB_TITLE} tray={} launcher=viewport",
                 hub.lite,
                 hub.scale,
                 if hub.tray.is_some() { "on" } else { "off" }
@@ -364,6 +388,9 @@ impl Hub {
                 work.height()
             ),
         );
+        // The panel's recent list is a snapshot, and a spawn is the only moment it
+        // can go stale without a note window telling anyone.
+        self.launcher.refresh_recent();
         ctx.request_repaint();
     }
 
@@ -385,6 +412,7 @@ impl Hub {
         self.notes = live;
         if let Some(id) = closed.last().copied() {
             self.released = Some((id, self.notes.len()));
+            self.launcher.refresh_recent();
         }
     }
 
@@ -394,8 +422,11 @@ impl Hub {
             Request::CloseAll => self.close_all(ctx),
             Request::ToggleVisible => self.toggle_visible(ctx),
             Request::Manager => self.open_manager(ctx),
-            Request::OpenNote(id) => self.open_note(ctx, &id),
+            Request::OpenNote(id) => self.open_note(ctx, &id, "manager"),
             Request::Rebind { command, chord } => self.rebind(ctx, command, &chord),
+            Request::LauncherShown(shown) => self.launcher.shown(ctx, shown),
+            Request::LauncherHidden { epoch } => self.launcher.hidden(epoch),
+            Request::LauncherAction(action) => self.launcher_action(ctx, action),
             Request::Quit => self.quit(),
         }
     }
@@ -539,6 +570,16 @@ impl eframe::App for Hub {
             self.manager = None;
         }
 
+        // The panel is a deferred viewport like a note: its window has to exist
+        // before a hotkey can move it, and it must keep existing while hidden.
+        self.launcher.viewport(ctx);
+
+        if let Some((report, ok)) = self.launcher.bench(ctx) {
+            print!("{report}");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(if ok { 0 } else { 2 });
+        }
+
         for handle in &self.notes {
             let (id, builder) = {
                 let shell = handle.lock();
@@ -586,17 +627,10 @@ fn build_shortcuts(config: &Config) -> Table {
     table
 }
 
-/// The queue entry a global command posts.
+/// The queue entry a global command posts (see `commands::request_for`).
 fn request_for(command: Command) -> Option<Request> {
-    match command {
-        Command::NewNote => Some(Request::NewNote),
-        Command::CloseAll => Some(Request::CloseAll),
-        Command::ToggleVisible => Some(Request::ToggleVisible),
-        Command::OpenManager => Some(Request::Manager),
-        _ => None,
-    }
+    commands::request_for(command)
 }
-
 /// Open `notes.db` once for the process.
 ///
 /// A failure is not fatal: the note windows are the product, and a shell that refused
@@ -657,9 +691,16 @@ fn register_hotkeys(
     ctx: egui::Context,
     log: &Log,
     table: &Table,
+    launcher: Arc<launcher::Handle>,
 ) -> Option<HotkeySet> {
     let mut bindings: Vec<Binding> = Vec::new();
     for (command, chord) in table.globals() {
+        // The launcher is not a queue entry: its handler moves the window on the
+        // hotkey thread (see `launcher::binding`).
+        if command == Command::Launcher {
+            bindings.push(launcher::binding(&chord, launcher.clone()));
+            continue;
+        }
         let Some(request) = request_for(command) else {
             log.mark(
                 0,

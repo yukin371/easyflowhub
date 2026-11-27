@@ -17,6 +17,7 @@ mod esc;
 mod font;
 mod hub;
 mod keys;
+mod launcher;
 mod log;
 mod manager;
 mod note;
@@ -101,6 +102,15 @@ fn main() {
     let scale = parsed
         .simulate_scale
         .unwrap_or_else(|| primary_scale(&monitors));
+    // The panel is sized in physical pixels (§5.1.1: the buffer is allocated per
+    // panel, and at 200% a 440x860 logical panel is 1.5 Mpx). Built before the
+    // branch because the product process owns the launcher now.
+    let spec = PanelSpec {
+        desired_width: settings.panel_width * scale,
+        desired_height: settings.panel_height * scale,
+        margin: settings.margin,
+        ..PanelSpec::default()
+    };
     // Phase 1: the quick note is its own process model now -- a parked controller
     // window owns the event loop and every note is a viewport of it (batch 1b.2),
     // so closing one note no longer ends the process by accident.
@@ -132,14 +142,15 @@ fn main() {
             settings_path: settings_path.clone(),
             no_font: parsed.no_font,
             font_heap: parsed.font_heap,
+            launcher: launcher::Wiring {
+                monitors,
+                spec,
+                bench: parsed.launcher_bench,
+                budget_p95_ms: parsed.budget_p95_ms,
+                budget_p99_ms: parsed.budget_p99_ms,
+            },
         });
     }
-    let spec = PanelSpec {
-        desired_width: settings.panel_width * scale,
-        desired_height: settings.panel_height * scale,
-        margin: settings.margin,
-        ..PanelSpec::default()
-    };
 
     let log_path = parsed
         .log_path

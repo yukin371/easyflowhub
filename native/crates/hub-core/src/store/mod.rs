@@ -123,6 +123,16 @@ impl Store {
     /// here, where the cause is still visible.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        // A first run has no app data directory yet, and SQLite reports that as
+        // "unable to open database file" -- which the shell turns into a
+        // memory-only session. Every note written in it is gone when the window
+        // closes, and nothing on screen says so. `settings::save` already creates
+        // its parent; the database does the same for the same reason.
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
         let mut conn = Connection::open(&path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
         // `Defer`: a shell that is here to read or write one note has no business
@@ -346,6 +356,23 @@ mod tests {
             .query_row("SELECT tags FROM notes WHERE id = 'old'", [], |row| row.get(0))
             .expect("tags defaulted");
         assert_eq!(tags, "");
+    }
+
+    #[test]
+    fn a_missing_app_data_directory_is_created_instead_of_failing() {
+        // The first run of a fresh install: `%APPDATA%\com.yukin.easyflowhub` does
+        // not exist yet. SQLite answers "unable to open database file" and the
+        // shell silently falls back to memory, so the check that matters is that
+        // a note written after this open is still there for the next process.
+        let root = std::env::temp_dir().join("hub-core-fresh-root").join("nested");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("hub-core-fresh-root"));
+        let store = Store::open_in(&root).expect("a fresh root opens");
+        assert_eq!(store.path(), root.join(DB_FILE).as_path());
+        drop(store);
+
+        let reopened = Store::open_in(&root).expect("and reopens");
+        assert!(reopened.integrity_ok().expect("integrity"));
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("hub-core-fresh-root"));
     }
 
     #[test]

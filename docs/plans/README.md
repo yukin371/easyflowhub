@@ -56,7 +56,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-native-quicknote-parity.md](./active/2026-11-25-native-quicknote-parity.md)：快速笔记 T0 parity 28 条 A 级判据 + 6 条允许差异（G1 的判据对象）
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 
-### Completed（17）
+### Completed（20）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -75,7 +75,9 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-notes-db-compat-spike.md](./completed/2026-11-25-notes-db-compat-spike.md)：S3 数据兼容（39 项门禁检查）
 - [2026-11-25-richedit-island-spike.md](./completed/2026-11-25-richedit-island-spike.md)：S2 文本岛（键入 p95 4.95 ms）
 - [2026-11-26-notes-db-shared-migrator.md](./completed/2026-11-26-notes-db-shared-migrator.md)：`notes.db` 统一迁移器（批 1–3；批 4 `user_version` 未做）
+- [2026-11-26-store-schema-version.md](./completed/2026-11-26-store-schema-version.md)：schema 版本号算出来而不是盖上去（六级梯子，24 项门禁）
 - [2026-11-27-c1-font-not-private.md](./completed/2026-11-27-c1-font-not-private.md)：C1 字库映射（Commit 130.1 → 91.5 MB，一个字没少）
+- [2026-11-27-c2-launcher-productized.md](./completed/2026-11-27-c2-launcher-productized.md)：launcher 产品化（藏到屏外的预创建窗口，p95 2.4–3.2 ms，25 项门禁）
 
 ### Rejected（1）
 

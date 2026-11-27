@@ -13,9 +13,27 @@
 use std::time::Duration;
 
 use hub_core::{Chord, Command, Scope, SpikeSettings};
+use hub_ui::LauncherAction;
+use hub_ui::manager::Tab;
 
-use super::{register_hotkeys, Hub};
+use super::{register_hotkeys, Hub, Request};
 use crate::manager;
+
+/// The queue entry a global command posts.
+///
+/// Lives here with the handlers it dispatches to: every command that is not in
+/// this match is either a launcher press (handled on the hotkey thread) or a
+/// window-scoped key (handled inside the note), and both are deliberate omissions
+/// rather than forgotten arms.
+pub(super) fn request_for(command: Command) -> Option<Request> {
+    match command {
+        Command::NewNote => Some(Request::NewNote),
+        Command::CloseAll => Some(Request::CloseAll),
+        Command::ToggleVisible => Some(Request::ToggleVisible),
+        Command::OpenManager => Some(Request::Manager),
+        _ => None,
+    }
+}
 
 impl Hub {
     /// `Ctrl+Alt+M`: show the workbench, creating it the first time.
@@ -38,8 +56,52 @@ impl Hub {
         ctx.request_repaint();
     }
 
+    /// Open the workbench on a given section.
+    ///
+    /// The launcher's cards for 待办 / 回收站 / 设置 all land here. An already-open
+    /// workbench is switched rather than duplicated -- two windows showing the same
+    /// list would disagree the moment one of them deleted a row.
+    pub(super) fn open_manager_tab(&mut self, ctx: &egui::Context, tab: Tab) {
+        self.open_manager(ctx);
+        if let Some(shell) = self.manager.as_mut() {
+            shell.show_tab(tab);
+        }
+        ctx.send_viewport_cmd_to(manager::viewport_id(), egui::ViewportCommand::Focus);
+        ctx.request_repaint_of(manager::viewport_id());
+        self.log
+            .mark(0, "note_manager", &format!("action=tab tab={}", tab.id()));
+    }
+
+    /// What the action panel asked for.
+    ///
+    /// The panel is hidden *before* the effect runs, not after: spawning a note
+    /// moves the foreground to it, and a launcher that is still on screen at that
+    /// point would sit on top of the window it just opened.
+    pub(super) fn launcher_action(&mut self, ctx: &egui::Context, action: LauncherAction) {
+        match action {
+            LauncherAction::None => {}
+            LauncherAction::Close => self.hide_launcher("esc"),
+            LauncherAction::NewNote => {
+                self.hide_launcher("action:new_note");
+                self.spawn(ctx, None);
+            }
+            LauncherAction::OpenManager(tab) => {
+                self.hide_launcher("action:manager");
+                self.open_manager_tab(ctx, tab);
+            }
+            LauncherAction::OpenNote(id) => {
+                self.hide_launcher("action:open_note");
+                self.open_note(ctx, &id, "launcher");
+            }
+        }
+    }
+
+    fn hide_launcher(&mut self, reason: &str) {
+        self.launcher.hide(reason);
+    }
+
     /// Open a note the workbench picked, in a window of its own.
-    pub(super) fn open_note(&mut self, ctx: &egui::Context, id: &str) {
+    pub(super) fn open_note(&mut self, ctx: &egui::Context, id: &str, source: &str) {
         let row = self.store.as_ref().and_then(|store| {
             let guard = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.note(id).ok().flatten()
@@ -47,12 +109,12 @@ impl Hub {
         match row {
             Some(row) => {
                 self.log
-                    .mark(0, "note_open", &format!("id={id} source=manager"));
+                    .mark(0, "note_open", &format!("id={id} source={source}"));
                 self.spawn(ctx, Some(row));
             }
             None => self
                 .log
-                .mark(0, "note_open", &format!("id={id} source=manager found=false")),
+                .mark(0, "note_open", &format!("id={id} source={source} found=false")),
         }
     }
 
@@ -105,7 +167,13 @@ impl Hub {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone();
-            self._hotkeys = register_hotkeys(self.inbox.clone(), ctx.clone(), &self.log, &snapshot);
+            self._hotkeys = register_hotkeys(
+                self.inbox.clone(),
+                ctx.clone(),
+                &self.log,
+                &snapshot,
+                self.launcher.handle(),
+            );
         }
         self.log.mark(
             0,

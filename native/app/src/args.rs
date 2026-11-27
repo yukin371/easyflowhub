@@ -43,6 +43,8 @@ pub struct Args {
     pub note_id: Option<String>,
     /// Run this many timed keystrokes in the island, then print the distribution.
     pub editor_bench: Option<usize>,
+    /// Reveal the product's launcher this many times, print the distribution, exit.
+    pub launcher_bench: Option<usize>,
     /// S2 gate for "keystroke → character painted" (app side, excludes composition).
     pub editor_budget_p95_ms: f64,
     pub editor_budget_p99_ms: f64,
@@ -83,6 +85,7 @@ impl Default for Args {
             note: false,
             note_id: None,
             editor_bench: None,
+            launcher_bench: None,
             editor_budget_p95_ms: 16.0,
             editor_budget_p99_ms: 25.0,
             store_bench: false,
@@ -118,6 +121,7 @@ easyflowhub-native — S1 shell spike
   --note                 open the Phase 1 quick-note shell (title strip + island)
   --note-id <uuid>       open that note in the shell instead of a new one
   --editor-bench <N>     type N timed characters into the island, print, exit
+  --launcher-bench <N>   reveal the launcher N times (product path), print, exit
   --editor-budget-p95 <ms>  gate for keystroke -> painted (default 16)
   --editor-budget-p99 <ms>  gate for keystroke -> painted p99 (default 25)
   --store-bench          read the product notes.db, print counts/schema, exit (S3)
@@ -212,6 +216,16 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
                 // The bench needs the island; asking for one implies the other.
                 args.editor = true;
             }
+            "--launcher-bench" => {
+                args.launcher_bench = Some(
+                    value("--launcher-bench")?
+                        .parse()
+                        .map_err(|_| "--launcher-bench expects a number".to_string())?,
+                );
+                // The launcher lives in the product process; asking to bench it is
+                // asking for that process.
+                args.note = true;
+            }
             "--store-bench" => args.store_bench = true,
             "--store-root" => args.store_root = Some(PathBuf::from(value("--store-root")?)),
             "--store-artifacts" => {
@@ -277,6 +291,13 @@ mod tests {
     fn note_mode_is_off_unless_asked_for() {
         assert!(!parse_args(&["app"]).unwrap().note);
         assert!(parse_args(&["app", "--note"]).unwrap().note);
+    }
+
+    #[test]
+    fn launcher_bench_implies_the_product_process() {
+        let args = parse_args(&["app", "--launcher-bench", "50"]).unwrap();
+        assert_eq!(args.launcher_bench, Some(50));
+        assert!(args.note);
     }
 
     #[test]

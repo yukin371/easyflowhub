@@ -3,7 +3,7 @@
 > 状态：`completed`（2026-11-26 批 1–3 落地；批 4 未做，见 §5）
 >
 > 上游：[../active/2026-11-24-native-runtime-redesign.md](../active/2026-11-24-native-runtime-redesign.md) §5.7（持久化归属 `hub-core::store`）、[ADR-0009](../../decisions/ADR-0009-windows-native-runtime.md)
-> 前序：[./2026-11-25-notes-db-compat-spike.md](./2026-11-25-notes-db-compat-spike.md)（S3 双向兼容）、[../active/2026-11-25-phase1-quicknote-shell.md](../active/2026-11-25-phase1-quicknote-shell.md) §8.17（梯子与 `SCHEMA_VERSION = 6`）
+> 前序：[./2026-11-25-notes-db-compat-spike.md](./2026-11-25-notes-db-compat-spike.md)（S3 双向兼容）、[./2026-11-26-store-schema-version.md](./2026-11-26-store-schema-version.md)（梯子与 `SCHEMA_VERSION = 6`）
 > 门禁：`scripts/check-native-store-schema.py`、`scripts/measure-native-store.ps1`、`cargo test --manifest-path easyflowhub-app/src-tauri/Cargo.toml --lib`
 
 ## 1. 结论

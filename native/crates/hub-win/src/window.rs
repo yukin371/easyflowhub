@@ -284,6 +284,18 @@ pub fn current_focus() -> isize {
     unsafe { GetFocus() as isize }
 }
 
+/// The window the user is typing into, system-wide (`0` = none).
+///
+/// Unlike [`current_focus`] this answers for the whole desktop and is safe to call
+/// from any thread. The panel uses it to decide that a click went somewhere else:
+/// "the keyboard moved" is an OS fact, and asking egui whether *it* thinks it is
+/// focused makes the answer depend on when its next event happened to arrive.
+pub fn foreground() -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    unsafe { GetForegroundWindow() as isize }
+}
+
 /// Collapse a note into the taskbar (`Ctrl+Alt+H`).
 ///
 /// `SW_MINIMIZE` rather than `SW_HIDE`: hiding a note would stop `WM_PAINT` for it

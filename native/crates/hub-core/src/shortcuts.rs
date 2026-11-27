@@ -70,6 +70,9 @@ pub enum Command {
     ToggleGhost = 9,
     Undo = 10,
     Redo = 11,
+    /// The action panel itself (§5.1). Global because it is the entry point used
+    /// while another program has the focus -- that is the whole reason it exists.
+    Launcher = 12,
 }
 
 impl Command {
@@ -80,11 +83,12 @@ impl Command {
     /// comes before `TogglePin` because the switcher is the more specific
     /// gesture, and a user who binds both to `Ctrl+K` should lose the pin, not
     /// the switcher.
-    pub const ALL: [Command; 11] = [
+    pub const ALL: [Command; 12] = [
         Command::NewNote,
         Command::CloseAll,
         Command::ToggleVisible,
         Command::OpenManager,
+        Command::Launcher,
         Command::Switcher,
         Command::CloseNote,
         Command::TogglePin,
@@ -109,6 +113,7 @@ impl Command {
             Command::ToggleGhost => "toggle_ghost",
             Command::Undo => "undo",
             Command::Redo => "redo",
+            Command::Launcher => "launcher",
         }
     }
 
@@ -126,6 +131,7 @@ impl Command {
             Command::ToggleGhost => "幽灵模式",
             Command::Undo => "撤销",
             Command::Redo => "重做",
+            Command::Launcher => "动作面板",
         }
     }
 
@@ -134,7 +140,8 @@ impl Command {
             Command::NewNote
             | Command::CloseAll
             | Command::ToggleVisible
-            | Command::OpenManager => Scope::Global,
+            | Command::OpenManager
+            | Command::Launcher => Scope::Global,
             _ => Scope::Window,
         }
     }
@@ -154,6 +161,10 @@ impl Command {
             Command::ToggleGhost => "Ctrl+Shift+H",
             Command::Undo => "Ctrl+Z",
             Command::Redo => "Ctrl+Shift+Z",
+            // The combination the Tauri launcher shipped with: muscle memory does
+            // not migrate, so a new default would feel like a broken key rather
+            // than a new feature.
+            Command::Launcher => "Ctrl+Alt+Space",
         };
         // The defaults are unit-tested through `parse`; a typo here must fail the
         // test run rather than produce a command with no key.
@@ -560,6 +571,11 @@ mod tests {
         assert_eq!(Command::Switcher.default_chord().display(), "Ctrl+K");
         assert_eq!(Command::ToggleGhost.default_chord().display(), "Ctrl+Shift+H");
         assert_eq!(Command::ToggleTools.default_chord().display(), "Ctrl+.");
+        assert_eq!(
+            Command::Launcher.default_chord().display(),
+            "Ctrl+Alt+Space",
+            "the launcher keeps the key the Tauri build taught"
+        );
     }
 
     #[test]
@@ -728,7 +744,7 @@ mod tests {
     fn shadowed_is_empty_on_a_table_with_no_duplicates() {
         let table = Table::defaults();
         assert_eq!(table.shadowed().len(), 0);
-        assert_eq!(table.globals().len(), 4);
+        assert_eq!(table.globals().len(), 5);
         assert_eq!(table.window().len(), 7);
     }
 
