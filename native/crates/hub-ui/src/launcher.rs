@@ -8,6 +8,9 @@
 //! workbench tab. Keeping the split here is what lets the selection rules be
 //! tested without a window (see the tests at the bottom).
 //!
+//! The fixed chrome (header, query field, empty state, footer) lives in
+//! [`chrome`]; this file owns the list, because that is where the cursor is.
+//!
 //! ## The three rules that are easy to get wrong
 //!
 //! * **The query is the only thing that can be typed.** Arrow keys move the
@@ -22,22 +25,41 @@
 //!   the panel opens, so the second `Ctrl+Alt+Space` never shows the previous
 //!   search -- that reads as "my typing is being remembered" and it would make
 //!   the first Enter do something unexpected.
+//!
+//! ## What the panel looks like, and why
+//!
+//! Every row has three states, and they are distinguishable without measuring:
+//!
+//! | state | fill | outline | extra |
+//! |---|---|---|---|
+//! | at rest | `surface_soft` | `border` | nothing |
+//! | hovered | `surface_hover` | `border_strong` | nothing |
+//! | selected | `accent_soft` | `accent` | 2 px accent bar on the left edge |
+//!
+//! The previous version had "outline", "outline with a slightly lighter fill" and
+//! "accent outline" -- a selected row and a hovered row were the same picture
+//! unless you went looking for a half-pixel stroke difference, which is not
+//! something a user does while typing. The bar exists because a tinted fill alone
+//! still reads as "this card is special" rather than "this is where Enter goes".
+//!
+//! Colours come from [`crate::theme::Theme`] and nowhere else: no call site in
+//! this file multiplies a colour by a coefficient (see that module's comment for
+//! why the coefficients had to go).
 
-use egui::{Align2, CornerRadius, FontId, Key, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
+use egui::{Align2, CornerRadius, FontId, Key, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::manager::Tab;
-use crate::theme::Palette;
+use crate::theme::Theme;
+
+mod chrome;
 
 /// Inner padding; must match `hub-core::layout::PanelSpec::padding`, because the
 /// column maths counts it.
 pub const PANEL_PADDING: f32 = 16.0;
 const CARD_GAP: f32 = 8.0;
-const HEADER_HEIGHT: f32 = 46.0;
-const SEARCH_HEIGHT: f32 = 44.0;
-const CARD_HEIGHT: f32 = 76.0;
-const ROW_HEIGHT: f32 = 34.0;
-const SECTION_GAP: f32 = 12.0;
-const FOOTER_HEIGHT: f32 = 28.0;
+const CARD_HEIGHT: f32 = 64.0;
+const ROW_HEIGHT: f32 = 36.0;
+const SECTION_GAP: f32 = 14.0;
 
 /// Recent notes shown before the list has to scroll. The panel is 860 logical
 /// pixels tall; more than this and the grid scrolls out of reach of the cursor.
@@ -101,6 +123,55 @@ impl Item {
     }
 }
 
+/// Where the last frame put things.
+///
+/// The theme gate samples pixels inside these rectangles, so it never has to
+/// re-derive this file's spacing constants. A gate that recomputed the layout
+/// would go on passing while the panel drew somewhere else -- exactly the bug it
+/// is supposed to catch. Empty slots stay `None`: an empty result has no cards,
+/// and a gate looking for "the unselected card" must not sample the void.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Layout {
+    /// The content rect, inside the panel padding. Its top-left corner is page.
+    pub canvas: Option<Rect>,
+    pub search: Option<Rect>,
+    pub selected_card: Option<Rect>,
+    pub rest_card: Option<Rect>,
+    pub selected_note: Option<Rect>,
+    pub rest_note: Option<Rect>,
+}
+
+impl Layout {
+    /// One line a gate can parse: `x,y,w,h` in **logical points**, `-` for a slot
+    /// the frame did not draw.
+    ///
+    /// Logical, not physical, because that is the unit everything above this file
+    /// thinks in. The caller multiplies by the window scale, which it already
+    /// knows from bringing the window up -- a gate that divided by a scale it had
+    /// guessed would be measuring its own arithmetic.
+    pub fn describe(&self) -> String {
+        let slot = |r: Option<Rect>| match r {
+            Some(r) => format!(
+                "{:.0},{:.0},{:.0},{:.0}",
+                r.left(),
+                r.top(),
+                r.width(),
+                r.height()
+            ),
+            None => "-".to_string(),
+        };
+        format!(
+            "canvas={} search={} selected_card={} rest_card={} selected_note={} rest_note={}",
+            slot(self.canvas),
+            slot(self.search),
+            slot(self.selected_card),
+            slot(self.rest_card),
+            slot(self.selected_note),
+            slot(self.rest_note),
+        )
+    }
+}
+
 #[derive(Clone)]
 pub struct State {
     pub query: String,
@@ -109,7 +180,7 @@ pub struct State {
     /// every keystroke and would skip rows when the list shrinks.
     pub cursor: usize,
     pub columns: u8,
-    pub palette: Palette,
+    pub palette: Theme,
     pub lite: bool,
     /// The chord that opens the panel, shown top-right. An empty string hides it.
     pub open_hint: String,
@@ -131,6 +202,8 @@ pub struct State {
     /// the frame this flips to true: that is the first moment typing lands, and a
     /// gate that types earlier is measuring its own impatience.
     pub keyboard: bool,
+    /// Geometry of the frame just drawn (see [`Layout`]).
+    pub layout: Layout,
 }
 
 impl State {
@@ -140,9 +213,9 @@ impl State {
             cursor: 0,
             columns: columns.clamp(1, 6),
             palette: if lite {
-                Palette::lite()
+                Theme::lite()
             } else {
-                Palette::standard()
+                Theme::standard()
             },
             lite,
             open_hint: String::new(),
@@ -151,6 +224,7 @@ impl State {
             take_focus: false,
             drawn_rows: 0,
             keyboard: false,
+            layout: Layout::default(),
         }
     }
 
@@ -232,10 +306,13 @@ pub fn first_screen_text(items: &[Item]) -> Vec<String> {
         "搜索动作、笔记".to_string(),
         "动作".to_string(),
         "最近笔记".to_string(),
-        "Enter 打开".to_string(),
-        "Esc 关闭".to_string(),
+        "Enter".to_string(),
+        "打开".to_string(),
+        "Esc".to_string(),
+        "关闭".to_string(),
         "方向键 选择".to_string(),
         "没有匹配的结果".to_string(),
+        "试试 笔记 / 工作台 / 新建".to_string(),
     ];
     for item in items.iter().filter(|item| !item.is_note) {
         out.push(item.title.clone());
@@ -247,25 +324,27 @@ pub fn first_screen_text(items: &[Item]) -> Vec<String> {
 /// Draw one frame and return what the user asked for.
 pub fn draw(ctx: &egui::Context, state: &mut State) -> Action {
     let palette = state.palette;
+    state.layout = Layout::default();
     let mut action = key_action(ctx, state);
 
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE
-                .fill(palette.panel)
+                .fill(palette.canvas)
                 .inner_margin(egui::Margin::same(PANEL_PADDING as i8)),
         )
         .show(ctx, |ui| {
             ui.set_clip_rect(ctx.screen_rect());
-            draw_header(ui, state);
+            state.layout.canvas = Some(ui.max_rect());
+            chrome::header(ui, state);
             ui.add_space(6.0);
-            draw_search(ui, state);
+            chrome::search(ui, state);
             ui.add_space(SECTION_GAP);
 
             let visible = state.visible();
             state.clamp_cursor();
             if visible.is_empty() {
-                draw_empty(ui, state);
+                chrome::empty(ui, state);
                 state.drawn_rows = 0;
             } else {
                 let commands: Vec<usize> = visible
@@ -281,8 +360,8 @@ pub fn draw(ctx: &egui::Context, state: &mut State) -> Action {
                 state.drawn_rows = commands.len() + notes.len();
 
                 if !commands.is_empty() {
-                    section_label(ui, state, "动作");
-                    ui.add_space(4.0);
+                    chrome::section_label(ui, state, "动作", commands.len());
+                    ui.add_space(6.0);
                     let clicked = draw_grid(ui, state, &commands);
                     if !matches!(clicked, Action::None) {
                         action = clicked;
@@ -290,7 +369,7 @@ pub fn draw(ctx: &egui::Context, state: &mut State) -> Action {
                     ui.add_space(SECTION_GAP);
                 }
                 if !notes.is_empty() {
-                    section_label(
+                    chrome::section_label(
                         ui,
                         state,
                         if state.query.trim().is_empty() {
@@ -298,8 +377,9 @@ pub fn draw(ctx: &egui::Context, state: &mut State) -> Action {
                         } else {
                             "匹配的笔记"
                         },
+                        notes.len(),
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                     let clicked = draw_notes(ui, state, &notes);
                     if !matches!(clicked, Action::None) {
                         action = clicked;
@@ -307,7 +387,7 @@ pub fn draw(ctx: &egui::Context, state: &mut State) -> Action {
                 }
             }
 
-            draw_footer(ui, state);
+            chrome::footer(ui, state);
         });
 
     action
@@ -340,73 +420,6 @@ fn key_action(ctx: &egui::Context, state: &mut State) -> Action {
     Action::None
 }
 
-fn draw_header(ui: &mut egui::Ui, state: &State) {
-    let palette = state.palette;
-    ui.allocate_ui(Vec2::new(ui.available_width(), HEADER_HEIGHT), |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("easyflowhub")
-                    .size(17.0)
-                    .color(palette.ink)
-                    .strong(),
-            );
-            ui.add_space(8.0);
-            ui.label(RichText::new("动作面板").size(12.0).color(palette.ink_subtle));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if !state.open_hint.is_empty() {
-                    ui.label(
-                        RichText::new(&state.open_hint)
-                            .size(11.0)
-                            .color(palette.ink_subtle),
-                    );
-                }
-            });
-        });
-    });
-    let sep_y = ui.cursor().top();
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        sep_y,
-        Stroke::new(1.0, palette.border),
-    );
-}
-
-fn draw_search(ui: &mut egui::Ui, state: &mut State) {
-    let palette = state.palette;
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, SEARCH_HEIGHT), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), palette.panel_strong);
-    ui.painter().rect_stroke(
-        rect,
-        CornerRadius::same(10),
-        Stroke::new(1.0, palette.border),
-        StrokeKind::Inside,
-    );
-
-    let edit_rect = rect.shrink2(Vec2::new(12.0, 6.0));
-    let edit = egui::TextEdit::singleline(&mut state.query)
-        .frame(false)
-        .hint_text("搜索动作、笔记")
-        .font(FontId::proportional(14.0))
-        .text_color(palette.ink)
-        .margin(egui::Margin::symmetric(2, 8))
-        .id_source("launcher_query");
-    let response = ui.put(edit_rect, edit);
-    if state.take_focus {
-        response.request_focus();
-        state.take_focus = false;
-    }
-    state.keyboard = response.has_focus();
-}
-
-fn section_label(ui: &mut egui::Ui, state: &State, text: &str) {
-    ui.label(
-        RichText::new(text)
-            .size(11.0)
-            .color(state.palette.ink_subtle),
-    );
-}
-
 fn draw_grid(ui: &mut egui::Ui, state: &mut State, rows: &[usize]) -> Action {
     let palette = state.palette;
     let columns = state.columns.max(1) as usize;
@@ -433,35 +446,43 @@ fn draw_grid(ui: &mut egui::Ui, state: &mut State, rows: &[usize]) -> Action {
         let selected = state.cursor == slot;
 
         let response = ui.interact(rect, ui.id().with(("card", item_index)), Sense::click());
-        let fill = if selected || response.hovered() {
-            palette.panel_strong
+        if selected {
+            state.layout.selected_card.get_or_insert(rect);
+        } else if state.layout.rest_card.is_none() {
+            state.layout.rest_card = Some(rect);
+        }
+
+        let hovered = response.hovered();
+        let (fill, outline, width) = if selected {
+            (palette.accent_soft, palette.accent, 1.5)
+        } else if hovered {
+            (palette.surface_hover, palette.border_strong, 1.0)
         } else {
-            palette.panel_strong.gamma_multiply(0.72)
+            (palette.surface_soft, palette.border, 1.0)
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(11), fill);
-        ui.painter().rect_stroke(
-            rect,
-            CornerRadius::same(11),
-            Stroke::new(
-                if selected { 1.5 } else { 1.0 },
-                if selected { palette.accent } else { palette.border },
-            ),
-            StrokeKind::Inside,
-        );
+        let radius = CornerRadius::same(palette.radius.card);
+        ui.painter().rect_filled(rect, radius, fill);
+        ui.painter()
+            .rect_stroke(rect, radius, Stroke::new(width, outline), StrokeKind::Inside);
+        if selected {
+            chrome::accent_bar(ui.painter(), palette, rect);
+        }
 
         let item = &state.items[*item_index];
         ui.painter().text(
-            rect.left_top() + Vec2::new(11.0, 13.0),
+            rect.left_top() + Vec2::new(13.0, 12.0),
             Align2::LEFT_TOP,
             &item.title,
             FontId::proportional(13.5),
             palette.ink,
         );
+        // The chord in monospace: `Ctrl+Alt+N` reads as one token only when the
+        // glyphs share a width; proportional makes `l` and `N` disagree.
         ui.painter().text(
-            rect.left_bottom() + Vec2::new(11.0, -12.0),
+            rect.left_bottom() + Vec2::new(13.0, -12.0),
             Align2::LEFT_BOTTOM,
             &item.hint,
-            FontId::proportional(10.5),
+            FontId::monospace(10.0),
             palette.ink_subtle,
         );
 
@@ -494,35 +515,41 @@ fn draw_notes(ui: &mut egui::Ui, state: &mut State, rows: &[usize]) -> Action {
         let slot = offset + line;
         let selected = state.cursor == slot;
         let response = ui.interact(rect, ui.id().with(("note", item_index)), Sense::click());
-        if selected || response.hovered() {
-            ui.painter().rect_filled(
-                rect.shrink2(Vec2::new(0.0, 1.0)),
-                CornerRadius::same(7),
-                palette.panel_strong,
-            );
-        }
         if selected {
+            state.layout.selected_note.get_or_insert(rect);
+        } else if state.layout.rest_note.is_none() {
+            state.layout.rest_note = Some(rect);
+        }
+
+        let radius = CornerRadius::same(palette.radius.row);
+        let body = rect.shrink2(Vec2::new(0.0, 2.0));
+        if selected {
+            ui.painter().rect_filled(body, radius, palette.accent_soft);
             ui.painter().rect_stroke(
-                rect.shrink2(Vec2::new(0.0, 1.0)),
-                CornerRadius::same(7),
+                body,
+                radius,
                 Stroke::new(1.0, palette.accent),
                 StrokeKind::Inside,
             );
+            chrome::accent_bar(ui.painter(), palette, body);
+        } else if response.hovered() {
+            ui.painter().rect_filled(body, radius, palette.surface_hover);
         }
+
         let item = &state.items[*item_index];
         let title = elide(&item.title, 34);
         ui.painter().text(
-            rect.left_center() + Vec2::new(10.0, 0.0),
+            rect.left_center() + Vec2::new(12.0, 0.0),
             Align2::LEFT_CENTER,
             title,
             FontId::proportional(13.0),
             palette.ink,
         );
         ui.painter().text(
-            rect.right_center() + Vec2::new(-10.0, 0.0),
+            rect.right_center() + Vec2::new(-12.0, 0.0),
             Align2::RIGHT_CENTER,
             &item.hint,
-            FontId::proportional(10.5),
+            FontId::monospace(10.0),
             palette.ink_subtle,
         );
         if response.clicked() {
@@ -531,51 +558,6 @@ fn draw_notes(ui: &mut egui::Ui, state: &mut State, rows: &[usize]) -> Action {
         }
     }
     action
-}
-
-fn draw_empty(ui: &mut egui::Ui, state: &State) {
-    let palette = state.palette;
-    let height = 90.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        "没有匹配的结果",
-        FontId::proportional(13.0),
-        palette.ink_subtle,
-    );
-}
-
-fn draw_footer(ui: &mut egui::Ui, state: &State) {
-    let palette = state.palette;
-    // Pushed to the bottom regardless of how much the list used, so the hint does
-    // not jump up and down as the query grows and shrinks the result set.
-    let y = ui.max_rect().bottom() - FOOTER_HEIGHT;
-    let rect = Rect::from_min_max(
-        egui::pos2(ui.max_rect().left(), y),
-        egui::pos2(ui.max_rect().right(), ui.max_rect().bottom()),
-    );
-    ui.painter().text(
-        rect.left_center(),
-        Align2::LEFT_CENTER,
-        "Enter 打开",
-        FontId::proportional(11.0),
-        palette.ink_subtle,
-    );
-    ui.painter().text(
-        rect.left_center() + Vec2::new(82.0, 0.0),
-        Align2::LEFT_CENTER,
-        "Esc 关闭",
-        FontId::proportional(11.0),
-        palette.ink_subtle,
-    );
-    ui.painter().text(
-        rect.right_center(),
-        Align2::RIGHT_CENTER,
-        "方向键 选择",
-        FontId::proportional(11.0),
-        palette.ink_subtle,
-    );
 }
 
 /// Cut a title to `max` characters, adding an ellipsis.

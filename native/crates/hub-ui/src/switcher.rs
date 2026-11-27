@@ -22,7 +22,7 @@
 
 use egui::{Align2, CornerRadius, FontId, Key, Rect, RichText, Sense, Stroke, Vec2};
 
-use crate::theme::Palette;
+use crate::theme::Theme;
 
 /// One row the switcher can show.
 ///
@@ -183,7 +183,7 @@ pub fn enter(state: &State, matches: &[&Item]) -> Action {
 /// Draw the panel into `area` (the note's body, below the strip).
 pub fn draw(
     ctx: &egui::Context,
-    palette: Palette,
+    palette: Theme,
     state: &mut State,
     items: &[Item],
     area: Rect,
@@ -225,7 +225,7 @@ pub fn draw(
         .show(ctx, |ui| {
             ui.set_width(area.width());
             egui::Frame::NONE
-                .fill(palette.panel)
+                .fill(palette.canvas)
                 .stroke(Stroke::new(1.0, palette.border))
                 .inner_margin(egui::Margin::same(10))
                 .corner_radius(CornerRadius::same(8))
@@ -292,7 +292,7 @@ pub fn draw(
 /// switcher whose rows only respond on their text is one the user misses.
 fn row(
     ui: &mut egui::Ui,
-    palette: Palette,
+    palette: Theme,
     _index: usize,
     title: &str,
     preview: &str,
@@ -303,7 +303,7 @@ fn row(
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::click());
     if selected {
         ui.painter()
-            .rect_filled(rect.expand2(Vec2::new(2.0, 0.0)), CornerRadius::same(4), palette.panel_strong);
+            .rect_filled(rect.expand2(Vec2::new(2.0, 0.0)), CornerRadius::same(4), palette.surface);
     }
     // Hover only *shows* that the row is clickable. It deliberately does not move
     // the selection: with the pointer resting over the list, a hover that set
@@ -313,7 +313,7 @@ fn row(
         ui.painter().rect_filled(
             rect,
             CornerRadius::same(4),
-            palette.panel_strong.gamma_multiply(0.6),
+            palette.surface_soft,
         );
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }

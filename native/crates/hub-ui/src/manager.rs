@@ -28,7 +28,7 @@ use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Vec2};
 use hub_core::{Chord, Command, Scope, Table};
 
 use crate::hint;
-use crate::theme::Palette;
+use crate::theme::Theme;
 
 /// One note, as the list needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,7 +207,7 @@ impl Default for State {
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &egui::Context,
-    palette: Palette,
+    palette: Theme,
     state: &mut State,
     rows: &[Row],
     todo: Option<&str>,
@@ -229,7 +229,7 @@ pub fn draw(
     }
 
     egui::TopBottomPanel::top("manager-head")
-        .frame(egui::Frame::NONE.fill(palette.panel_strong).inner_margin(egui::Margin::symmetric(14, 10)))
+        .frame(egui::Frame::NONE.fill(palette.surface).inner_margin(egui::Margin::symmetric(14, 10)))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("工作台").size(14.0).color(palette.ink));
@@ -242,7 +242,7 @@ pub fn draw(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let close = ui.add(
                         egui::Button::new(RichText::new("关闭").size(11.0).color(palette.ink_soft))
-                            .fill(palette.panel)
+                            .fill(palette.canvas)
                             .stroke(Stroke::new(1.0, palette.border)),
                     );
                     if hint::hint(close, palette, "关闭工作台", "Esc").clicked() {
@@ -254,7 +254,7 @@ pub fn draw(
 
     egui::SidePanel::left("manager-tabs")
         .exact_width(132.0)
-        .frame(egui::Frame::NONE.fill(palette.panel).inner_margin(egui::Margin::same(8)))
+        .frame(egui::Frame::NONE.fill(palette.canvas).inner_margin(egui::Margin::same(8)))
         .show(ctx, |ui| {
             for tab in Tab::ALL {
                 let selected = state.tab == tab;
@@ -272,7 +272,7 @@ pub fn draw(
                             .size(11.5)
                             .color(if selected { palette.ink } else { palette.ink_soft }),
                     )
-                    .fill(if selected { palette.panel_strong } else { palette.panel })
+                    .fill(if selected { palette.surface } else { palette.canvas })
                     .stroke(Stroke::new(0.0, palette.border)),
                 );
                 if button.clicked() {
@@ -285,7 +285,7 @@ pub fn draw(
         });
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(palette.panel).inner_margin(egui::Margin::same(12)))
+        .frame(egui::Frame::NONE.fill(palette.canvas).inner_margin(egui::Margin::same(12)))
         .show(ctx, |ui| match state.tab {
             Tab::Notes | Tab::Trash => {
                 let trash = state.tab == Tab::Trash;
@@ -421,7 +421,7 @@ pub fn draw(
 /// One note row: title, preview, timestamp, and two buttons.
 fn note_row(
     ui: &mut egui::Ui,
-    palette: Palette,
+    palette: Theme,
     row: &Row,
     selected: Option<&str>,
 ) -> Option<Action> {
@@ -434,9 +434,9 @@ fn note_row(
             rect,
             CornerRadius::same(4),
             if chosen {
-                palette.panel_strong
+                palette.surface
             } else {
-                palette.panel_strong.gamma_multiply(0.55)
+                palette.surface_soft
             },
         );
     }
@@ -529,11 +529,11 @@ fn note_row(
 }
 
 /// The clickable key chip.
-fn chip_button(ui: &mut egui::Ui, palette: Palette, chord: &str, conflict: bool) -> egui::Response {
+fn chip_button(ui: &mut egui::Ui, palette: Theme, chord: &str, conflict: bool) -> egui::Response {
     let color = if conflict { palette.accent } else { palette.ink };
     ui.add(
         egui::Button::new(RichText::new(chord).monospace().size(10.5).color(color))
-            .fill(palette.panel_strong)
+            .fill(palette.surface)
             .stroke(Stroke::new(1.0, palette.border)),
     )
 }

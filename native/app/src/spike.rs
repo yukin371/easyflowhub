@@ -369,7 +369,7 @@ impl SpikeApp {
     fn sync_editor(&mut self, ctx: &egui::Context, rect: PixelRect) {
         let palette = self.panel.palette;
         let theme = hub_editor::Theme {
-            background: colorref(palette.panel_strong),
+            background: colorref(palette.surface),
             foreground: colorref(palette.ink),
             font_face: "Microsoft YaHei UI".to_string(),
             // Frozen with the measured configuration: S2's 4.95 ms p95 was taken

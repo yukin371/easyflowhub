@@ -39,6 +39,12 @@ impl Rect {
 
 /// Static shape of the panel, expressed in logical pixels plus the constants
 /// that decide the column count.
+///
+/// `desired_width` / `desired_height` are **physical**: the panel is pre-created
+/// and its buffer is allocated once, so the caller multiplies by the monitor scale
+/// before filling them in (`main.rs`). Everything else is logical, which is what
+/// `scale` is for -- without it `columns_for` would subtract logical padding from
+/// a physical width and the column count would silently depend on the DPI.
 #[derive(Debug, Clone, Copy)]
 pub struct PanelSpec {
     pub desired_width: f32,
@@ -47,8 +53,17 @@ pub struct PanelSpec {
     pub margin: i32,
     pub padding: i32,
     pub gap: i32,
-    /// Fixed threshold from §5.1.1: below this cell width the grid drops to 3.
+    /// Fixed threshold from §5.1.1: below this cell width the grid drops a column.
+    ///
+    /// Logical, like `padding` and `gap`. It was 96 -- the width at which
+    /// `Ctrl+Alt+N` still fits inside a card with 13 px either side, i.e. the
+    /// boundary of "the text is not clipped" rather than "the row looks right".
+    /// At 96 the panel fits **four** columns and the five commands land 4 + 1: a
+    /// single card on its own row, which reads as a missing image, not as a group.
+    /// 130 gives three columns at 440 (3 x 130.67) so the five commands sit 3 + 2.
     pub min_cell_width: f32,
+    /// Physical pixels per logical point on the monitor the panel targets.
+    pub scale: f32,
 }
 
 impl Default for PanelSpec {
@@ -59,7 +74,8 @@ impl Default for PanelSpec {
             margin: 12,
             padding: 16,
             gap: 8,
-            min_cell_width: 96.0,
+            min_cell_width: 130.0,
+            scale: 1.0,
         }
     }
 }
@@ -74,15 +90,19 @@ pub struct Placement {
     pub columns: u8,
 }
 
-/// Number of grid columns that fits `width` physical pixels.
+/// Number of grid columns that fits `width` **physical** pixels.
 ///
 /// Kept as a table lookup over `{4, 3}` on purpose: continuous reflow would
 /// invalidate the per-cell texture cache and hit-test grid on every clamp, which
 /// is exactly the kind of jitter §5.1.1 forbids in the reveal path.
 pub fn columns_for(spec: &PanelSpec, width: i32) -> u8 {
+    let scale = if spec.scale > 0.1 { spec.scale } else { 1.0 };
     for columns in [4u8, 3u8] {
         let gaps = (columns as i32 - 1) * spec.gap;
-        let cell = (width - 2 * spec.padding - gaps) as f32 / columns as f32;
+        // Physical in, logical out: `min_cell_width` and `padding` are logical and
+        // the width is not (see `PanelSpec`). Dividing once here is what makes the
+        // answer the same at 100% and at 200%.
+        let cell = (width - (2 * spec.padding + gaps)) as f32 / columns as f32 / scale;
         if cell >= spec.min_cell_width {
             return columns;
         }
@@ -265,7 +285,7 @@ mod tests {
         assert_eq!((placement.width, placement.height), (440, 860));
         assert_eq!(placement.x, 1920 - 220);
         assert_eq!(placement.y, 1044 - 860 / 3);
-        assert_eq!(placement.columns, 4);
+        assert_eq!(placement.columns, 3);
     }
 
     #[test]
@@ -309,12 +329,33 @@ mod tests {
     }
 
     #[test]
-    fn drops_to_three_columns_when_cells_get_too_narrow() {
+    fn the_shipped_width_gets_three_columns() {
         let spec = PanelSpec::default();
-        assert_eq!(columns_for(&spec, 440), 4);
-        // 4 columns need 16*2 + 8*3 + 96*4 = 440 exactly, so 439 must drop.
-        assert_eq!(columns_for(&spec, 439), 3);
+        // 440 logical, so a 4-column cell would be (440 - 32 - 24) / 4 = 96: wide
+        // enough for the label and too narrow to look like a group, which is why
+        // the threshold sits at 130 and the five commands land 3 + 2.
+        assert_eq!(columns_for(&spec, 440), 3);
+        // 4 columns need 130 * 4 + 16 * 2 + 8 * 3 = 576 physical at scale 1.
+        assert_eq!(columns_for(&spec, 576), 4);
+        assert_eq!(columns_for(&spec, 575), 3);
         assert_eq!(columns_for(&spec, 300), 3);
+    }
+
+    #[test]
+    fn the_column_count_does_not_depend_on_the_monitor_scale() {
+        // `place` hands over the work area in physical pixels while `padding`,
+        // `gap` and `min_cell_width` are logical. Before `PanelSpec::scale` the
+        // comparison mixed the two units, and the answer only looked right because
+        // the shipped threshold happened to be the exact boundary value at 100%.
+        let mut spec = PanelSpec::default();
+        assert_eq!(columns_for(&spec, 440), 3);
+        spec.scale = 1.5;
+        assert_eq!(columns_for(&spec, 660), 3, "440 logical at 150%");
+        spec.scale = 2.0;
+        assert_eq!(columns_for(&spec, 880), 3, "440 logical at 200%");
+        // And 4 columns appear at the same *logical* width on any scale.
+        spec.scale = 1.5;
+        assert_eq!(columns_for(&spec, 864), 4, "576 logical at 150%");
     }
 
     #[test]

@@ -109,6 +109,7 @@ fn main() {
         desired_width: settings.panel_width * scale,
         desired_height: settings.panel_height * scale,
         margin: settings.margin,
+        scale,
         ..PanelSpec::default()
     };
     // Phase 1: the quick note is its own process model now -- a parked controller

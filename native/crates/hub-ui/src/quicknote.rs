@@ -19,7 +19,7 @@
 use egui::{Align2, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
 use crate::hint;
-use crate::theme::Palette;
+use crate::theme::Theme;
 use hub_core::{Command, STRIP_HEIGHT, Table};
 
 /// Width reserved for each side slot, logical pixels.
@@ -186,7 +186,7 @@ pub struct StripOutput {
 pub fn draw(
     ctx: &egui::Context,
     state: &mut StripState,
-    palette: Palette,
+    palette: Theme,
     table: &Table,
 ) -> StripOutput {
     let full = ctx.screen_rect();
@@ -194,13 +194,13 @@ pub fn draw(
     let mut content = full;
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(palette.panel))
+        .frame(egui::Frame::NONE.fill(palette.canvas))
         .show(ctx, |ui| {
             ui.set_clip_rect(full);
             let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), STRIP_HEIGHT));
 
             let painter = ui.painter();
-            painter.rect_filled(strip, CornerRadius::ZERO, palette.panel_strong);
+            painter.rect_filled(strip, CornerRadius::ZERO, palette.surface);
             painter.hline(
                 strip.x_range(),
                 strip.bottom() - 1.0,
@@ -293,7 +293,7 @@ pub fn draw(
                     Vec2::new(full.width(), TOOLS_PANEL_HEIGHT),
                 );
                 let painter = ui.painter();
-                painter.rect_filled(panel, CornerRadius::ZERO, palette.panel);
+                painter.rect_filled(panel, CornerRadius::ZERO, palette.canvas);
                 painter.hline(
                     panel.x_range(),
                     panel.bottom() - 1.0,
@@ -356,7 +356,7 @@ fn right_button_rect(strip: Rect) -> Rect {
 /// The floor is not arbitrary: at ghost opacity the icons must stay visible
 /// enough to be clicked, which is why the shipped toolbar never lets them fall
 /// below roughly a third no matter how transparent the window gets.
-fn glyph_color(palette: Palette, opacity: f32) -> egui::Color32 {
+fn glyph_color(palette: Theme, opacity: f32) -> egui::Color32 {
     let alpha = (opacity.clamp(0.0, 1.0) * 0.72).max(0.32);
     let ink = palette.ink;
     // Alpha, not `gamma_multiply`: that one scales RGB as well, which darkens
@@ -478,7 +478,7 @@ mod tests {
         let at = |point: Pos2| {
             let ctx = egui::Context::default();
             let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0));
-            let palette = Palette::quick();
+            let palette = Theme::quick();
             let table = Table::defaults();
             let mut state = StripState::default();
             let mut frame = |events: Vec<egui::Event>| -> StripActions {
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn strip_icons_are_translucent_but_never_fade_out() {
-        let palette = Palette::quick();
+        let palette = Theme::quick();
         // `color-mix(in srgb, --quick-text 72%, transparent)` at full opacity.
         assert_eq!(glyph_color(palette, 1.0).a(), 184);
         // The shipped `alphaAtLeast(…, 0.32, …)`: a ghost note keeps clickable

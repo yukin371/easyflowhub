@@ -5,18 +5,11 @@
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
 - `2026-11-27` **原生常驻入口 `--resident`：零窗口、满热键，`hub.rs` 顺带拆回硬顶之下**。登录自启要的是"什么都没有，但什么都能叫出来"——托盘在、五个组合在、面板已建好藏在屏外。
-  - `--resident` 在解析参数时把 `note` 置真，`main` 仍只有一条 `hub::run`：另起一个入口跑同一套控制器，迟早和笔记那条分叉，而它们抢的是同一批热键。"零笔记"复用 `settle()`（有托盘是静止态，没托盘就退）；`--resident --note-id` 拒绝，不猜。开库 / 键表 / 注册 / 托盘四件"只做一次"的搬进 `hub/boot.rs`（228 行），`hub.rs` 795 → 605 行。
-  - 证据：`check-native-resident.py` 16/16 连跑 2 次（零窗口启动 → 面板已 parked → F9 唤起 → F10 出笔记且 PID 不变 → F11 关掉仍在原地 → 再唤起）；回归 notes 25 / manager 19 / switcher 22 / store-schema 24 / launcher 25、`cargo test` 265 项。详见 [plans/active/2026-11-27-tauri-handover-t-gate-0.md](../plans/active/2026-11-27-tauri-handover-t-gate-0.md) §7。
-- `2026-11-27` **T-Gate 0 的 Tauri 侧关闭：本进程只剩一个按需 Manager，宿主 18 MB、0 个 WebView2 子进程**。退出条件"停止创建 launcher / 快速笔记的 webview"在配置层兑现（`app.windows` 清空），不是启动后藏起来。
-  - **默认接管、回退显式**：`--legacy-ui` 或 `EFH_LEGACY_UI=1`（flag 压过环境变量，有单测）。默认"继续做旧事"的开关会让过渡永久化——两个栈都能用，没人知道是谁应的键。
-  - **连 `Ctrl+Alt+M` 也要让，这是运行时抓到的**：第一版把它留在 Tauri，结构门禁 15/15 全绿，真跑起来原生壳当场 `RegisterHotKey failed (1409)`；改成零热键后 `hotkeys registered=5 failed=0`。
-  - **证据**：`check-tauri-takeover.py` 16/16；同机实测宿主 18 MB / 0 webview（旧构建 58.9 MB + webview）。**还没做**：选区 / 翻译迁移（见 §5 已知差异）。详见 [plans/active/2026-11-27-tauri-handover-t-gate-0.md](../plans/active/2026-11-27-tauri-handover-t-gate-0.md)。
-- `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
-  - **关闭 = 挪到 `-30000,-30000`，不是 `SW_HIDE`**：后者停掉 `WM_PAINT` 投递，winit 收不到重绘、eframe 循环停摆，藏起来的第九次唤起会显示第八次的画面；"已关闭"的判据因此是矩形在任何显示器之外。
-  - **揭示在热键线程、隐藏在 UI 线程**：四步 Win32 调用省下 30–47 ms；`GetFocus` 只回答调用线程，故隐藏走 `Request::LauncherHidden { epoch }` 由 UI 线程 `park`，`epoch` 挡住"按一下、UI 醒来前又按一下"的交叉。
-  - **门禁逼出四个真缺陷**：空结果 Enter 后 `TextEdit::singleline` 交出焦点（看着像卡死）、点别处不消失（改问 `GetForegroundWindow`）、全新目录 `Store::open` 不建父目录而静默 memory-only、`first_line` 重复标题；顺带把搜索面扩到整篇正文。
-  - **证据**：`check-native-launcher.py` 25/25 连跑 4 次，p50 1.8–2.1 / p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100），泄漏比两次运行的增量差。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。
+- `2026-11-27` **主题 token：7 个色槽扩成 21 个语义 token，删掉 5 处自己乘系数的调用点**。乘数没有方向——`gamma_multiply(0.72)` 在暗色面板上是"低一档"，换亮色主题就成了"比脚下的页面还暗"。派生改为 `lift(base, ink, t)`，方向由文字色决定，一条规则两个主题都对。
+  - 面板顺带重排：选中/悬停/静息三态可辨（accent 填充 + 左缘竖条）、搜索框有聚焦环、分组带计数、页脚键位画成 chip、空结果给下一步；列数阈值 96 → 130，5 个动作从 4+1 的孤卡变 3+2，`PanelSpec::scale` 修掉"物理宽减逻辑内边距"的混算。证据：`check-native-theme.py` 17/17 连跑 3 次（采样真实像素），`cargo test` 274 项，五个原生门禁全绿。详见 [plans/completed/2026-11-27-theme-tokens.md](../plans/completed/2026-11-27-theme-tokens.md)。
 
+- `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
+  - 三个不显然的决定：关闭 = 挪到 `-30000,-30000`（`SW_HIDE` 停掉 `WM_PAINT` 投递，eframe 循环停摆，第九次唤起会画出第八次）；揭示在热键线程、隐藏在 UI 线程（`GetFocus` 只回答调用线程），`epoch` 挡住连按交叉；门禁逼出四个真缺陷（空结果 Enter 后交出焦点、点别处不消失、全新目录 `Store::open` 不建父目录、预览重复标题）。证据：`check-native-launcher.py` 25/25 连跑 4 次，p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100），泄漏按两次运行的增量差判。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。
 - `2026-11-27` **C1 关闭：字库不再计入私有内存，常驻 130.1 → 91.5 MB，一个字没少**。S1 记的 37.7 MB「字体 + 图集」拆开看，字库字节是全部、图集只有 0.5 MB（`16384x32`），所以杠杆在字库本身。根因在 epaint：`FontData::from_owned` 走 `Cow::Owned`，`ab_glyph_font_from_font_data` 会 `bytes.clone()` 再建一个 `FontVec`——`msyh.ttc` 19.7 MB 至少一份常驻私有堆。
   - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 做只读映射，`FontData::from_static` 取 `&'static [u8]` 走 `FontRef` 零拷贝。不做子集化有三条理由——微软字体子集化产物是分发物（授权另说）、固定子集会丢掉用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具与产物校验的构建链。方向没变，C1 里"三种口径都要记"照旧执行。
   - **数字（同一次会话，三次采样取中位数）**：快速笔记进程 mapped **91.5** / heap 129.1 / none 91.5（Commit）；私有工作集 56.4 / 94.0 / 56.4；工作集 90.6 / 128.0 / 90.7。Launcher 面板 mapped **92.6**（S1 归档的 130.1 就是它的旧值）。**mapped − none = 0.0 MB**，即字库不再向进程要私有内存；工作集只降 37.4 MB 中的一部分，被碰过的映射页仍常驻，只是文件支持、可回收——这一条不掩饰。

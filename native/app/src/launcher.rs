@@ -410,6 +410,14 @@ pub struct Shell {
     last_query: String,
     /// Whether `launcher_ready` has been logged for the reveal in progress.
     keyboard_logged: bool,
+    /// The rectangles the last logged `launcher_layout` line described.
+    ///
+    /// Logged on change rather than per frame: the theme gate samples inside these
+    /// rectangles, and it needs a line for the frame it is about to photograph. A
+    /// per-frame line would be thousands of identical rows per reveal; no line at
+    /// all was the first version, and the gate then sampled a layout from before
+    /// the arrow key that moved the cursor.
+    last_layout: Option<hub_ui::launcher::Layout>,
     /// The window's size and margin, in **physical** pixels (`desired * scale`).
     spec: hub_core::PanelSpec,
     /// Needed to turn the physical spec into the viewport's own points, which is
@@ -436,6 +444,7 @@ impl Shell {
             pending: None,
             last_query: String::new(),
             keyboard_logged: false,
+            last_layout: None,
             bench: bench_total.map(|total| Bench {
                 total,
                 completed: 0,
@@ -561,11 +570,27 @@ impl Shell {
         let action = launcher::draw(ctx, &mut self.state);
         self.drawn = true;
 
+        // Where this frame put things. Logged when it changes, because the theme
+        // gate has to photograph a frame and then sample the rectangles that frame
+        // drew -- the arrow key that moves the cursor changes the selection card
+        // and nothing else, so it is exactly the case that needs its own line.
+        let layout = self.state.layout;
+        if self.last_layout != Some(layout) {
+            self.last_layout = Some(layout);
+            self.log.mark(0, "launcher_layout", &layout.describe());
+        }
+
         // The frame the text box took the keyboard. Everything before it is a
         // reveal in progress; everything after is typing that lands.
         if self.handle.visible() && self.state.keyboard && !self.keyboard_logged {
             self.keyboard_logged = true;
             self.log.mark(0, "launcher_ready", "keyboard=true");
+            // The frame that just finished did not know it had the keyboard --
+            // `draw_search` reads the flag from the pass before, so the focus ring
+            // is one frame behind. Without this repaint the panel sits there
+            // unoutlined until the user types, and "the field does not look live"
+            // is exactly the impression the ring exists to prevent.
+            ctx.request_repaint_of(viewport_id());
         }
 
         // One line per keystroke, not per frame: the gate has to be able to wait

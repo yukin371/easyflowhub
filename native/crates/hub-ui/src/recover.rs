@@ -17,9 +17,9 @@
 //! The card size is fixed for the same reason. Text that reflows the card would
 //! move the buttons between the frame the gate read and the frame it clicked.
 
-use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Vec2};
+use egui::{Align2, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Vec2};
 
-use crate::theme::Palette;
+use crate::theme::Theme;
 
 /// Logical size of the card, before clamping to the window.
 pub const CARD: Vec2 = Vec2::new(560.0, 340.0);
@@ -55,7 +55,7 @@ pub struct Shown {
 /// timestamp so this crate keeps knowing nothing about clocks or file formats.
 pub fn draw(
     ctx: &egui::Context,
-    palette: Palette,
+    palette: Theme,
     screen: Rect,
     area: Rect,
     when: &str,
@@ -91,10 +91,10 @@ pub fn draw(
             // note behind the card must not reach the strip's buttons. It covers the
             // whole window, not just the body -- the strip has a close button and a
             // pin, and a modal that lets those through is not modal.
-            painter.rect_filled(screen, CornerRadius::ZERO, Color32::from_black_alpha(96));
+            painter.rect_filled(screen, CornerRadius::ZERO, palette.scrim);
             let _scrim = ui.interact(screen, ui.id().with("scrim"), Sense::click());
 
-            painter.rect_filled(card, CornerRadius::same(10), palette.panel);
+            painter.rect_filled(card, CornerRadius::same(10), palette.canvas);
             painter.rect_stroke(
                 card,
                 CornerRadius::same(10),
@@ -142,7 +142,7 @@ pub fn draw(
                 painter.rect_filled(
                     column,
                     CornerRadius::same(6),
-                    palette.panel_strong.gamma_multiply(0.55),
+                    palette.surface_soft,
                 );
                 painter.text(
                     column.left_top() + Vec2::new(9.0, 7.0),
@@ -190,15 +190,15 @@ pub fn draw(
 /// A wash rather than a solid accent: the note's palette is the user's (it can be
 /// a light theme), and solid accent with light text is unreadable there. The wash
 /// keeps the label in ink and still says which button is the default.
-fn button(ui: &mut egui::Ui, palette: Palette, rect: Rect, label: &str, primary: bool) -> bool {
+fn button(ui: &mut egui::Ui, palette: Theme, rect: Rect, label: &str, primary: bool) -> bool {
     let response = ui.interact(rect, ui.id().with(("recover", label)), Sense::click());
     let painter = ui.painter();
 
     if primary || response.hovered() {
         let fill = if primary {
-            palette.accent.gamma_multiply(0.28)
+            palette.accent_soft
         } else {
-            palette.panel_strong
+            palette.surface
         };
         painter.rect_filled(rect, CornerRadius::same(17), fill);
     }

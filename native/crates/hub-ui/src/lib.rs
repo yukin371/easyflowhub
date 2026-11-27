@@ -20,4 +20,4 @@ pub mod theme;
 pub use launcher::{Action as LauncherAction, Item as LauncherItem, State as LauncherState};
 pub use panel::{first_screen_text, PanelState, PANEL_PADDING};
 pub use quicknote::{opacity_label, slots, StripState};
-pub use theme::Palette;
+pub use theme::Theme;

@@ -18,7 +18,7 @@
 
 use egui::{CornerRadius, FontId, RichText, Sense, Vec2};
 
-use crate::theme::Palette;
+use crate::theme::Theme;
 
 /// Height of the chip's padding, in points.
 const CHIP_PADDING: Vec2 = Vec2::new(10.0, 3.0);
@@ -33,7 +33,7 @@ const CHIP_PADDING: Vec2 = Vec2::new(10.0, 3.0);
 /// in it would read as a key we forgot to name.
 pub fn hint(
     response: egui::Response,
-    palette: Palette,
+    palette: Theme,
     label: &str,
     chord: &str,
 ) -> egui::Response {
@@ -51,7 +51,7 @@ pub fn hint(
 }
 
 /// The key itself, in a box: `Ctrl+K`.
-pub fn chip(ui: &mut egui::Ui, palette: Palette, chord: &str) {
+pub fn chip(ui: &mut egui::Ui, palette: Theme, chord: &str) {
     let galley = ui.painter().layout_no_wrap(
         chord.to_string(),
         FontId::monospace(10.5),
@@ -59,7 +59,7 @@ pub fn chip(ui: &mut egui::Ui, palette: Palette, chord: &str) {
     );
     let (rect, _) = ui.allocate_exact_size(galley.size() + CHIP_PADDING, Sense::hover());
     ui.painter()
-        .rect_filled(rect, CornerRadius::same(3), palette.panel_strong);
+        .rect_filled(rect, CornerRadius::same(3), palette.surface);
     ui.painter().galley(
         rect.min + Vec2::new(CHIP_PADDING.x / 2.0, CHIP_PADDING.y / 2.0),
         galley,
@@ -75,7 +75,7 @@ pub fn chip(ui: &mut egui::Ui, palette: Palette, chord: &str) {
 /// identically would invite a settings screen to offer to rebind a wheel.
 pub fn gesture_hint(
     response: egui::Response,
-    palette: Palette,
+    palette: Theme,
     label: &str,
     gesture: &str,
 ) -> egui::Response {
@@ -94,7 +94,7 @@ mod tests {
         // Measured inside a real frame: the text layout needs the font atlas, and
         // asking for it before the first pass panics rather than returning zero.
         let ctx = egui::Context::default();
-        let palette = Palette::quick();
+        let palette = Theme::quick();
         let mut measure = |chord: &str| -> f32 {
             let mut width = 0.0;
             let _ = ctx.run(Default::default(), |ctx| {

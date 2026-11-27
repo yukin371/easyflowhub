@@ -57,7 +57,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 - [2026-11-27-tauri-handover-t-gate-0.md](./active/2026-11-27-tauri-handover-t-gate-0.md)：Tauri 版停掉 launcher / 快速笔记 / 待办卡片 webview；原生 `--resident` 补上（T-Gate 0 只剩选区翻译迁移）
 
-### Completed（20）
+### Completed（21）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -79,6 +79,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-26-store-schema-version.md](./completed/2026-11-26-store-schema-version.md)：schema 版本号算出来而不是盖上去（六级梯子，24 项门禁）
 - [2026-11-27-c1-font-not-private.md](./completed/2026-11-27-c1-font-not-private.md)：C1 字库映射（Commit 130.1 → 91.5 MB，一个字没少）
 - [2026-11-27-c2-launcher-productized.md](./completed/2026-11-27-c2-launcher-productized.md)：launcher 产品化（藏到屏外的预创建窗口，p95 2.4–3.2 ms，25 项门禁）
+- [2026-11-27-theme-tokens.md](./completed/2026-11-27-theme-tokens.md)：主题 token（7 槽 → 21 语义 token，面板三态与 3+2 网格，17 项像素门禁）
 
 ### Rejected（1）
 

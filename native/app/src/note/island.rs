@@ -31,7 +31,7 @@ impl NoteShell {
     pub(super) fn theme_for(&self, ctx: &egui::Context) -> hub_editor::Theme {
         let ppp = ctx.pixels_per_point().max(0.1);
         hub_editor::Theme {
-            background: colorref(self.palette.panel),
+            background: colorref(self.palette.canvas),
             foreground: colorref(self.palette.ink),
             font_face: self.appearance.font_family.clone(),
             font_pt: self.appearance.font_pt,

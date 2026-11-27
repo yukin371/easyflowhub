@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use hub_core::{clock, Store, Table};
 use hub_ui::manager::{self, Action, Row, Tab};
-use hub_ui::Palette;
+use hub_ui::Theme;
 
 use crate::hub::Request;
 use crate::log::Log;
@@ -134,7 +134,7 @@ impl Shell {
             .clone();
         let action = manager::draw(
             ctx,
-            Palette::standard(),
+            Theme::standard(),
             &mut self.state,
             &self.rows,
             self.todo.as_deref(),

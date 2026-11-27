@@ -33,7 +33,7 @@ use hub_core::{
 use hub_editor::Editor;
 use hub_ui::quicknote::{self, StripState};
 use hub_ui::switcher;
-use hub_ui::Palette;
+use hub_ui::Theme;
 
 use crate::click;
 use crate::keys;
@@ -124,7 +124,7 @@ pub struct NoteShell {
     /// does not write the same line ten times a second.
     waited: bool,
     strip: StripState,
-    palette: Palette,
+    palette: Theme,
     appearance: NoteAppearance,
     /// The theme last pushed into the island. `EM_SETCHARFORMAT(SCF_ALL)` reformats
     /// the whole document, so repeating it every frame is not free: it re-runs
@@ -181,7 +181,7 @@ pub struct NoteShell {
 impl NoteShell {
     pub fn new(spawn: Spawn) -> Self {
         let appearance = spawn.settings.quick_note.appearance.clone();
-        let palette = Palette::from_colors(&appearance.colors);
+        let palette = Theme::from_colors(&appearance.colors);
         // A note opens at the configured alpha (normally 100%). Applying it here as
         // well as in `attach` is not redundant: this is the value the *label* shows
         // on the very first frame, before the OS window exists.

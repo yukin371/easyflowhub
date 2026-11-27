@@ -9,7 +9,7 @@ use egui::{
     Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Vec2,
 };
 
-use crate::theme::Palette;
+use crate::theme::Theme;
 
 /// Inner padding of the panel; must match `hub-core::layout::PanelSpec::padding`
 /// (the column maths depends on it).
@@ -40,7 +40,7 @@ const ACTIONS: [Action; 8] = [
 pub struct PanelState {
     pub query: String,
     pub columns: u8,
-    pub palette: Palette,
+    pub palette: Theme,
     pub lite: bool,
     pub reveal_count: u64,
 }
@@ -51,9 +51,9 @@ impl PanelState {
             query: String::new(),
             columns,
             palette: if lite {
-                Palette::lite()
+                Theme::lite()
             } else {
-                Palette::standard()
+                Theme::standard()
             },
             lite,
             reveal_count: 0,
@@ -110,7 +110,7 @@ pub fn draw(ctx: &egui::Context, state: &mut PanelState) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE
-                .fill(palette.panel)
+                .fill(palette.canvas)
                 .inner_margin(egui::Margin::same(PANEL_PADDING as i8)),
         )
         .show(ctx, |ui| {
@@ -138,7 +138,7 @@ pub fn draw_editor(ctx: &egui::Context, state: &mut PanelState) -> Rect {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE
-                .fill(palette.panel)
+                .fill(palette.canvas)
                 .inner_margin(egui::Margin::same(PANEL_PADDING as i8)),
         )
         .show(ctx, |ui| {
@@ -150,7 +150,7 @@ pub fn draw_editor(ctx: &egui::Context, state: &mut PanelState) -> Rect {
             let height = (ui.available_height() - 26.0).max(120.0);
             let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
 
-            ui.painter().rect_filled(rect, CornerRadius::same(8), palette.panel_strong);
+            ui.painter().rect_filled(rect, CornerRadius::same(8), palette.surface);
             ui.painter().rect_stroke(
                 rect,
                 CornerRadius::same(8),
@@ -206,7 +206,7 @@ fn draw_search(ui: &mut egui::Ui, state: &mut PanelState) {
     let palette = state.palette;
     let width = ui.available_width();
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, SEARCH_HEIGHT), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), palette.panel_strong);
+    ui.painter().rect_filled(rect, CornerRadius::same(10), palette.surface);
     ui.painter().rect_stroke(
         rect,
         CornerRadius::same(10),
@@ -263,9 +263,9 @@ fn draw_grid(ui: &mut egui::Ui, state: &mut PanelState) {
 
         let response = ui.interact(rect, ui.id().with(("action", index)), Sense::click());
         let fill = if response.hovered() {
-            palette.panel_strong
+            palette.surface
         } else {
-            palette.panel_strong.gamma_multiply(0.72)
+            palette.surface_soft
         };
         ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
         ui.painter().rect_stroke(
