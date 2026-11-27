@@ -4,17 +4,23 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
+- `2026-11-27` **快速笔记入口从 Manager 接回原生壳：两条门铃，一条带 id**。Manager 的「新建快速笔记」原本只回一句「已由原生壳接管」，现在真能开窗。
+  - **一个事件一种答案**：转发靠 auto-reset 事件 `…Shell.reveal`，只唤醒、不带 payload；`--note` 曾与普通二次启动共用门铃，「要笔记」变成「显示面板」。新增 `…Shell.note` 与独立 watcher 线程。
+  - **id 落文件**：事件带不了 payload。设置文件旁 `pending-note`：**临时文件 + `rename`**（否则读到半个 id）、**读一次就删**（否则下次无关的环重开）、**60 s 过期**（孤儿不能一小时后生效）。
+  - **Tauri 只转发**：`create_note_window` 接管态走 `native_shell::open_note`（`--note` + 可选 `--note-id`，`CREATE_NO_WINDOW`），exe 按 `EFH_NATIVE_EXE` → 程序旁 → `%LOCALAPPDATA%` 解析，5 个单测钉 argv 与优先级。**这条命令当前没有前端调用者**，接口先就绪。
+  - 证据：`check-native-single-instance.py` **22/22**（+5：`--note` 0.08 s、`ring=note`、开窗 0→1、reveal 计数不动、`--note-id gate-seed` 无 `found=false`、1→2 窗）；原生 **317**、Tauri **105**。详见 [note-handover](../plans/completed/2026-11-27-note-handover.md)。
+
 - `2026-11-27` **T-Gate 1 第一件：从 Windows 侧数 webview，第一次跑就抓到「关掉 Manager 会带走托盘」**。结构门禁只判"构建会做什么"，这道 18 项门禁判进程：数 `msedgewebview2.exe` 子进程与可见窗口，"0" 隔 2 秒量两次。
   - **实测**：常驻 `private=4.6 MB`、0 webview、0 窗口；`--autostart` 二次启动 0.04 s 安静退出；普通二次启动按需建 Manager（再叫仍 1 个）；关掉后归零、进程还在、能再叫回来；接管态按 `Ctrl+Alt+Space` 不建东西。
   - **真缺陷**：最后窗口 `Destroyed` 就发 `ExitRequested{code:None}`，没人 `prevent_exit` 就退出——T-Gate 0 之前 launcher 窗口一直在，所以是接管后才有的回归。修法只挡 `code:None`，托盘「退出」走 `Some(0)` 照常退。
   - **18/18** + 结构 **16/16** + `cargo test --lib --release` **100 passed**；重建要 `/tmp` 的 target 目录（`src-tauri/target` 写不进，见文档 §7）。详见 [tauri-resident-gate](../plans/completed/2026-11-27-tauri-resident-gate.md)。
 
 - `2026-11-27` **T-Gate 0 关闭：选区捕获先有门禁，翻译迁到原生**。顺序：先让门禁能失败，再迁实现。
-  - **选区门禁 18 项**：起 `--note` 窗口当应用本体，选中哨兵后按热键，把单测里不存在的三样搬进断言（另一个进程的选区、系统剪贴板、真实按键）。四个决定：`SWP_SHOWWINDOW` 而不 `focus()`（抢焦点会把 `Ctrl+C` 打到面板自己身上）、轮询序列号而非 sleep、`CAPTURE_BUDGET=45 ms`、序列号没动时**不**清剪贴板（Tauri 版会 `empty()`，毁掉用户刚截的图）。
+  - **选区门禁 18 项**：起 `--note` 窗口当应用本体，选中哨兵后按热键，把单测里不存在的三样搬进断言（另一个进程的选区、系统剪贴板、真实按键）。四个决定：`SWP_SHOWWINDOW` 而非 `focus()`（抢焦点会把 `Ctrl+C` 打到面板自己身上）、轮询序列号而非 sleep、`CAPTURE_BUDGET=45 ms`、序列号没动时**不**清剪贴板（会毁掉用户刚截的图）。
   - **第一个真缺陷**：首轮 `reason=no_copy`，笔记从 43 字变 1 字（`title="c"`）——`WM_HOTKEY` 在组合键仍按住时投递，注入的 `Ctrl` up 已解掉修饰键，目标收到**裸 `c`** 覆盖了选区；文本插入不动序列号，症状像"没复制"。修法：`GetAsyncKeyState` 轮询修饰键松开（上限 12 ms，实测 1.13），`replace()` 同样要等，否则 `v` 替换掉译文。
   - **翻译**：纯逻辑（16 个 `Problem`、`body`/`parse`、状态码映射）进 `hub-core`，网络只在 `app`，卡片在 `hub-ui`；`native-tls` 而非 `rustls`（`aws-lc-rs` 要 cmake/nasm，而唯一请求打在回环）；每请求一线程 + 自增 id。证据：**31/31**、捕获 18.4 ms、请求 3 ms、502 密钥在日志 **0** 次、空选区零请求。
-  - **第二个真缺陷**：替换后笔记里是**上一份剪贴板**——粘贴要在目标的消息循环里跑，而笔记窗口与面板**同线程**，UI 线程阻塞 60 ms 让目标没机会跑。改为独立线程粘贴。两条都只有原生壳会有。
-  - **回归**：12 个原生门禁串行，11 个原样过；`theme` 修掉两处门禁自身缺陷（写死方向键次数、焦点环单点采样）→ **17/17**；`font` 的 `mapped − none ≤ 6` 是判据过期（HEAD 同样 6.8 MB，它量的是"画出这些字要多少内存"，映射是否计费看 `heap − mapped`），改口径 → **11/11**，记账面板 commit 91.5 → **98.6 MB**。详见 [selection-capture-gate](../plans/completed/2026-11-27-selection-capture-gate.md)、[translation-migration](../plans/completed/2026-11-27-translation-migration.md)。
+  - **第二个真缺陷**：替换后笔记里是**上一份剪贴板**——粘贴要在目标的消息循环里跑，而笔记窗口与面板**同线程**，阻塞 60 ms 让目标没机会跑。改为独立线程粘贴。两条都只有原生壳会有。
+  - **回归**：12 个原生门禁串行，11 个原样过；`theme` 修掉两处门禁自身缺陷（写死方向键、焦点环单点采样）→ **17/17**；`font` 的 `mapped − none ≤ 6` 是判据过期（HEAD 同样 6.8 MB；它量的是「画出这些字要多少内存」，映射是否计费看 `heap − mapped`），改口径 → **11/11**，记账面板 commit 91.5 → **98.6 MB**。详见 [selection-capture-gate](../plans/completed/2026-11-27-selection-capture-gate.md)、[translation-migration](../plans/completed/2026-11-27-translation-migration.md)。
 
 - `2026-11-27` **原生壳有了单实例：一个会话一个壳，第二次启动是一条请求**。自启 + 手动启动原本得到两个托盘图标和一整轮 `RegisterHotKey failed (1409)`——第二个进程承诺五个组合，一个都不归它。
   - 三个决定：`Local\` 而非 `Global\`（RDP 用户各自要一个壳）；用自动重置事件传请求（互斥在语义上要等对方退出）；事件和互斥**一起**在 `claim()` 里建，否则落在两者之间的信号会被丢掉——那正是登录竞态。
@@ -29,12 +35,12 @@
 - `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
   - 三个不显然的决定：关闭 = 挪到 `-30000,-30000`（`SW_HIDE` 停掉 `WM_PAINT` 投递，eframe 循环停摆，第九次唤起会画出第八次）；揭示在热键线程、隐藏在 UI 线程（`GetFocus` 只回答调用线程），`epoch` 挡住连按交叉；门禁逼出四个真缺陷（空结果 Enter 后交出焦点、点别处不消失、全新目录 `Store::open` 不建父目录、预览重复标题）。证据：`check-native-launcher.py` 25/25 连跑 4 次，p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100），泄漏按两次运行的增量差判。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。
 - `2026-11-27` **C1 关闭：字库不再计入私有内存，常驻 130.1 → 91.5 MB，一个字没少**。S1 记的 37.7 MB「字体 + 图集」拆开看，字库字节是全部、图集只有 0.5 MB（`16384x32`），所以杠杆在字库本身。根因在 epaint：`FontData::from_owned` 走 `Cow::Owned`，`ab_glyph_font_from_font_data` 会 `bytes.clone()` 再建一个 `FontVec`——`msyh.ttc` 19.7 MB 至少一份常驻私有堆。
-  - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 做只读映射，`FontData::from_static` 取 `&'static [u8]` 走 `FontRef` 零拷贝。不做子集化有三条理由——微软字体子集化产物是分发物（授权另说）、固定子集会丢掉用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具与产物校验的构建链。方向没变，C1 里"三种口径都要记"照旧执行。
-  - **数字（同一次会话，三次采样取中位数）**：快速笔记进程 mapped **91.5** / heap 129.1 / none 91.5（Commit）；私有工作集 56.4 / 94.0 / 56.4；工作集 90.6 / 128.0 / 90.7。Launcher 面板 mapped **92.6**（S1 归档的 130.1 就是它的旧值）。**mapped − none = 0.0 MB**，即字库不再向进程要私有内存；工作集只降 37.4 MB 中的一部分，被碰过的映射页仍常驻，只是文件支持、可回收——这一条不掩饰。
-  - **波动写进门禁**：同一份二进制连续启动 Commit 在 91.5–99.3 MB 之间跳（GL 暂存、字形缓存时序），幅度与要证明的差值同量级。所以 `check-native-font.py` 每配置跑三次取中位数、打印 min–max，判据用差值而不是绝对值；100 MB 线仍照实断言，但它只是"目标"。
-  - **门禁 11 项，核心是三次受控对照**（mapped / heap / none，只差加载路径）：光判"commit 小于 100"会在"字库静默加载失败、面板全是豆腐块"时也变好。另外三项是像素——mapped 与 heap 差 ≤1%（同一张脸，只有字节住处变了）、mapped 与 none 差 ≥2%（实测 4.65%，豆腐块与汉字分得开）。**变异验证**：把 `if !heap` 改成 `if false && !heap` 后四项转红（`RESULT: FAIL`），像素三项仍绿——只有内存那半边的判据该红，符合预期。它也抓到自己第一个缺陷：`capture()` 起初没接 `extra`，三次截图全走 mapped，等于拿一张图和自己比还判了"通过"。
+  - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 只读映射，`FontData::from_static` 取 `&'static [u8]` 走 `FontRef` 零拷贝。不做子集化：微软子集产物是分发物（授权另说）、固定子集会丢用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具链。方向没变，C1「三种口径都要记」照旧。
+  - **数字（三次采样取中位数）**：快速笔记 mapped **91.5** / heap 129.1 / none 91.5（Commit）；私有工作集 56.4 / 94.0 / 56.4；工作集 90.6 / 128.0 / 90.7。Launcher 面板 mapped **92.6**（S1 的 130.1 是它的旧值）。**mapped − none = 0.0**：字库不再要私有内存；工作集只降 37.4 的一部分，碰过的映射页仍常驻、只是可回收——不掩饰。
+  - **波动写进门禁**：同一份二进制连续启动 Commit 在 91.5–99.3 MB 之间跳（GL 暂存、字形缓存时序），幅度与要证明的差值同量级。所以 `check-native-font.py` 每配置跑三次取中位数、打印 min–max，判据用差值而非绝对值；100 MB 线照实断言，但它只是目标。
+  - **门禁 11 项，核心是三次受控对照**（mapped / heap / none，只差加载路径）：只判「commit < 100」会在「字库静默加载失败、面板全是豆腐块」时也变好。另三项是像素——mapped 与 heap 差 ≤1%（同一张脸）、mapped 与 none 差 ≥2%（实测 4.65%）。**变异验证**：`if !heap` 改成 `if false && !heap` 后四项转红、像素三项仍绿。它也抓到自己第一个缺陷：`capture()` 起初没接 `extra`，三次截图全走 mapped，等于拿一张图和自己比还判了通过。
   - **口径补齐**：`hub_win::ProcessProbe` 改读 `PROCESS_MEMORY_COUNTERS_EX2`，一次给出 Commit（`PrivateUsage`）/ 私有工作集 / 工作集三项——G0 §6 记的"原生只记了 Commit，私有工作集没记"到此修掉。
-  - **顺带两件**：①`--no-font` 之前只对 spike 生效，产品路径无条件装字体，于是"在 spike 上量成本"与"产品实际行为"是两个程序——现在两条路径共用 `app::font::install_and_log`；②七个原生门禁（notes/pin/tools/manager/switcher/drag/recover）加 edge/size/store-schema 的工作目录默认值从 `native/target/<gate>` 挪到 `%TEMP%`，与 2026-11-26 修的 `measure-native-store.ps1` 同一缺陷：门禁临时状态长在产物目录里。
+  - **顺带**：`--no-font` 现在两条路径共用 `app::font::install_and_log`；九个原生门禁的工作目录默认值从 `native/target/<gate>` 挪到 `%TEMP%`（临时状态不该长在产物目录里）。
   - **未做**：65 MB 解释线（属 G1，必须写 ADR）、多屏混合 DPI（C3）、8 小时泄漏（G1）、`lite` 档、字体热替换（映射持文件对象，下次启动才换）。验证：`check-native-font.py` 11/11、`cargo test --workspace` 249、架构门禁 5 crates、回归 notes 25 / pin 11 / tools 8 / manager 19 / switcher 22 / edge 23 / size 11 / recover 16 / drag 9 / store-schema 24 全绿。详见 [plans/completed/2026-11-27-c1-font-not-private.md](../plans/completed/2026-11-27-c1-font-not-private.md)。
 
 - `2026-11-27` **ADR 有了生命周期与季度复查；先盘点的结论是「整篇取代 0 份」**。9 份决策没有一份失效，真问题是记账：ADR-0004 §2 的"背景模糊"实现手段已被 ADR-0009 接管，而 0009 写的是 `supersedes: 无`（单向指针）；`decisions/README.md` 只列 7 条，ADR-0001/0002 不在索引里（ADR-0002 全仓零引用）；三处正文过期——ADR-0007 把 `scriptmgr/` 写成旧目录名、ADR-0006/0008 的 adapter 名与实际 trait `TranscriptionTransport` 不符、ADR-0001 第 6 条还写着 plans 平铺。
@@ -73,20 +79,20 @@
 - `2026-11-26` **`notes.db` 的 DDL 只剩一份：Tauri 调 `hub-core::store` 的同一把梯子**（[../plans/completed/2026-11-26-notes-db-shared-migrator.md](../plans/completed/2026-11-26-notes-db-shared-migrator.md)，批 1–3）。Tauri 新增 `src-tauri/src/db.rs` 作唯一连接入口（路径 + `busy_timeout` + `foreign_keys` + `Rebuild::Run`，梯子没到顶就拒连并点名 rung），`notes.rs` / `inbox/schema.rs` / `settings.rs` 的 DDL 与三处 `db_path` 删除，`file_search_recent` 改调 `hub_core::store::ensure_file_search_recent`（仍懒建、不进梯子，开门零写入）。守卫方向随之翻转：`the_tauri_build_owns_no_ddl` 递归扫 Tauri `src/**/*.rs`、按 `#[cfg(test)]` 项跳过测试夹具，生产代码出现 `CREATE`/`ALTER`/`PRAGMA user_version` 即失败（反向验证：塞一个探针文件，按 `zz_probe.rs:1: CREATE TABLE` 报红）。S3 跨实现测试加两条断言：迁移后 `schema.is_current()` 且 `legacy_capture_kinds == false`。**`user_version` 仍不写**（§5），门禁里"原生写后仍是 0"的断言继续保持。
 
 - `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [../plans/completed/2026-11-25-notes-db-compat-spike.md](../plans/completed/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。（当时 S4 未做。）
-  - **双向兼容用真代码验，不自证**：native 写入后，读它的是 **Tauri 那份代码**（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽出的连接级函数），不是复制一遍 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，另一套 build，原生侧 bundled 是 3.46.0）与我们的读者对 **42 行逐字段一致**（`rows-identical 42`）。反向也验了：Tauri 写 → native 读回同一内容。
+  - **双向兼容用真代码验，不自证**：native 写入后由 **Tauri 那份代码**读（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽的连接级函数），不是复制 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，原生 bundled 是 3.46.0）与我们的读者 **42 行逐字段一致**（`rows-identical 42`）。反向也验：Tauri 写 → native 读回同内容。
   - **"无 schema 破坏"是可 diff 的**：`sqlite_master` 全量 dump 写前写后**逐字节相同**；`journal_mode=delete` / `user_version=0` / `page_size=4096` / `encoding=UTF-8` 四项不动；`integrity_check` 在 native 写后、Tauri 写后、独立 CLI 三次全 `ok`。**刻意不切 WAL**：那会改文件头 write version 并留下 `-wal`/`-shm`，属产品级决定（备份/同步/"复制 db"的语义都变），不该由 spike 替用户定。
   - **真实数据不是造的**：live 库 `143,360 B`，**40 条笔记 / 9 个设置 / 待办箱**全部读出，字段与 CLI 逐项相等；排序（置顶优先 + `updated_at` 降序）与产品查询口径一致。
   - **并发是实测的**：另一进程持 `IMMEDIATE` 写锁 400 ms 时本进程写入被 `busy_timeout` 吸收并成功；持锁 7 s（超 5 s 超时）时本进程**明确失败**（`database is locked`）、无半行、`integrity_check` 仍 `ok`、持锁方的行还在。
-  - **G-1**：live 库字节数 / sha256 / mtime 三项写前写后完全相同——全程只碰工作副本（`%TEMP%\efh-s3-gate\s3-gate-<stamp>\root\notes.db`，`-WorkRoot` 可改；早先落在 `native/target/` 时在只读 checkout 上会假红成 `readonly database`）；`--store-bench --store-write` 还会**拒绝**指向真实 app data 目录（代码约束，不是操作纪律）。
-  - **4 个真实发现**：①`autostart` 是 `{"enabled":true}` **对象不是布尔**（设计时按 bool 写，实测纠正）；②`notes` 表物理列序因 `ALTER TABLE` 追加而不同于建表文本，`INSERT ... VALUES` 会把 `tags` 写进 `created_at` 槽——静默损坏，全部语句显式列名；③PS 5.1 `Start-Process` 在环境变量大小写重复（`HTTPS_PROXY`/`https_proxy`）时直接抛异常，并发测试改用 .NET Process API；④PS 5.1 把原生 stderr 变成 `ErrorRecord`，`-is [string]` 过滤会吞掉 `database is locked`，门禁因此差点把"被拒绝"判成"失败"。
+  - **G-1**：live 库字节数 / sha256 / mtime 写前写后完全相同——全程只碰工作副本（`%TEMP%\efh-s3-gate\s3-gate-<stamp>\root\notes.db`，`-WorkRoot` 可改；早先落在 `native/target/` 时在只读 checkout 上假红成 `readonly database`）；`--store-bench --store-write` 还会**拒绝**指向真实 app data 目录（代码约束，不是纪律）。
+  - **4 个真实发现**：①`autostart` 是 `{"enabled":true}` **对象不是布尔**；②`notes` 物理列序因 `ALTER TABLE` 追加而不同于建表文本，`INSERT ... VALUES` 会把 `tags` 写进 `created_at` 槽——静默损坏，全部语句显式列名；③PS 5.1 `Start-Process` 在环境变量大小写重复（`HTTPS_PROXY`/`https_proxy`）时抛异常，并发测试改用 .NET Process API；④PS 5.1 把原生 stderr 变 `ErrorRecord`，`-is [string]` 会吞掉 `database is locked`，差点把「被拒绝」判成「失败」。
   - **未测（4 项，明确列出）**：22 389 个既有附件的批量可读性（只验契约与新写入文件）、待办 parser 完整口径（只看 `- [ ]`/`- [x]` 行数）、随机并发压力、Win10 双系统。
-  - **工具化**：`--store-bench [--store-write] [--store-hold <ms>]` + `scripts/measure-native-store.ps1`（L1 native / L2 Tauri 真代码 / L3 独立 CLI / 并发 / G-1，一条命令 `RESULT: PASS`）；`cargo test --workspace` 43 → **58 项**；样本归档 `docs/releases/native-s3/`（两次独立运行逐项相同）。
+  - **工具化**：`--store-bench [--store-write] [--store-hold <ms>]` + `scripts/measure-native-store.ps1`（L1 native / L2 Tauri 真代码 / L3 独立 CLI / 并发 / G-1，一条命令 `RESULT: PASS`）；`cargo test --workspace` 43 → **58**；样本归档 `docs/releases/native-s3/`（两次运行逐项相同）。
 
 - `2026-11-25` **S2 通过：文本岛键入 p95 4.95 ms（阈值 16，余量 11）**。设计与验收标准先落在 [../plans/completed/2026-11-25-richedit-island-spike.md](../plans/completed/2026-11-25-richedit-island-spike.md)，再按 A/B/C 三批实现并逐条验收。（当时 S3 / S4 未做。）
   - **工作区**：新增 `hub-editor` crate（第五个），`check-native-architecture.mjs` → `passed (5 crates)`；`cargo test --workspace` 27 → **43 项**。CI 的 `native-crates` job 自动覆盖新 crate。
   - **承载方式**：`RICHEDIT50W`（`Msftedit.dll`）作为 egui 面板的**子 HWND**，矩形由布局给出、按物理像素对齐；父窗口补 `WS_CLIPCHILDREN`，这是"GL 不盖子控件"的唯一保证。`hub-editor` 只吃 `PixelRect`、只吐文本，门禁禁止出现 `egui::`。
-  - **实测**（n=200 @1k / n=100 @10k，150% 单屏，三次运行）：`type` p50 **2.9** / p95 **4.95** / p99 **6.33** / max 6.8 ms；10k 文档 p95 **5.09 ms**，比值 **0.95–1.07**（**曲线是平的，不是线性上涨**——插入成本与文档长度无关，这是 S2 最想确认的一件事）。10k 加载 8–11 ms、粘贴 13–14 ms、连发 200 字符 203–225 ms。`compose` 仅报告 p50 4.9–7.5 ms。
-  - **"深色背景真的生效"变成了像素计数**：`WM_PRINTCLIENT` 到内存 DC 采样 19392 点——主色 `0x2D2521` 占 98.49%，**空文档文字色像素 0、写入 20 字后 135**。这条路子不需要截屏、不需要可见窗口，所以能在无人值守机器上跑，也不会被"桌面上盖了什么"骗过去。
+  - **实测**（n=200 @1k / n=100 @10k，150% 单屏，三次运行）：`type` p50 **2.9** / p95 **4.95** / p99 **6.33** / max 6.8 ms；10k 文档 p95 **5.09 ms**，比值 **0.95–1.07**（**曲线是平的**——插入成本与文档长度无关，S2 最想确认的一件事）。10k 加载 8–11 ms、粘贴 13–14 ms、连发 200 字符 203–225 ms。`compose` 仅报告 p50 4.9–7.5 ms。
+  - **"深色背景真的生效"变成像素计数**：`WM_PRINTCLIENT` 到内存 DC 采样 19392 点——主色 `0x2D2521` 占 98.49%，**空文档文字色像素 0、写入 20 字后 135**。这条路子不需要截屏、不需要可见窗口，所以能在无人值守机器上跑，也不会被桌面上的东西骗过去。
   - **4 个真实发现（都是量出来的，不是猜的）**：①`EM_SCROLLCARET` **在控件没有焦点时是空操作**——首轮两条滚动探针都返回 0，不是控件坏了；补 `SetFocus` 同时修掉产品里"输入超过一屏后光标不跟随"；②RichEdit 在 `WM_CHAR` **内部**同步绘制，紧随其后的 `UpdateWindow` 实测 0 µs，所以"插入 vs 绘制"在自然路径上无法分离，门禁改为 `insert` + 强制全量重绘（上界）；③连续键入被 RichEdit 合并成**一个**撤销单元，`EM_STOPGROUPTYPING` 无效，只有移动光标才切开；④空闲桌面下 `DwmFlush` 返回 **254 ms**（合成器不合成），所以采样器一旦探到 > 40 ms 就整段标 `n/a`，不把空闲时间记成延迟。
   - **口径作废而不是"看起来更好"**：首轮测出的 p95 **1.58 ms** 连同 `paint 0.00` / `scroll 0/0` **全部作废**——那是不带焦点、合成器休眠的状态，产品里不会发生。带焦点后 `insert` p50 从 0.74 → 1.9 ms（约 2.6×），省掉的正是光标维护与滚动视图这些真实工作。作废原因逐条写进 S2 文档 §9.4，归档里不留一个更快的旧数字。
   - **B5 判据修订（显式记录，未悄悄放宽）**："50 次编辑 = 50 次撤销"不成立也不该成立；判据改为"撤销到栈空后逐字节回到原文 + 重做回到终稿 + **撤销栈确有深度**（光标移动后 2 个单元，替换型编辑 2–3 个）"。门禁查的是"能把内容还原"，不是"每一步一个单元"。
@@ -94,16 +100,15 @@
   - **工具化**：`--editor-bench N` + `scripts/measure-native-editor.ps1`（预算 + **17 项结构证据**一起判：颜色是否上屏、光标是否滚动、矩形是否只在变化时移动、Esc/Tab 是否被截获、撤销是否有深度……一条命令 `RESULT: PASS` / 退出码 0），样本归档到 `docs/releases/native-s2/`。
 
 - `2026-11-25` **S1 通过：原生壳热唤起 p95 48.9 ms（阈值 60，余量 11.1）**。设计与验收标准先落在 [../plans/completed/2026-11-25-native-shell-spike.md](../plans/completed/2026-11-25-native-shell-spike.md)，再按 A/B/C 三批实现并逐条验收。**G0 仍未过**：S2 / S3 / S4 未做。
-  - **工作区**：`native/` 四个 crate（`hub-core` 纯几何 + 设置、`hub-win` Win32 薄封装、`hub-ui` egui 面板、`app` 装配）。`cargo test` 27 项（core 12 / win 5 / app 10）；`check-native-architecture.mjs` 从 `skip` 变成真实 `passed (4 crates)`，这条门禁到今天才算真的存在。egui / eframe **钉在 0.31**——spike 要可复现，升级即作废全部归档样本。
+  - **工作区**：`native/` 四个 crate（`hub-core` 几何 + 设置、`hub-win` Win32 薄封装、`hub-ui` egui 面板、`app` 装配），`cargo test` 27 项（12/5/10），架构门禁从 `skip` 变 `passed (4 crates)`。egui / eframe **钉 0.31**：升级即作废全部归档样本。
   - **两段式显示（本轮唯一的结构性发现）**：跨线程 `SetWindowPos` 是**同步**的，要等目标线程处理消息，所以"把搬窗放到热键线程"并不能省下唤醒成本，实测仍是 30–47 ms。改为 **phase 1 = 测量 + 夹紧 + 搬窗 + 聚焦（热键线程，计入门禁）**、**phase 2 = 刷新内容（UI 线程，p50 140 ms，只记录不门禁）**。门禁量的是前者（屏幕上是预热帧），后者作为"内容新鲜度"另行记录——这是本轮唯一放宽的口径，写在 §4.4 里。
-  - **预热到稳态**：启动即建窗，预绘 3 帧（着色器编译 / 图集上传 / 稳态帧），唤起只剩搬窗。窗口以 `SWP_NOSIZE` 停在 `(-30000, -30000)` 且 `with_taskbar(false)`，**不能用 `SW_HIDE`**——隐藏会停发 `WM_PAINT`，winit 没有 redraw 可驱动，bench 第 2 轮起永久停住。
+  - **预热到稳态**：启动建窗、预绘 3 帧（着色器 / 图集 / 稳态），唤起只剩搬窗。窗口 `SWP_NOSIZE` 停在 `(-30000,-30000)` 且 `with_taskbar(false)`，**不能 `SW_HIDE`**：隐藏停发 `WM_PAINT`，bench 第 2 轮起永久停住。
   - **实测**（n=200，3840×2160@150% 单屏）：shown p50 **47.8** / p95 **48.9** / p99 **49.3** / max 49.4 ms（Tauri 对照 87 / 101 / 130，n=31）。另测 `--scale` 1.0 与 2.0（各 n=20）p95 49.3 / 49.2，说明成本与缩放无关、基本是唤醒的常数项。锚定实测 `at=+2631+786 size=660x1290`：右侧余 549、底边正好贴住 12 的边距；取焦 0.1–0.8 ms。
   - **泄漏**：Private **130.0 → 122.2 MB（−7.8）**，20 / 50 / 200 轮句柄数同水平（+24…+28，一次性）。**基线必须取在预热 3 帧之后**：取在构造函数里会把一次性的着色器 / 图集 / 纹理算成泄漏（第一版看到 +22.5 MB 就是这个假象）。
-  - **6 个真实缺陷**（都只在高 DPI 或第二轮才现形）：①进程没有 DPI 感知，坐标被整套虚拟化（3840×2160 报成 2560×1440 / scale 1.00，面板落在目标位置的 2/3）→ `SetProcessDpiAwarenessContext` 必须是 `main` 第一句；②`SW_HIDE` 饿死渲染循环；③停靠时 `SetWindowPos` 传 0 尺寸把窗口改成 0×0（eframe 截图 panic）；④`set_pixels_per_point(1.5)` 在 1.5 原生上**叠加成 2.25** → 改用 zoom factor `target/native`；⑤预热放在构造函数里会 panic `No fonts available`；⑥架构门禁扫到我自己注释里的 `windows::`——改注释措辞，不放宽门禁。
+  - **6 个真实缺陷**（只在高 DPI 或第二轮现形）：①无 DPI 感知 → 坐标全虚拟化（3840×2160 报 2560×1440，面板落在 2/3 处），`SetProcessDpiAwarenessContext` 必须是 `main` 第一句；②`SW_HIDE` 饿死渲染循环；③停靠 `SetWindowPos` 传 0 尺寸把窗口改成 0×0（截图 panic）；④`set_pixels_per_point(1.5)` 在 1.5 上**叠加成 2.25** → 用 zoom factor `target/native`；⑤预热放进构造函数 panic `No fonts available`；⑥门禁扫到注释里的 `windows::`——改措辞，不放宽门禁。
   - **常驻 130.1 MB 未达 65 MB 解释线（⚠️ 不掩饰）**：`--no-font` 对照测出 CJK 字体 + 图集占 **37.7 MB**（92.5 MB 基线），其余 ~92 MB 是 GL 驱动 + winit + egui 固定开销；仍比 Tauri 静置 262 MB 低 50%。字体子集化是首要可压缩项，留给 Phase 1。
-  - **smoke 一直是红的（顺带发现并修掉）**：`Responsiveness budget` 拿 60 ms 判**现 Tauri 版**（p95 101 ms），从打点落地那天就必然 FAIL——一个注定失败的步骤会把其余九步的信号一起淹掉。改为 `Tauri latency baseline (report)` + `-NoFail`：照旧打印 `Verdict: FAIL`，只是不再染红整轮；判决留在原生壳（越过 ~130 ms 才算回归）。同轮补 CI 的 `native-crates` job（27 项 + release 构建），此前 CI 完全不碰 `native/`。
-  - **文档回填**：主设计 §4.3 状态、§7.1 新增"原生 S1 实测"表（含门禁口径），`native/README.md` 列出 Phase 1 必须偿还的捷径（`FindWindowW` 拿 HWND、`--scale` 模拟缩放、无 blit 缓存、面板内容静态、无托盘）。
-  - **未测**：真实多显示器 + 混合 DPI 跨屏（本机单屏，`--scale` 只证明数学）、`lite` 在真实 RDP 回环（本机 `remote=0`）、首帧直接 blit 上一帧纹理（未做，当前靠预热帧留在 swap chain 达成等效）。
+  - **smoke 一直是红的（顺带修掉）**：`Responsiveness budget` 拿 60 ms 判**现 Tauri 版**（p95 101 ms），从打点落地那天就必然 FAIL，会把其余九步的信号一起淹掉。改 `Tauri latency baseline (report)` + `-NoFail`：照旧打印 `Verdict: FAIL`，不染红整轮；判决留在原生壳（越过 ~130 ms 才算回归）。同轮补 CI 的 `native-crates` job（27 项 + release 构建），此前 CI 完全不碰 `native/`。
+  - **文档回填**：主设计 §4.3 / §7.1「原生 S1 实测」表、`native/README.md` 列出 Phase 1 要还的捷径。**未测**：真实混合 DPI（`--scale` 只证数学）、`lite` 在 RDP 回环（本机 `remote=0`）、首帧直接 blit 上一帧纹理。
 
 - `2026-11-24` **P0.5 完成：窗口生命周期 + 计时契约，静置 600 → 282.8 MB**。设计与验收标准先落在 [../plans/completed/2026-11-24-window-lifecycle-and-latency-contract.md](../plans/completed/2026-11-24-window-lifecycle-and-latency-contract.md)，再按 A/B/C 三批实施并逐条验收。
   - **Batch A（度量）**：`measure-footprint.ps1` 增加 `-Label` / `-OutFile`，三姿态（idle / launcher / manager-2notes）快照归档到 `docs/releases/footprint/0.2.0/`。注意 PS 5.1 里 `$json` 与开关 `-Json` 是同一个变量，赋值会直接报错。

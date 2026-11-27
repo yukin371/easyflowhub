@@ -317,7 +317,14 @@ impl Hub {
         // Listening starts here rather than in `run`: the doorbell is already wired
         // (the event was created with the mutex), so a launch that arrived while the
         // shell was still booting is still waiting on it. See `hub_win::instance`.
-        boot::watch_instance(hub._instance.clone(), hub.launcher.handle(), &hub.log);
+        boot::watch_instance(
+            hub._instance.clone(),
+            hub.launcher.handle(),
+            hub.inbox.clone(),
+            ctx.clone(),
+            hub.settings_path.clone(),
+            &hub.log,
+        );
         hub.log.mark(
             0,
             "hub_start",

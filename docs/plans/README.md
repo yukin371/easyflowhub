@@ -56,7 +56,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-native-quicknote-parity.md](./active/2026-11-25-native-quicknote-parity.md)：快速笔记 T0 parity 28 条 A 级判据 + 6 条允许差异（G1 的判据对象）
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 
-### Completed（26）
+### Completed（27）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -79,6 +79,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-27-c1-font-not-private.md](./completed/2026-11-27-c1-font-not-private.md)：C1 字库映射（Commit 130.1 → 91.5 MB，一个字没少）
 - [2026-11-27-c2-launcher-productized.md](./completed/2026-11-27-c2-launcher-productized.md)：launcher 产品化（藏到屏外的预创建窗口，p95 2.4–3.2 ms，25 项门禁）
 - [2026-11-27-native-single-instance.md](./completed/2026-11-27-native-single-instance.md)：原生壳单实例互斥（命名互斥 + 转发事件，第二次启动 0.09–0.12 s 退出，17 项门禁；顺带修掉热键隐藏从不停窗）
+- [2026-11-27-note-handover.md](./completed/2026-11-27-note-handover.md)：快速笔记入口从 Manager 接回原生壳（两条门铃 + `pending-note` 传 id，22 项门禁）
 - [2026-11-27-selection-capture-gate.md](./completed/2026-11-27-selection-capture-gate.md)：选区捕获先有门禁（45 ms 预算、18 项门禁；修掉修饰键未松开时注入裸 `c` 覆盖选区）
 - [2026-11-27-tauri-handover-t-gate-0.md](./completed/2026-11-27-tauri-handover-t-gate-0.md)：Tauri 版停掉 launcher / 快速笔记 / 待办卡片 webview（宿主 18 MB、0 个 WebView2；T-Gate 0 关闭）
 - [2026-11-27-tauri-resident-gate.md](./completed/2026-11-27-tauri-resident-gate.md)：运行时门禁：从 Windows 侧数 webview 与窗口（18 项；修掉关掉 Manager 会带走托盘的回归）

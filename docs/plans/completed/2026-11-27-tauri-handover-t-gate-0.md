@@ -73,7 +73,7 @@ Tauri 版从"两个栈都在服务"改成"只有一个按需的 Manager"：启�
 ## 5. 已知差异（都写出来，不留给用户发现）
 
 - ~~**选区 → 翻译 / 替换选区下线**~~ —— **已交付**。原生壳现在有自己的捕获（`hub-win::selection`，45 ms 预算）与翻译（`hub-core::translation` 纯逻辑 + `app::translate` 网络 + 面板卡片），语义照 Tauri 版：同一份 `settings.json` 的 `target_language` / `model`、同一个 `/v1/chat/completions`、同一组状态码映射。与 Tauri 版的三处有意差异：原生没有 sidecar，因此多一个 `relay_url` 设置项（默认 `http://127.0.0.1:8787`）；序列号没动时**不**清理剪贴板（Tauri 版会 `empty()`，那会毁掉用户刚截的图）；`TLS` 用 `native-tls`（SChannel）而不是 `rustls`。详见 [completed/2026-11-27-selection-capture-gate.md](../completed/2026-11-27-selection-capture-gate.md) 与 [completed/2026-11-27-translation-migration.md](../completed/2026-11-27-translation-migration.md)。
-- **Manager 里的"新建快速笔记"入口会报错**。按约定选"拒绝并提示"而不是"转发给原生壳"：原生壳还没有单实例机制，转发会多出一个常驻进程互抢热键。（互斥已经就位，这条可以在 T-Gate 1 里改成转发。）
+- ~~**Manager 里的"新建快速笔记"入口会报错**~~ —— **已交付**。互斥就位之后这次启动是一条请求而不是第二个进程，于是 `create_note_window` 在接管态改为转给 `easyflowhub-native.exe`（`--note`，带 id 时追加 `--note-id`）。转发需要第二条门铃：一个 auto-reset 事件带不了 payload 也表达不了"哪一种请求"，`--note` 曾与普通二次启动共用一个环，于是"要一条笔记"变成了"显示面板"。id 落在设置文件旁的 `pending-note`（临时文件 + `rename`、读一次就删、60 s 过期）。详见 [completed/2026-11-27-note-handover.md](../completed/2026-11-27-note-handover.md)。**遗留**：这条命令目前没有前端调用者（按钮随 webview 下线），接口先就绪。
 - **两个托盘图标**。Tauri 的托盘留着（它是打开 Manager 的入口，因为接管后它没有热键），原生壳也有自己的托盘。Phase 2 Manager 迁进原生后删掉 Tauri 那个。
 - **Tauri 侧没有全局热键**。Manager 只能从托盘图标或开始菜单打开。
 

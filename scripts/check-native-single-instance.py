@@ -8,11 +8,12 @@ shell, the user also clicks the icon, and the desktop ends up with two tray icon
 round of `RegisterHotKey failed (1409)` -- the second process owns none of the chords it
 promised, and nothing on screen says which icon is the live one.
 
-The gate drives three processes against one another:
+The gate drives four processes against one another:
 
     A   `--resident`                 the shell; owns the mutex and the panel
     B   `--resident`  (second)       must forward, print one line, and exit 0
-    C   `--autostart` (second)       must exit 0 *without* summoning anything
+    C   `--note`      (second)       must forward and produce a *window*, not the panel
+    D   `--autostart` (second)       must exit 0 *without* summoning anything
 
 Three checks here are about ordering, not features, and each has a failure mode that a
 feature test would miss:
@@ -24,6 +25,10 @@ feature test would miss:
 * **A forwarded while the panel was already up.** The answer must be "refocus", not a
   toggle: the user double-clicked because they could not see it, and a toggle would read
   as the double-click having closed it.
+* **C opened a note and left the panel alone.** Until T-Gate 1 both launches rang the
+  same event, so `--note` showed the panel: the request had no way to say which answer
+  it wanted. One event cannot carry that, so there are two, and this check is what
+  keeps them from collapsing back into one.
 * **The autostart second instance is silent.** Windows starts the login entry while the
   desktop is still settling; a panel appearing over the login is the wrong first
   impression, so that forward rides the same event and is deliberately not answered.
@@ -37,6 +42,7 @@ import ctypes
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -105,6 +111,59 @@ def image_count(exe: str) -> int:
     if done.returncode != 0:
         return -1
     return done.stdout.lower().count(name.lower())
+
+
+def note_titles() -> list:
+    """Titles of the notes that exist right now (`easyflowhub-note#<id>`).
+
+    Titles rather than a count because two of the checks below ask *which* note opened:
+    a lost `--note-id` payload silently becomes "a new note", and that looks exactly
+    like success if all the gate counts is windows.
+    """
+    visit_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    found = []
+
+    def visit(hwnd, _param):
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length:
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            if buffer.value.startswith(NOTE_PREFIX):
+                found.append(buffer.value)
+        return True
+
+    user32.EnumWindows(visit_type(visit), None)
+    return found
+
+
+def note_windows() -> int:
+    """How many note windows are up."""
+    return len(note_titles())
+
+
+def seed_note(store_root: str, note_id: str) -> bool:
+    """Put a row in the shell's own database, so `--note-id` has something to find.
+
+    Written through `sqlite3` instead of driving the UI: the question is whether the
+    id survives the handover, and a note created by clicking would also be proving
+    the clicker. A failure here would otherwise turn into a vacuous pass, so the
+    caller asserts on the return value.
+    """
+    try:
+        connection = sqlite3.connect(os.path.join(store_root, "notes.db"), timeout=10)
+        connection.execute(
+            "INSERT OR REPLACE INTO notes"
+            " (id, title, content, tags, created_at, updated_at, is_pinned, deleted_at)"
+            " VALUES (?, ?, ?, '', ?, ?, 0, NULL)",
+            (note_id, "门禁笔记", "seeded by the gate", "2026-11-27T00:00:00Z", "2026-11-27T00:00:00Z"),
+        )
+        connection.commit()
+        connection.close()
+        return True
+    except sqlite3.Error as error:
+        print(f"  (could not seed {note_id}: {error})")
+        return False
+
 
 
 class Report:
@@ -210,12 +269,16 @@ class Shell:
         self.process = None
 
 
-def second_launch(exe: str, shell: Shell, log: str, autostart: bool = False) -> tuple:
+def second_launch(exe: str, shell: Shell, log: str, mode: str = "--resident") -> tuple:
     """Spawn a second instance and wait for it to leave.
 
     Returns `(exit code, stderr, seconds)`. Bounded on purpose: a second instance that
     does not exit is the bug this gate exists for, so "it eventually finished" is not a
     pass -- three seconds is an order of magnitude past the claim and the ring.
+
+    `mode` is what the second launch asks for: `--resident` (the panel), `--note` (a
+    window) or `--autostart` (nothing). It may hold several tokens, since `--note`
+    takes a `--note-id` after it.
     """
     argv = [
         exe,
@@ -226,7 +289,7 @@ def second_launch(exe: str, shell: Shell, log: str, autostart: bool = False) -> 
         "--log",
         log,
     ]
-    argv.append("--autostart" if autostart else "--resident")
+    argv.extend(mode.split())
     at = time.time()
     done = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     return done.returncode, (done.stderr or done.stdout).strip(), time.time() - at
@@ -374,6 +437,57 @@ def main() -> int:
             f"rect={rect(find(PANEL_TITLE))}",
         )
 
+        # --- a second launch that asks for a note -----------------------------
+        # `--note` used to ring the same doorbell as a plain launch, so asking for a
+        # quick note showed the panel instead. There are two rings now, and this is the
+        # check that they are actually separate: a window appears and the panel's own
+        # counter does not move.
+        notes_before = note_windows()
+        reveals_before = shell.count("instance action=reveal")
+        code, message, seconds = second_launch(exe, shell, os.path.join(root, "note.log"), mode="--note")
+        opened = shell.later("instance action=new-note", 0, 5.0)
+        wininput.wait_for(lambda: note_windows() > notes_before, 5)
+        report.check(
+            "--note as a second instance exits 0 and names the ring it rang",
+            code == 0 and message.startswith("instance action=forward ring=note"),
+            f"exit={code} in {seconds:.2f}s stderr={message[:80]}",
+        )
+        report.check(
+            "and the shell opens a note window for it",
+            bool(opened) and note_windows() > notes_before,
+            f"{opened[-70:] or 'no new-note line'} windows={note_windows()} (was {notes_before})",
+        )
+        report.check(
+            "and the panel is untouched, so the two rings really are separate",
+            shell.count("instance action=reveal") == reveals_before,
+            f"reveals={shell.count('instance action=reveal')} (was {reveals_before})",
+        )
+
+        # --- the same request, but for a note that already exists --------------
+        # An id cannot travel through an event, so it is written beside the settings
+        # and read once by the owner. The check is that the shell found *that* row: a
+        # lost payload falls back to "a new note", which looks like success if the gate
+        # only counts windows.
+        seeded = seed_note(shell.store, "gate-seed")
+        windows_before = note_windows()
+        code, message, _ = second_launch(
+            exe, shell, os.path.join(root, "note-id.log"), mode="--note --note-id gate-seed"
+        )
+        opened_id = shell.later("note_open id=gate-seed source=manager", 0, 5.0)
+        wininput.wait_for(lambda: note_windows() > windows_before, 5)
+        report.check(
+            "--note-id hands the id to the running shell and it finds the row",
+            # `found=false` is the *only* line that says the row was missing, so the
+            # absence of it is the assertion -- the log carries no `found=true`.
+            seeded and code == 0 and bool(opened_id) and "found=false" not in opened_id,
+            f"seeded={seeded} exit={code} {opened_id[-70:] or 'no note_open line'}",
+        )
+        report.check(
+            "and a window opens for it",
+            note_windows() == windows_before + 1,
+            f"windows={note_windows()} (was {windows_before}) titles={note_titles()}",
+        )
+
         # --- the autostart second instance stays silent -----------------------
         report.check(
             "the panel can be parked again for the next case",
@@ -381,7 +495,7 @@ def main() -> int:
             f"rect={rect(find(PANEL_TITLE))}",
         )
         reveals = shell.count("instance action=reveal")
-        code, message, _ = second_launch(exe, shell, os.path.join(root, "login.log"), autostart=True)
+        code, message, _ = second_launch(exe, shell, os.path.join(root, "login.log"), mode="--autostart")
         time.sleep(0.8)
         report.check(
             "--autostart as a second instance exits 0 without summoning",

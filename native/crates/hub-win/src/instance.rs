@@ -28,6 +28,13 @@
 //!   arrive before any watcher exists. Creating the event with the mutex means the
 //!   doorbell is already wired; the wait comes later and still sees it, because the
 //!   auto-reset event stays signalled until somebody waits.
+//!
+//! * **Two doorbells, not one.** A second launch can mean "show me the panel" or
+//!   "give me a note", and an event carries no payload: waking the single watcher
+//!   with both requests would make `--note` show the panel. [`SHELL_SIGNAL`] stays
+//!   the reveal ring; [`NOTE_SIGNAL`] is the note ring, watched by its own thread.
+//!   Which note to open still cannot travel through an event, so that one name is
+//!   left in a small file beside the settings (`app::pending`) -- see `--note-id`.
 
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -48,8 +55,15 @@ const WAIT_FAILED: u32 = 0xFFFF_FFFF;
 /// letting both run is the double-tray bug with extra steps.
 pub const SHELL_MUTEX: &str = r"Local\EasyFlowHub.Native.Shell";
 
-/// The doorbell rung by a second launch.
+/// The doorbell rung by a second launch that asks for the panel.
 pub const SHELL_SIGNAL: &str = r"Local\EasyFlowHub.Native.Shell.reveal";
+
+/// The doorbell rung by a second launch that asks for a note (`--note`).
+///
+/// Separate from [`SHELL_SIGNAL`] because the answer differs: the reveal watcher
+/// shows the panel, this one spawns a window. One event cannot mean both, and an
+/// event cannot say *which* note -- that is what the pending file is for.
+pub const NOTE_SIGNAL: &str = r"Local\EasyFlowHub.Native.Shell.note";
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -59,6 +73,7 @@ fn wide(text: &str) -> Vec<u16> {
 pub struct Guard {
     mutex: HANDLE,
     signal: HANDLE,
+    note: HANDLE,
 }
 
 // SAFETY: both fields are kernel handles, which are process-wide and not tied to the
@@ -76,6 +91,9 @@ impl Drop for Guard {
             }
             if !self.signal.is_null() {
                 CloseHandle(self.signal);
+            }
+            if !self.note.is_null() {
+                CloseHandle(self.note);
             }
         }
     }
@@ -104,23 +122,44 @@ impl Guard {
     ///
     /// Takes the `Arc` rather than a raw handle so the handles cannot be closed
     /// while this thread is blocked on one: the guard is what keeps them open.
-    pub fn watch<F>(self: Arc<Self>, mut on_signal: F) -> Option<JoinHandle<()>>
+    pub fn watch<F>(self: Arc<Self>, on_signal: F) -> Option<JoinHandle<()>>
     where
         F: FnMut() + Send + 'static,
     {
-        if self.signal.is_null() {
+        self.watch_ring(|guard| guard.signal, on_signal)
+    }
+
+    /// Wait for the `--note` ring instead of the reveal one.
+    ///
+    /// A separate thread rather than a second branch in the reveal watcher: the two
+    /// answers touch different things (a parked panel versus a new viewport), and one
+    /// thread per ring keeps a slow spawn from delaying a panel reveal behind it.
+    pub fn watch_note<F>(self: Arc<Self>, on_signal: F) -> Option<JoinHandle<()>>
+    where
+        F: FnMut() + Send + 'static,
+    {
+        self.watch_ring(|guard| guard.note, on_signal)
+    }
+
+    /// `pick` is a function pointer so the handle is read *inside* the thread. A
+    /// raw `HANDLE` captured into the closure would make it non-`Send` even though
+    /// the guard it comes from is not.
+    fn watch_ring<F>(self: Arc<Self>, pick: fn(&Guard) -> HANDLE, mut on_signal: F) -> Option<JoinHandle<()>>
+    where
+        F: FnMut() + Send + 'static,
+    {
+        if pick(&self).is_null() {
             return None;
         }
         Some(thread::spawn(move || {
             // Owned by the thread for as long as it runs: the wait below is on a
-            // handle this guard keeps alive. The handle is read *inside* the closure
-            // on purpose -- capturing the raw `*mut c_void` here would make the
-            // closure non-`Send` even though the guard it comes from is.
+            // handle this guard keeps alive.
             let guard = self;
             loop {
                 // Auto-reset, so two launches that arrive together collapse into one
-                // reveal -- which is correct, because the panel is either up or not.
-                let waited = unsafe { WaitForSingleObject(guard.signal, INFINITE) };
+                // answer -- which is correct, because the panel is either up or not,
+                // and a note request that arrives twice is still one window.
+                let waited = unsafe { WaitForSingleObject(pick(&guard), INFINITE) };
                 if waited == WAIT_FAILED {
                     return;
                 }
@@ -132,25 +171,27 @@ impl Guard {
 
 /// Ask to be the shell.
 pub fn claim() -> Claim {
-    claim_named(SHELL_MUTEX, SHELL_SIGNAL)
+    claim_named(SHELL_MUTEX, SHELL_SIGNAL, NOTE_SIGNAL)
 }
 
 /// The names are parameters so the tests can use their own: two test threads in one
 /// process would otherwise collide with each other and with the product's own mutex.
-pub fn claim_named(mutex_name: &str, signal_name: &str) -> Claim {
+pub fn claim_named(mutex_name: &str, signal_name: &str, note_name: &str) -> Claim {
     let mutex_wide = wide(mutex_name);
     let signal_wide = wide(signal_name);
+    let note_wide = wide(note_name);
 
     // Created first, and deliberately: see the module comment on the login race.
     let signal = unsafe { CreateEventW(std::ptr::null(), 0, 0, signal_wide.as_ptr()) };
+    let note = unsafe { CreateEventW(std::ptr::null(), 0, 0, note_wide.as_ptr()) };
     let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_wide.as_ptr()) };
     // Read before anything else can call a Win32 function: `GetLastError` is
     // per-thread and every marshal overwrites it.
     let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
 
     if already {
-        // We lost the race. Closing both handles here rather than leaking them is
-        // also what keeps the event from making the mutex look alive to `signal`.
+        // We lost the race. Closing all three handles here rather than leaking them
+        // is also what keeps the events from making the mutex look alive to `signal`.
         unsafe {
             if !mutex.is_null() {
                 CloseHandle(mutex);
@@ -158,11 +199,14 @@ pub fn claim_named(mutex_name: &str, signal_name: &str) -> Claim {
             if !signal.is_null() {
                 CloseHandle(signal);
             }
+            if !note.is_null() {
+                CloseHandle(note);
+            }
         }
         return Claim::Taken;
     }
 
-    Claim::First(Guard { mutex, signal })
+    Claim::First(Guard { mutex, signal, note })
 }
 
 /// Ring the doorbell of whichever process owns the shell.
@@ -171,6 +215,15 @@ pub fn claim_named(mutex_name: &str, signal_name: &str) -> Claim {
 /// is the second launch, and its only job is to hand the request over.
 pub fn signal() -> Result<(), String> {
     signal_named(SHELL_SIGNAL)
+}
+
+/// Ring the note doorbell: "give me a window", not "show me the panel".
+pub fn signal_note() -> Result<(), String> {
+    signal_note_named(NOTE_SIGNAL)
+}
+
+pub fn signal_note_named(note_name: &str) -> Result<(), String> {
+    signal_named(note_name)
 }
 
 pub fn signal_named(signal_name: &str) -> Result<(), String> {
@@ -200,10 +253,10 @@ mod tests {
 
     /// A namespace nothing else on this machine uses. The tests own a real mutex in
     /// the real object namespace -- a mock here would prove the mock.
-    fn names() -> (String, String) {
+    fn names() -> (String, String, String) {
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
         let tag = format!("efh-test-{}-{n}", std::process::id());
-        (format!(r"Local\{tag}.mutex"), format!(r"Local\{tag}.signal"))
+        (format!(r"Local\{tag}.mutex"), format!(r"Local\{tag}.signal"), format!(r"Local\{tag}.note"))
     }
 
     fn wait_until(flag: &AtomicBool, within: Duration) -> bool {
@@ -219,16 +272,16 @@ mod tests {
 
     #[test]
     fn the_second_claim_is_taken() {
-        let (mutex, signal) = names();
-        let first = claim_named(&mutex, &signal);
+        let (mutex, signal, note) = names();
+        let first = claim_named(&mutex, &signal, &note);
         assert!(matches!(first, Claim::First(_)));
-        assert!(matches!(claim_named(&mutex, &signal), Claim::Taken));
+        assert!(matches!(claim_named(&mutex, &signal, &note), Claim::Taken));
     }
 
     #[test]
     fn a_claim_reports_that_it_owns_the_mutex() {
-        let (mutex, signal) = names();
-        match claim_named(&mutex, &signal) {
+        let (mutex, signal, note) = names();
+        match claim_named(&mutex, &signal, &note) {
             Claim::First(guard) => assert!(guard.owned()),
             Claim::Taken => panic!("a name nothing else uses cannot be taken"),
         }
@@ -236,27 +289,73 @@ mod tests {
 
     #[test]
     fn releasing_the_guard_lets_the_next_claim_win() {
-        let (mutex, signal) = names();
+        let (mutex, signal, note) = names();
         // Explicitness matters: the second claim in `the_second_claim_is_taken` is
         // taken *while the first guard is alive*, which is the bug being fixed. Here
         // the point is the opposite -- the shell is free once the owner is gone.
-        let first = claim_named(&mutex, &signal);
+        let first = claim_named(&mutex, &signal, &note);
         assert!(matches!(first, Claim::First(_)));
         drop(first);
-        assert!(matches!(claim_named(&mutex, &signal), Claim::First(_)));
+        assert!(matches!(claim_named(&mutex, &signal, &note), Claim::First(_)));
     }
 
     #[test]
     fn signalling_a_shell_that_does_not_exist_is_an_error() {
-        let (_, signal) = names();
+        let (_, signal, _) = names();
         let error = signal_named(&signal).expect_err("nothing owns this name");
         assert!(error.contains("OpenEventW"), "unexpected error: {error}");
     }
 
     #[test]
+    fn signalling_a_note_ring_that_does_not_exist_is_an_error() {
+        let (_, _, note) = names();
+        let error = signal_note_named(&note).expect_err("nothing owns this name");
+        assert!(error.contains("OpenEventW"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn a_note_forward_reaches_the_note_watcher() {
+        let (mutex, signal, note) = names();
+        let Claim::First(guard) = claim_named(&mutex, &signal, &note) else {
+            panic!("first claim");
+        };
+        let woken = Arc::new(AtomicBool::new(false));
+        let flag = woken.clone();
+        Arc::new(guard)
+            .watch_note(move || flag.store(true, Ordering::SeqCst))
+            .expect("the event exists");
+
+        signal_note_named(&note).expect("the shell is up");
+        assert!(wait_until(&woken, Duration::from_secs(2)), "the note ring rang nobody");
+    }
+
+    #[test]
+    fn a_note_ring_does_not_wake_the_reveal_watcher() {
+        // The reason there are two events: `--note` used to ring the same doorbell
+        // as a plain second launch, so asking for a note showed the panel instead.
+        let (mutex, signal, note) = names();
+        let Claim::First(guard) = claim_named(&mutex, &signal, &note) else {
+            panic!("first claim");
+        };
+        let revealed = Arc::new(AtomicBool::new(false));
+        let flag = revealed.clone();
+        let guard = Arc::new(guard);
+        guard
+            .clone()
+            .watch(move || flag.store(true, Ordering::SeqCst))
+            .expect("the event exists");
+
+        signal_note_named(&note).expect("the shell is up");
+        // The ring is a kernel wake-up, not a race with the thread's start: 200 ms is
+        // an order of magnitude past the measured latency of the other watcher test.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!revealed.load(Ordering::SeqCst), "a note ring reached the reveal watcher");
+    }
+
+    #[test]
     fn a_forward_reaches_the_watcher() {
-        let (mutex, signal) = names();
-        let Claim::First(guard) = claim_named(&mutex, &signal) else {
+        let (mutex, signal, note) = names();
+        let Claim::First(guard) = claim_named(&mutex, &signal, &note) else {
             panic!("first claim");
         };
         let woken = Arc::new(AtomicBool::new(false));
@@ -274,8 +373,8 @@ mod tests {
         // The login race: the shell is claimed, the desktop is still settling, a
         // second launch lands before any watcher thread exists. The auto-reset event
         // stays signalled, so the wait that comes later still answers immediately.
-        let (mutex, signal) = names();
-        let Claim::First(guard) = claim_named(&mutex, &signal) else {
+        let (mutex, signal, note) = names();
+        let Claim::First(guard) = claim_named(&mutex, &signal, &note) else {
             panic!("first claim");
         };
         signal_named(&signal).expect("the shell is up");
@@ -292,8 +391,8 @@ mod tests {
     fn two_forwards_collapse_into_one_reveal() {
         // Auto-reset is the reason: the panel is either up or not, so the second
         // ring while the first is still pending needs no second answer.
-        let (mutex, signal) = names();
-        let Claim::First(guard) = claim_named(&mutex, &signal) else {
+        let (mutex, signal, note) = names();
+        let Claim::First(guard) = claim_named(&mutex, &signal, &note) else {
             panic!("first claim");
         };
         signal_named(&signal).expect("the shell is up");

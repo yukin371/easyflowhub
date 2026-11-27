@@ -56,13 +56,13 @@ pub async fn close_window(window: tauri::WebviewWindow) -> Result<(), String> {
 
 /// 创建快速笔记窗口
 ///
-/// T-Gate 0 之后本进程不再创建这个 webview：快速笔记归原生壳。命令仍然
-/// 存在，是因为 Manager 的设置面板还在调用它——静默返回成功会让"按钮点了
-/// 没反应"看起来像缺陷，所以这里明确拒绝并写日志。
+/// T-Gate 0 之后本进程不再创建这个 webview；T-Gate 1 起这条命令改为**转给原生壳**，
+/// 而不是拒绝：Manager 里那个按钮是真的能用的，只是窗口属于另一个进程。原生壳的
+/// 单实例互斥会把这次启动变成一条转发请求，所以壳已经常驻时也不会多出一个进程。
 #[tauri::command]
 pub async fn create_note_window(app: tauri::AppHandle, note_id: Option<String>) -> Result<String, String> {
     if crate::shell::current().takeover() {
-        return Err(crate::shell::moved_to_native("快速笔记"));
+        return crate::native_shell::open_note(note_id.as_deref());
     }
     let counter = NOTE_WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("quick-note-{}", counter);

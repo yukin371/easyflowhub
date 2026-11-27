@@ -25,6 +25,7 @@ mod launcher;
 mod logging;
 mod mcp_server;
 mod modules;
+mod native_shell;
 mod notes;
 mod scriptmgr;
 mod scriptmgr_server;

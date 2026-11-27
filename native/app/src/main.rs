@@ -21,6 +21,7 @@ mod launcher;
 mod log;
 mod manager;
 mod note;
+mod pending;
 mod probe_json;
 mod save;
 mod spike;
@@ -125,7 +126,7 @@ fn main() {
         // shell would have to undo.
         let instance = match hub_win::instance::claim() {
             hub_win::instance::Claim::First(guard) => guard,
-            hub_win::instance::Claim::Taken => forward(parsed.autostart),
+            hub_win::instance::Claim::Taken => forward(&parsed, &settings_path),
         };
         let log_path = parsed
             .log_path
@@ -255,26 +256,63 @@ fn main() {
     }
 }
 
+/// What a second launch is asking for.
+///
+/// Two rings, because the answers differ and an event carries no payload: a plain
+/// launch (or `--resident`) asks for the panel, `--note` asks for a window.
+enum Ring {
+    Reveal,
+    Note,
+}
+
 /// Hand the launch to the shell that already owns it, then leave.
 ///
 /// Printed rather than logged on purpose: this process does not own the log, and the
 /// whole point is that it touches no shared state before exiting. The evidence that
-/// the handover worked is the owner's line (`instance action=reveal`), written by the
-/// process that can still see the panel.
-fn forward(autostart: bool) -> ! {
-    if autostart {
+/// the handover worked is the owner's line (`instance action=…`), written by the
+/// process that can still see the window.
+fn forward(args: &args::Args, settings_path: &std::path::Path) -> ! {
+    if args.autostart {
         // The login entry's second instance. Windows starts it while the desktop is
         // still settling and the user has not asked for anything yet, so summoning
         // the panel here would be a window appearing over the login for no reason.
         eprintln!("instance action=quiet reason=autostart");
         std::process::exit(0);
     }
-    match hub_win::instance::signal() {
-        Ok(()) => eprintln!("instance action=forward"),
+
+    // `--resident` includes `note` (one code path, see `args`), so it has to be asked
+    // about first: its meaning is "be there", and the only visible answer to that is
+    // the panel.
+    let ring = if args.resident {
+        Ring::Reveal
+    } else if let Some(id) = args.note_id.as_deref() {
+        // The id cannot travel through the event, so it is written before the ring.
+        // A failed write still rings: "open a new note" is the documented fallback,
+        // and doing nothing is the one answer a user cannot act on.
+        if let Err(error) = crate::pending::put(settings_path, id) {
+            eprintln!("instance action=note-id-dropped error=\"{error}\"");
+        }
+        Ring::Note
+    } else if args.note {
+        Ring::Note
+    } else {
+        Ring::Reveal
+    };
+
+    let kind = match ring {
+        Ring::Reveal => "reveal",
+        Ring::Note => "note",
+    };
+    let result = match ring {
+        Ring::Reveal => hub_win::instance::signal(),
+        Ring::Note => hub_win::instance::signal_note(),
+    };
+    match result {
+        Ok(()) => eprintln!("instance action=forward ring={kind}"),
         // The owner died between our claim attempt and the ring. Nothing to show the
-        // user: the panel they wanted does not exist any more, and starting a shell
+        // user: the window they wanted does not exist any more, and starting a shell
         // from inside the failure path is the bug, not the fix.
-        Err(error) => eprintln!("instance action=give-up error=\"{error}\""),
+        Err(error) => eprintln!("instance action=give-up ring={kind} error=\"{error}\""),
     }
     std::process::exit(0);
 }
