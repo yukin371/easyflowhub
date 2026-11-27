@@ -124,6 +124,12 @@ jobs:
       - name: Native architecture guard self-check
         run: node --test scripts/check-native-architecture.selfcheck.mjs
 
+      - name: Doc budget guard (bytes / pinned growth / links / roadmap shape)
+        run: node scripts/check-doc-budget.mjs
+
+      - name: Doc budget guard self-check
+        run: node --test scripts/check-doc-budget.selfcheck.mjs
+
   native-windows:
     name: Native Tests (Windows)
     runs-on: windows-latest

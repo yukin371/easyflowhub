@@ -129,6 +129,7 @@ Recommended enforcement mechanisms:
 - 自动门禁：`node scripts/check-architecture.mjs`（import 环 / lib·features 反向依赖 / `lib/tauri` 外原始 invoke / 文件规模债，基线见 `scripts/architecture-baseline.json`）在 CI `architecture-gates` 与 Windows native `native-windows` 两个 PR 门禁中运行；schema-handler 配对由 `go test` 的 `TestStaticSchemasHaveRegisteredHandlers` 覆盖
 - 原生门禁：`node scripts/check-native-architecture.mjs`（本文件第 10 节；`native/` 缺失时 skip 并返回 0），已接入 `run-smoke.ps1` 与 CI `architecture-gates`
 - 原生门禁的自检：`node --test scripts/check-native-architecture.selfcheck.mjs`（23 项，在临时工作区里逐条打破规则）。**只跑门禁不跑自检，等于假设规则永远不会被改坏**——两者同属 `architecture-gates`
+- 文档门禁：`node scripts/check-doc-budget.mjs`（单文件字节预算 40 KB 软 / 128 KB 硬、超软上限的文件在 `scripts/doc-budget.json` 里钉住只许缩、相对链接必须解析、`docs/roadmap.md` 不许出现带日期的进展条目且 `docs/roadmap/` 下每个分层文件都要被索引），自检 `node --test scripts/check-doc-budget.selfcheck.mjs`（11 项）；同在 `architecture-gates`。理由见 ADR-0001：路线图只留当前版本状态，历史按月下沉到 `docs/roadmap/progress-YYYY-MM.md`
 
 ## 10. Native Runtime Layer Map（enforced，ADR-0009）
 

@@ -1,0 +1,10 @@
+{
+  "_note": "Budget for docs/**/*.md, README.md, AGENTS.md, native/README.md. softBytes: over this a file must be pinned here and may only shrink. hardBytes: fails outright; split it. Pins are refreshed with `node scripts/check-doc-budget.mjs --pin`, which refuses to raise a value. See docs/README.md and ADR-0001 for why the route document is not a log.",
+  "softBytes": 40960,
+  "hardBytes": 131072,
+  "pinnedBytes": {
+    "docs/plans/2026-03-15-mcp-implementation-plan.md": 49948,
+    "docs/plans/2026-11-24-native-runtime-redesign.md": 81982,
+    "docs/plans/2026-11-25-phase1-quicknote-shell.md": 110219
+  }
+}

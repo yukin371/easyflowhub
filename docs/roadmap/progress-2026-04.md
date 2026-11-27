@@ -1,0 +1,41 @@
+# 进展日志 · 2026-04
+
+> 从 [roadmap.md](../roadmap.md) 拆出：ADR-0001 要求路线图只维护当前版本目标、活跃轨道、验证债与下一队列，不保留长历史。
+> 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
+> 相邻月份：[2026-11](./progress-2026-11.md) · [2026-10](./progress-2026-10.md)
+
+- `2026-04-25` 已新增 `scriptmgr relay hosts status|switch`，用于安全切换 Claude / Codex 宿主配置到指定 AI 网关或本地 relay 上游；实现放在 `scriptmgr-go/internal/hostconfig`，明确与 `internal/relay` 的协议与 owner 边界分离，避免把 Claude 协议误塞进现有 OpenAI relay。
+
+- `2026-04-24` 已基于上述修复重新完成一轮 Tauri Windows 打包，新的 `EasyFlowHub.exe`、NSIS、MSI 产物已生成，并再次通过 `scripts/check-release-artifacts.ps1` 预检；当前进入“修复后待人工复验”状态。
+
+- `2026-04-24` 已根据人工验收反馈修复一轮图片与编辑器回归：`useHistory` 历史入栈缺陷已修复并补 `useHistory.test.tsx`；quick note 图片缩略图与 manager markdown 预览已支持双击放大；`NotesPanel` / `NoteEditor` 已改为分离正文与附件图片，避免 manager 打开含图笔记时展示原始 `asset:` markdown。
+
+- `2026-04-24` 已继续修正 manager 预览排版细节：图片不再默认整块居中，改为与正文绕排，解决图文混排阅读断裂问题。
+
+- `2026-04-24` 已继续修正 manager 编辑器撤销链路：正文编辑接入显式历史栈，`useShortcutEngine` 开始处理 `Ctrl+Z / Ctrl+Shift+Z`，避免删除或移动图片 markdown 时撤销失效。
+
+- `2026-04-24` 已把人工验收发现与修复状态回填到 `docs/checklists/windows-package-smoke-2026-04-24.md`，当前仍待用户基于修复后的产物完成第二轮 Windows smoke。
+
+- `2026-04-24` 已执行 Windows 产物预检并通过：`check-release-artifacts.ps1` 确认 NSIS / MSI / portable 产物存在，同时新增 `docs/checklists/windows-package-smoke-2026-04-24.md` 记录本轮 package smoke 预检结果与待完成人工项。
+
+- `2026-04-24` 已把 manager 侧 todo / trash 主路径也补进自动化：新增 `TodoPanel.test.tsx` 覆盖勾选、来源跳转与悬浮卡片入口，新增 `TrashPanel.test.tsx` 覆盖单条恢复、批量恢复与清空回收站。
+
+- `2026-04-24` 已为 todo / notes manager 补最小页面级回归：新增 `TodoCardPage.test.tsx` 覆盖待办勾选保存、打开原笔记跳转和待办箱创建；新增 `NotesPanel.test.tsx` 覆盖 `MANAGER_OPEN_NOTE_EVENT` 打开指定笔记与关闭编辑器时 `flushSave` 草稿。
+
+- `2026-04-24` 已为 quick note 补最小自动化回归：新增 `QuickNotePage.test.tsx` 覆盖 `Escape` 关闭与 `destroy()` 失败回退 `close_window`，新增 `useEditorImageInsertion.test.tsx` 覆盖图片粘贴保存链，并扩展 `imageAssets.test.ts` 覆盖 legacy asset URL 提取与 quick note 图片移除相关约束。
+
+- `2026-04-24` 已新增 [plans/2026-04-24-v1-task-board.md](../plans/2026-04-24-v1-task-board.md)，把 `P1-A ~ P4-D` 进一步拆成可领取任务卡、依赖关系和完成定义。
+
+- `2026-04-24` 已新增 [plans/2026-04-24-v1-delivery-plan.md](../plans/2026-04-24-v1-delivery-plan.md)，把 `v1.0.0` 拆成 4 个交付阶段、任务包、owner 边界和验收口径。
+
+- `2026-04-24` 新增正式 [PRD-v1.0.0.md](../PRD-v1.0.0.md)，并将 roadmap 收敛为执行状态与阶段推进视图。
+
+- `2026-04-14` 已继续推进 manager 模块化：`SettingsPanel` 改为消费共享 `useToggleableModules()` hook，并补 `SettingsPanel.test.tsx` 固定模块渲染和开关行为。
+
+- `2026-04-14` 已为 `manager_modules` 单一宿主入口补齐前端自动化回归，包括 `ManagerExtensionEntries.test.tsx`、`ExtensionsPanel.test.tsx`、`ManagerPage.test.tsx`。
+
+- `2026-04-11` 已新增 builtin `Extensions` 面板，并把 extension `manager_modules` 收口为只读 entry host，不再直接注入 `src/modules` registry。
+
+- `2026-04-11` 已推进 extension contribution aggregation 主链路：后端暴露 `/api/extensions/contributions`，并新增 effective catalog / overlay 相关消费基础。
+
+- `2026-04-07` 已完成 Windows package smoke、scripted smoke、CI toolchain 对齐，以及 docs / checklist 的第一轮治理收口。
