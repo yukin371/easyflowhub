@@ -3,7 +3,11 @@ param(
     [string]$ReleaseDir = "easyflowhub-app\src-tauri\target\release",
     # The native reveal gate needs a release build of native/ and takes ~15 s at
     # 40 cycles, so it is opt-in. Labeled 200-cycle runs belong in the archive.
-    [switch]$NativeBench
+    [switch]$NativeBench,
+    # C1 (font footprint) needs the same release build, a desktop session and
+    # ~90 s: three probe runs per mode plus three pixel captures. Opt-in for the
+    # same reason as the bench, and skipped (exit 0) when the exe is not built.
+    [switch]$NativeFont
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,6 +136,22 @@ if ($NativeBench) {
     Invoke-Step -Name "Responsiveness (native)" -WorkingDirectory "." -Action {
         & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "measure-native-latency.ps1") `
             -Cycles 40 -Label smoke -OutDir (Join-Path ([IO.Path]::GetTempPath()) "easyflowhub-native-smoke")
+    }
+}
+
+# C1: the CJK font must cost the process nothing (it is mapped, not read into the
+# heap) and must still render -- both halves are checked, because "commit went
+# down" also happens when the font silently fails to load and the panel shows
+# tofu. Skipped, not failed, when native/ has never been built.
+if ($NativeFont) {
+    $nativeExe = Join-Path $repoRoot "native\target\release\easyflowhub-native.exe"
+    if (Test-Path $nativeExe) {
+        Invoke-Step -Name "Font footprint (native)" -WorkingDirectory "." -Action {
+            python (Join-Path $scriptRoot "check-native-font.py") --exe $nativeExe
+        }
+    }
+    else {
+        Write-Host "SKIP  Font footprint (native): build native/ first" -ForegroundColor DarkYellow
     }
 }
 
