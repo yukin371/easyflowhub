@@ -1,8 +1,8 @@
 # ADR-0006：Windows 录音归属、可见状态与 Inbox 回流
 
-## 状态
-
-已接受（2026-10-18，Phase 5 采集实现基线）
+- status: accepted
+- date: 2026-10-18
+- scope: v0.2.0（Phase 5 采集基线）
 
 ## 背景
 
@@ -36,7 +36,7 @@ Phase 5 先形成可验证的“录音 -> 本地文件 -> Inbox”闭环。实�
 
 - 首次点击“开始录音”才请求/触发 Windows 麦克风访问；界面明确显示设备名称、录音中/暂停状态、时长和麦克风占用提示。不得在启动、托盘驻留或 Launcher 唤起时静默录音。
 - 无输入设备、权限拒绝、设备被占用、写入失败和空间不足都映射为用户可理解的错误，并提供打开 Windows 麦克风隐私设置（`ms-settings:privacy-microphone`）的入口；这些错误不能让 Manager 或 Launcher 崩溃。
-- Phase 5 首个 slice 不调用网络、不上传音频、不要求 Relay 密钥。未来转写必须通过 `TranscriptionProvider` adapter，提交前显示文件、目标 Provider 和隐私确认；翻译已复用 Relay 的决定不自动延伸到转写。
+- Phase 5 首个 slice 不调用网络、不上传音频、不要求 Relay 密钥。未来转写必须通过 `TranscriptionTransport` adapter（本文写作时称 `TranscriptionProvider`，ADR-0008 §2 落地为 trait `TranscriptionTransport`），提交前显示文件、目标 Provider 和隐私确认；翻译已复用 Relay 的决定不自动延伸到转写。
 
 ### 5. 状态与入口契约
 

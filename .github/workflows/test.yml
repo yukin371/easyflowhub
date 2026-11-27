@@ -136,6 +136,14 @@ jobs:
       - name: Plan lifecycle guard self-check
         run: node --test scripts/check-plan-lifecycle.selfcheck.mjs
 
+      # Fails when the quarterly ADR review is overdue, so a stale decision cannot
+      # stay stale quietly. Uses the runner's clock; that is the point.
+      - name: ADR lifecycle guard (state / relations / index / paths / review cadence)
+        run: node scripts/check-adr-lifecycle.mjs
+
+      - name: ADR lifecycle guard self-check
+        run: node --test scripts/check-adr-lifecycle.selfcheck.mjs
+
   native-windows:
     name: Native Tests (Windows)
     runs-on: windows-latest

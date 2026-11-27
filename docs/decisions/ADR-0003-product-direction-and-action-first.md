@@ -2,6 +2,7 @@
 
 - status: accepted
 - date: 2026-10-16
+- scope: v0.2.0+
 
 ## 背景
 
@@ -40,6 +41,10 @@ EasyFlowHub 的产品画像经历了从 `AllScripts` 脚本管理，到包含快
 
 ### 4. 版本演进策略
 
+> 本节是 2026-10 写下的版本节奏，**版本号已过期**：v0.2.0 于 2026-10-21 发布，当前版本线以
+> [roadmap.md](../roadmap.md) 为准（v1.2+ 走 native track）。仍然有效的部分是取舍：不重写现有应用、
+> 不承诺一次做完 Flow 编辑器 / 社区市场 / 云同步 / 任意代码插件。
+
 1. 当前 `0.1.1` 包线的下一轮用户体验版本是 `v0.2.0`，优先验证个人效率 Hub：截屏、翻译、Inbox 捕获、文件检索、下载、录音和录音后转写。
 2. v1.0.0 不重写现有应用，不因产品方向调整而推迟 quick note、notes manager、todo、scripts、manager/settings 和 Windows 行为的稳定发布；相关文档继续作为既有发布治理基线。
 3. v1.1.0 的第一长期平台目标是 Action Launcher：统一动作搜索、全局唤起、最近使用、收藏、参数输入和执行结果反馈，并在 v0.2.0 的上下文契约基础上继续演进。
@@ -48,6 +53,8 @@ EasyFlowHub 的产品画像经历了从 `AllScripts` 脚本管理，到包含快
 ### 5. Owner 与边界
 
 1. `easyflowhub-app/src/modules` 继续拥有 Manager builtin module 的注册和启停，不承担通用 action registry。
+   > **失效条件**：native 运行时接管 Manager 后（[ADR-0009](./ADR-0009-windows-native-runtime.md) §7），
+   > module 注册迁入原生壳，本条即失效并须改为 `amended`。在此之前它描述的就是当前实现。
 2. Action registry 的长期 owner、触发器、输入输出、权限和执行记录必须在实现前单独确定，不得把 Launcher 逻辑散落到现有面板。
 3. `scriptmgr-go/internal` 继续拥有脚本发现、参数校验、执行和任务记录；Launcher 通过稳定接口消费这些能力，不复制脚本业务逻辑。
 4. relay、MCP、host routing 和 extensions 继续作为受控高级能力接入，不能成为个人效率用户的首屏主叙事，也不能反向阻塞 v1.0.0 核心发布。

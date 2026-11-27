@@ -1,8 +1,8 @@
 # ADR-0005：v0.2 下载队列归属与文件安全边界
 
-## 状态
-
-已接受（2026-10-17）
+- status: accepted
+- date: 2026-10-17
+- scope: v0.2.0
 
 ## 背景
 
@@ -21,6 +21,15 @@ v0.2 需要把 URL 下载纳入个人效率 Hub，至少覆盖队列、进度、
 - 暂停、继续、取消、重试通过 native 控制标志实现；UI 通过状态查询读取进度，避免把网络流直接暴露到 React。
 - 完成后的打开、定位和复制路径沿用现有 opener / clipboard 入口；native 只返回经过目标目录校验的路径，Manager 通过 typed native clipboard bridge 写入系统剪贴板；加入 Inbox 通过现有 `capture_inbox_item` 形成文件附件，不新增第二套附件存储。
 - 完成后的路径动作会重新校验 canonical 路径位于该任务目标目录内且仍为普通文件；`DownloadSettings` 对外字段统一为 `targetDir`，同时兼容读取早期 `directory` 配置。
+
+## 失效条件
+
+当 native 运行时接管下载（`download.rs` 被划入 `hub-core` 可选模块或 worker）时，本文第 1 条的
+owner 立即失效，须改为 `amended` / `superseded` 并指向接管方。队列语义、`.part` 原子重命名与
+`rename` / `fail` / `overwrite` 冲突策略在移植后仍然适用，可直接作为新 ADR 的输入。
+
+**在那之前，本文描述的就是当前实现**：`download.rs` 里的 `.part` 与三种冲突策略逐条对得上
+（2026-11-27 复查核对）。
 
 ## 不在本切片内
 

@@ -1,8 +1,8 @@
 # ADR-0008：录音后转写的 Owner、Provider 适配与隐私确认
 
-## 状态
-
-已接受（2026-10-19，Phase 5 转写切片设计基线）
+- status: accepted
+- date: 2026-10-19
+- scope: v0.2.0（Phase 5 转写基线）
 
 ## 背景
 
@@ -12,7 +12,7 @@ Phase 5 首个切片已交付 Windows 本地录音与 Inbox 音频回流（ADR-0
 - 转写失败不影响音频保存；结果可写入笔记并可再次处理；
 - 发送前显示目标 Provider 和隐私确认。
 
-ADR-0006 §4 明确：翻译已复用 Relay 的决定不自动延伸到转写；未来转写必须通过 `TranscriptionProvider` adapter，提交前显示文件、目标 Provider 和隐私确认。本 ADR 落实该预留边界。
+ADR-0006 §4 明确：翻译已复用 Relay 的决定不自动延伸到转写；未来转写必须通过一个 adapter（本文定名 `TranscriptionTransport`），提交前显示文件、目标 Provider 和隐私确认。本 ADR 落实该预留边界。
 
 ## 决策
 

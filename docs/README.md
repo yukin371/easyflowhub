@@ -68,7 +68,7 @@
 | `*/MODULE.md` | 模块职责、owner、不变量、常见坑 | 只写模块级高价值信息 |
 | `docs/plans/` | 方案的生命周期目录：`proposals/`（想清楚没排期）、`active/`（当前依据）、`completed/`（已交付）、`rejected/`（不做）、`archive/`（历史 / superseded / deferred） | 状态由位置表达，归档靠 `git mv`；索引在 [plans/README.md](./plans/README.md)，由 `scripts/check-plan-lifecycle.mjs` 判 |
 | `docs/releases/*.md` | 版本发布说明与发布资产记录 | 每次正式发布后补齐对应版本说明 |
-| `docs/decisions/ADR-*.md` | 长期有效的边界决策 | 不记录普通实现步骤 |
+| `docs/decisions/ADR-*.md` | 长期有效的边界决策；状态 `proposed / accepted / amended / superseded / withdrawn`，`amended` 表示整体仍现行但某节已被新 ADR 改掉 | 不记录普通实现步骤；关系字段必须双向，索引在 [decisions/README.md](./decisions/README.md)，由 `scripts/check-adr-lifecycle.mjs` 判；**每 90 天一次批量复查**，台账 `scripts/adr-review-log.json`，超期即红 |
 | `docs/templates/*` | 通用模板与可复制手册 | 作为其他仓库或新模块的启动骨架 |
 
 ## Current Source Of Truth

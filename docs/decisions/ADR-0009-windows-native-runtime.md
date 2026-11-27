@@ -1,10 +1,11 @@
 # ADR-0009 Windows 原生运行时与 UI 栈
 
-- status: accepted（2026-11-24 用户确认方向；具体栈细节由 G0 验证后锁定）
+- status: accepted
 - date: 2026-11-24
-- scope: v1.2+（Native Runtime track）
+- scope: v1.2+（Native Runtime track；栈细节由 G0 锁定，2026-11-24 用户确认方向）
 - related plan: [../plans/active/2026-11-24-native-runtime-redesign.md](../plans/active/2026-11-24-native-runtime-redesign.md)
-- supersedes: 无（与 ADR-0003 的产品方向、ADR-0004 的视觉方向兼容；本 ADR 修正 ADR-0004 中"重特效"的实现方式）
+- supersedes: 无（与 ADR-0003 的产品方向兼容）
+- amends: ADR-0004 §2（玻璃材质的实现手段；视觉方向不变）
 
 ## 背景
 

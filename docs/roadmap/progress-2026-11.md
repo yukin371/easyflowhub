@@ -4,6 +4,13 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
+- `2026-11-27` **ADR 有了生命周期与季度复查；先盘点的结论是「整篇取代 0 份」**。9 份决策没有一份失效，真问题是记账：ADR-0004 §2 的"背景模糊"实现手段已被 ADR-0009 接管，而 0009 写的是 `supersedes: 无`（单向指针）；`decisions/README.md` 只列 7 条，ADR-0001/0002 不在索引里（ADR-0002 全仓零引用）；三处正文过期——ADR-0007 把 `scriptmgr/` 写成旧目录名、ADR-0006/0008 的 adapter 名与实际 trait `TranscriptionTransport` 不符、ADR-0001 第 6 条还写着 plans 平铺。
+  - **状态词表五个，关键是 `amended`**：没有它，"方向还对、手段已换"的 ADR 只有两个坏选择——整篇标 `superseded`（把还生效的条款一起作废）或不动（让已死的条款继续被引用）。`amends` 必须带小节号，否则部分取代与整篇取代在读者眼里没有区别。
+  - **关系双向**：A 写 `supersedes: B`，B 必须写 `superseded-by: A`。这条直接修掉 0004/0009 的不对称，报错文案点明代价（`one-way pointers are how a replaced decision keeps getting cited`）。
+  - **两处已知失效条件写进正文**：ADR-0005 的 download owner（native 接管下载时）、ADR-0003 §5.1 的 `src/modules` module registry（Manager 迁入原生壳时）。它们今天都还成立，所以不标失效——只在失效发生时有话可说。
+  - **季度复查**：90 天一轮，台账 `scripts/adr-review-log.json` 记 `date / kind / next / summary`；`next` 过期门禁即红；实际复查比上一轮 `next` 晚 30 天以上时那一次必须是 `deep`（`sweep` 只核对状态与引用，`deep` 还要找"代码里出现了新边界却没有 ADR"的空白）。首轮即 `deep`，下次 2027-02-25。
+  - **门禁 `scripts/check-adr-lifecycle.mjs` 判九件事**，自检 `check-adr-lifecycle.selfcheck.mjs` **24/24**（含 4 条"不该报"：裸文件名、MIME、CIDR、`supersedes: 无`）。它上线第一次运行就抓到 ADR-0001 里 `decisions/README.md` 少写 `docs/` 的路径。
+
 - `2026-11-27` **`docs/plans` 有了生命周期：43 份方案按状态分进五个目录，关掉"写完不动"这条路**。之前 41 份方案平铺在一个目录里，已交付的、废弃的和正在实施的看起来一模一样，唯一的状态信号是每份文件里的 `状态:` 一行——而那一行从来没人有义务去改。
   - **状态改由位置表达**：`proposals/`（7 想清楚没排期）、`active/`（8 当前依据）、`completed/`（17 已交付）、`rejected/`（1 评估后废弃）、`archive/`（10 历史 / superseded / deferred）。归档动作就是 `git mv`，不是加一句"已完成"；`active/` 因此会随交付变短，这是它和"只加不改"的区别。旧 `docs/archive/plans/` 的两份 AI CLI facade 一并并入 `plans/archive/`，两个平行归档地不再存在。
   - **搬的是字节，不是重写**：43 次 `git mv` 保历史，126 处相对链接按"文件新位置"重算（移动文件指向未移动文件的链接也要改，例如 `../decisions/` 变 `../../decisions/`——第一轮漏了这条，`check-doc-budget` 当场报出 20 条断链），另有 90 处链接**标签**里写的是旧路径，一并改成实际目标。

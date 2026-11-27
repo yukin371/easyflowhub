@@ -42,7 +42,7 @@
 5. Sync docs when boundaries or behavior change. Update at least one of:
    - `docs/roadmap.md`
    - related `MODULE.md`
-   - related `docs/decisions/ADR-*.md`
+   - related `docs/decisions/ADR-*.md`（改了某条决策要更新它的 `status` 与双向关系；新的覆盖旧的用 `amends` 并写小节号，整条失效用 `superseded`）
    - related plan in `docs/plans/`（新方案进 `proposals/`，实施期在 `active/`，交付后 `git mv` 到 `completed/`——状态由目录位置表达，不靠在文件里改一句话）
 
 ## EasyFlowHub Guardrails

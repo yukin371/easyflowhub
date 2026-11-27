@@ -2,6 +2,7 @@
 
 - status: accepted
 - date: 2026-04-07
+- scope: 长期（v1 起）
 
 ## Context
 

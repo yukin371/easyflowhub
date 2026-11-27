@@ -1,8 +1,9 @@
 # ADR-0004 毛玻璃工作空间与个人效率 Hub
 
-- status: accepted
+- status: amended
 - date: 2026-10-16
 - scope: v0.2.0 and later
+- amended-by: ADR-0009
 - related PRD: [../PRD-v0.2.0.md](../PRD-v0.2.0.md)
 
 ## 背景
@@ -19,6 +20,11 @@ v0.2.0 围绕 `Capture -> Understand -> Retrieve -> Act` 组织需求。Launcher
 
 ### 2. 视觉采用可读的桌面玻璃工作空间
 
+> **2026-11-24 部分修正（[ADR-0009](./ADR-0009-windows-native-runtime.md) §2）**：本节的方向不变——
+> 材质表达层次、内容区比装饰层更不透明、不支持时自动降级。变的只是**实现手段**：玻璃不再由 WebView
+> 的 CSS 模糊产生，native 壳用实色分层 + 克制动效，`Mica` 作为可选主题默认关闭，`lite` 模式禁用透明与模糊。
+> 读本节时以 ADR-0009 为实现依据。
+
 - 明暗两套玻璃主题共享同一组冷色浅蓝灰 tokens；浅色主题适合日间工作，深色主题适合夜间和低光环境，用户也可以跟随 Windows 系统主题。
 - 玻璃材质通过半透明表面、背景模糊、轻边框和柔和阴影表达层次。
 - 内容区比装饰层更不透明，文字、编辑器、结果和错误反馈优先保证对比度。
@@ -27,6 +33,8 @@ v0.2.0 围绕 `Capture -> Understand -> Retrieve -> Act` 组织需求。Launcher
 - 暗色主题已与明亮主题一起交付，主题状态同步到 Manager、Launcher、Quick Note 和独立窗口；系统主题变化会实时反映到使用 `system` 模式的窗口。
 
 ### 3. 主题迁移采用渐进式策略
+
+> 已交付（v0.2.0，2026-10-21）；本节作为当时的迁移顺序留档，不再是待办。
 
 先建立 token 和组件状态，再迁移 Manager、Launcher、Quick Note、Settings 及浮层。笔记正文、截图标注和用户内容的颜色不被主题迁移覆盖。主题迁移不改变数据模型、Markdown 和附件路径。
 

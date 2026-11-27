@@ -1,0 +1,12 @@
+{
+  "cadenceDays": 90,
+  "deepAfterOverdueDays": 30,
+  "reviews": [
+    {
+      "date": "2026-11-27",
+      "kind": "deep",
+      "next": "2027-02-25",
+      "summary": "首轮全量复查（9 份 ADR）：整篇取代 0 份；ADR-0004 status 改 amended、补 amended-by ADR-0009（§2 玻璃材质的实现手段已由原生壳接管，方向仍有效），ADR-0009 补 amends ADR-0004 §2，关系双向。两处已知失效条件入正文：ADR-0005 的 download owner 会在 native 接管下载时失效，ADR-0003 §5.1 的 src/modules module registry 会在 Manager 迁入原生壳时失效。三处正文过期已勘误：ADR-0007 的 scriptmgr/ 路径改为 scriptmgr-go/、ADR-0006/0008 的 TranscriptionProvider 定名为 TranscriptionTransport、ADR-0001 第 6 条的 plans 平铺模型改为五个状态目录。索引漏项已补：ADR-0001/0002 此前不在 README 表里（ADR-0002 全仓零引用）。下一轮重点：ADR-0009 的 T3 迁移是否已触发 ADR-0005 的失效条件。"
+    }
+  ]
+}
