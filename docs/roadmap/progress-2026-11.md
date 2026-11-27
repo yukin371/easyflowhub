@@ -4,18 +4,23 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
-- `2026-11-27` **T-Gate 0 关闭：选区捕获先有门禁，翻译迁到原生**。按用户给的顺序做完三件——先让门禁能失败，再迁实现，全部照 Tauri 版的语义而不是重新发明。
-  - **选区门禁（18 项）**：起一个 `--note` 窗口当"用户的应用"，选中哨兵后按热键，把三个单测里不存在的东西搬进断言：另一个进程的选区、系统的剪贴板、真实的按键注入。四个决定：`SWP_SHOWWINDOW` 而不 `focus()`（先抢焦点会把 `Ctrl+C` 打到面板自己身上）、轮询序列号而非固定 sleep、`CAPTURE_BUDGET=45 ms`（60 的 75%）、序列号没动时**不**清理剪贴板（Tauri 版会 `empty()`，毁掉用户刚截的图）。
-  - **门禁逼出的第一个真缺陷**：首轮 `reason=no_copy`，笔记从 43 字变成 1 字（`title="c"`）。`WM_HOTKEY` 在组合键物理按住时就投递，而注入的 `Ctrl` up 已把修饰键解掉，目标收到**裸 `c`** 把选区覆盖了——文本插入不动剪贴板序列号，症状看着只是"没复制"。修法：`GetAsyncKeyState` 轮询修饰键松开（上限 12 ms，实测 1.13 ms）；`replace()` 同样要等，否则 `v` 会替换掉译文。
-  - **翻译迁移**：纯逻辑（16 个 `Problem`、`body`/`parse`、状态码映射）进 `hub-core`，网络只在 `app`（门禁禁 `reqwest`），卡片在 `hub-ui`。`native-tls` 而非 `rustls`（`aws-lc-rs` 要 cmake/nasm，而唯一请求打在回环）；每请求一条线程 + 自增 id（`blocking` 不能取消，单 worker 会让新请求排在废弃请求后面）。证据：`check-native-translation.py` **31/31**、捕获 18.4 ms、请求 3 ms、替换后笔记就是译文、502 的密钥在日志里出现 **0** 次、空选区零请求。
-  - **第二个真缺陷**：替换后笔记里是**上一份剪贴板**。粘贴要在目标的消息循环里处理，而笔记窗口与面板**同线程**——UI 线程阻塞 60 ms 让目标没机会跑，剪贴板已恢复。`replace_selection` 改在独立线程粘贴。这两条都只有原生壳会有。
-  - **回归**：12 个原生门禁串行重跑，11 个原样通过；`theme` 修掉两处门禁自身缺陷（写死 5 次方向键 → 按到 `selected_note` 出现、焦点环单点采样 → 沿描边扫一列取最蓝）后 **17/17**；`font` 的 `mapped − none ≤ 6` 是既有判据过期（HEAD 二进制同样 6.8 MB，它量的是"画出这些字要多少内存"，映射是否计费由 `heap − mapped` 回答），改口径后 **11/11**——顺带记账：面板 commit 91.5 → **98.6 MB**，100 MB 线只剩 1.4 MB 余量。详见 [selection-capture-gate](../plans/completed/2026-11-27-selection-capture-gate.md) 与 [translation-migration](../plans/completed/2026-11-27-translation-migration.md)。
+- `2026-11-27` **T-Gate 1 第一件：从 Windows 侧数 webview，第一次跑就抓到「关掉 Manager 会带走托盘」**。结构门禁只判"构建会做什么"，这道 18 项门禁判进程：数 `msedgewebview2.exe` 子进程与可见窗口，"0" 隔 2 秒量两次。
+  - **实测**：常驻 `private=4.6 MB`、0 webview、0 窗口；`--autostart` 二次启动 0.04 s 安静退出；普通二次启动按需建 Manager（再叫仍 1 个）；关掉后归零、进程还在、能再叫回来；接管态按 `Ctrl+Alt+Space` 不建东西。
+  - **真缺陷**：最后窗口 `Destroyed` 就发 `ExitRequested{code:None}`，没人 `prevent_exit` 就退出——T-Gate 0 之前 launcher 窗口一直在，所以是接管后才有的回归。修法只挡 `code:None`，托盘「退出」走 `Some(0)` 照常退。
+  - **18/18** + 结构 **16/16** + `cargo test --lib --release` **100 passed**；重建要 `/tmp` 的 target 目录（`src-tauri/target` 写不进，见文档 §7）。详见 [tauri-resident-gate](../plans/completed/2026-11-27-tauri-resident-gate.md)。
 
-- `2026-11-27` **原生壳有了单实例：一个会话一个壳，第二次启动是一条请求而不是第二个进程**。自启 + 手动启动原本得到两个托盘图标和一整轮 `RegisterHotKey failed (1409)`——第二个进程承诺了五个组合，一个都不归它。
-  - 三个决定：`Local\` 而非 `Global\`（会话互相独立，RDP 用户各自要一个壳）；用自动重置事件而不是互斥本身传请求（互斥在语义上要等对方退出）；事件和互斥**一起**在 `claim()` 里建——落在这两者之间的信号会被丢掉，而那正是登录竞态，有专门单测。
-  - **顺序是承重的**：claim 必须在 `Log::new` 之前，因为它在构造时就 `remove_file`——先开日志的第二个进程会先抹掉第一个的证据。门禁判据因此是"第二个进程一个字节都没写"。
-  - 顺带修掉一个从没被按过的入口：`toggle` 先把 `visible` 置 false，UI 线程随后被 `Shell::hide` 的 `if !visible { return }` 挡住，**用热键隐藏从来没有真正停窗**；另外三条隐藏路径都在 UI 线程直接调用、`visible` 仍为 true，所以 25 项门禁全绿。拆出 `park()`，launcher 门禁补两项。
-  - 转发早于面板窗口会被丢 → 启动请求是排队的：`reveal_when_ready` 等窗口（≤3 s）且每轮叫帧（窗口是帧建的），实测 82–91 ms。证据：新门禁 **17/17**、第二个实例 **0.09–0.12 s** 退出、`cargo test` **283**、其余全绿；`launcher.rs` 破 800 行 → 拆 `launcher/handle.rs`。详见 [plans/completed/2026-11-27-native-single-instance.md](../plans/completed/2026-11-27-native-single-instance.md)。
+- `2026-11-27` **T-Gate 0 关闭：选区捕获先有门禁，翻译迁到原生**。顺序：先让门禁能失败，再迁实现。
+  - **选区门禁 18 项**：起 `--note` 窗口当应用本体，选中哨兵后按热键，把单测里不存在的三样搬进断言（另一个进程的选区、系统剪贴板、真实按键）。四个决定：`SWP_SHOWWINDOW` 而不 `focus()`（抢焦点会把 `Ctrl+C` 打到面板自己身上）、轮询序列号而非 sleep、`CAPTURE_BUDGET=45 ms`、序列号没动时**不**清剪贴板（Tauri 版会 `empty()`，毁掉用户刚截的图）。
+  - **第一个真缺陷**：首轮 `reason=no_copy`，笔记从 43 字变 1 字（`title="c"`）——`WM_HOTKEY` 在组合键仍按住时投递，注入的 `Ctrl` up 已解掉修饰键，目标收到**裸 `c`** 覆盖了选区；文本插入不动序列号，症状像"没复制"。修法：`GetAsyncKeyState` 轮询修饰键松开（上限 12 ms，实测 1.13），`replace()` 同样要等，否则 `v` 替换掉译文。
+  - **翻译**：纯逻辑（16 个 `Problem`、`body`/`parse`、状态码映射）进 `hub-core`，网络只在 `app`，卡片在 `hub-ui`；`native-tls` 而非 `rustls`（`aws-lc-rs` 要 cmake/nasm，而唯一请求打在回环）；每请求一线程 + 自增 id。证据：**31/31**、捕获 18.4 ms、请求 3 ms、502 密钥在日志 **0** 次、空选区零请求。
+  - **第二个真缺陷**：替换后笔记里是**上一份剪贴板**——粘贴要在目标的消息循环里跑，而笔记窗口与面板**同线程**，UI 线程阻塞 60 ms 让目标没机会跑。改为独立线程粘贴。两条都只有原生壳会有。
+  - **回归**：12 个原生门禁串行，11 个原样过；`theme` 修掉两处门禁自身缺陷（写死方向键次数、焦点环单点采样）→ **17/17**；`font` 的 `mapped − none ≤ 6` 是判据过期（HEAD 同样 6.8 MB，它量的是"画出这些字要多少内存"，映射是否计费看 `heap − mapped`），改口径 → **11/11**，记账面板 commit 91.5 → **98.6 MB**。详见 [selection-capture-gate](../plans/completed/2026-11-27-selection-capture-gate.md)、[translation-migration](../plans/completed/2026-11-27-translation-migration.md)。
+
+- `2026-11-27` **原生壳有了单实例：一个会话一个壳，第二次启动是一条请求**。自启 + 手动启动原本得到两个托盘图标和一整轮 `RegisterHotKey failed (1409)`——第二个进程承诺五个组合，一个都不归它。
+  - 三个决定：`Local\` 而非 `Global\`（RDP 用户各自要一个壳）；用自动重置事件传请求（互斥在语义上要等对方退出）；事件和互斥**一起**在 `claim()` 里建，否则落在两者之间的信号会被丢掉——那正是登录竞态。
+  - **顺序是承重的**：claim 必须在 `Log::new` 之前，后者构造时就 `remove_file`；门禁判据因此是"第二个进程一个字节都没写"。
+  - 顺带修掉一个从没被按过的入口：`toggle` 先把 `visible` 置 false，UI 线程随后被 `if !visible { return }` 挡住，**用热键隐藏从来没真正停窗**；另外三条路径都在 UI 线程直接调用、`visible` 仍为 true，所以 25 项门禁全绿。拆出 `park()`，补两项。
+  - 转发早于面板会被丢 → 启动请求排队：`reveal_when_ready` 等窗口（≤3 s）并每轮叫帧，实测 82–91 ms。证据：**17/17**、第二个实例 **0.09–0.12 s** 退出、`cargo test` **283**；`launcher.rs` 破 800 行 → 拆 `launcher/handle.rs`。详见 [native-single-instance](../plans/completed/2026-11-27-native-single-instance.md)。
 
 - `2026-11-27` **原生常驻入口 `--resident`：零窗口、满热键，`hub.rs` 顺带拆回硬顶之下**。登录自启要的是"什么都没有，但什么都能叫出来"——托盘在、五个组合在、面板已建好藏在屏外。
 - `2026-11-27` **主题 token：7 个色槽扩成 21 个语义 token，删掉 5 处自己乘系数的调用点**。乘数没有方向——`gamma_multiply(0.72)` 在暗色面板上是"低一档"，换亮色主题就成了"比脚下的页面还暗"。派生改为 `lift(base, ink, t)`，方向由文字色决定，一条规则两个主题都对。
@@ -96,7 +101,7 @@
   - **泄漏**：Private **130.0 → 122.2 MB（−7.8）**，20 / 50 / 200 轮句柄数同水平（+24…+28，一次性）。**基线必须取在预热 3 帧之后**：取在构造函数里会把一次性的着色器 / 图集 / 纹理算成泄漏（第一版看到 +22.5 MB 就是这个假象）。
   - **6 个真实缺陷**（都只在高 DPI 或第二轮才现形）：①进程没有 DPI 感知，坐标被整套虚拟化（3840×2160 报成 2560×1440 / scale 1.00，面板落在目标位置的 2/3）→ `SetProcessDpiAwarenessContext` 必须是 `main` 第一句；②`SW_HIDE` 饿死渲染循环；③停靠时 `SetWindowPos` 传 0 尺寸把窗口改成 0×0（eframe 截图 panic）；④`set_pixels_per_point(1.5)` 在 1.5 原生上**叠加成 2.25** → 改用 zoom factor `target/native`；⑤预热放在构造函数里会 panic `No fonts available`；⑥架构门禁扫到我自己注释里的 `windows::`——改注释措辞，不放宽门禁。
   - **常驻 130.1 MB 未达 65 MB 解释线（⚠️ 不掩饰）**：`--no-font` 对照测出 CJK 字体 + 图集占 **37.7 MB**（92.5 MB 基线），其余 ~92 MB 是 GL 驱动 + winit + egui 固定开销；仍比 Tauri 静置 262 MB 低 50%。字体子集化是首要可压缩项，留给 Phase 1。
-  - **smoke 一直是红的（顺带发现并修掉）**：`Responsiveness budget` 拿 60 ms 判**现 Tauri 版**（p95 101 ms），从打点落地那天起每轮必然 FAIL——一个注定失败的步骤会把另外九个步骤的信号一起淹掉。改为 `Tauri latency baseline (report)` + `-NoFail`：数字照旧打印 `Verdict: FAIL`，只是不再染红整轮；判决继续在原生壳上，退役前（P4）当回归护栏用（越过 ~130 ms 才算真回归）。同轮补 CI 的 `native-crates` job（`cargo test --workspace` 27 项 + release 构建），此前 CI 完全不碰 `native/`，S1 只在作者机器上编译过。
+  - **smoke 一直是红的（顺带发现并修掉）**：`Responsiveness budget` 拿 60 ms 判**现 Tauri 版**（p95 101 ms），从打点落地那天就必然 FAIL——一个注定失败的步骤会把其余九步的信号一起淹掉。改为 `Tauri latency baseline (report)` + `-NoFail`：照旧打印 `Verdict: FAIL`，只是不再染红整轮；判决留在原生壳（越过 ~130 ms 才算回归）。同轮补 CI 的 `native-crates` job（27 项 + release 构建），此前 CI 完全不碰 `native/`。
   - **文档回填**：主设计 §4.3 状态、§7.1 新增"原生 S1 实测"表（含门禁口径），`native/README.md` 列出 Phase 1 必须偿还的捷径（`FindWindowW` 拿 HWND、`--scale` 模拟缩放、无 blit 缓存、面板内容静态、无托盘）。
   - **未测**：真实多显示器 + 混合 DPI 跨屏（本机单屏，`--scale` 只证明数学）、`lite` 在真实 RDP 回环（本机 `remote=0`）、首帧直接 blit 上一帧纹理（未做，当前靠预热帧留在 swap chain 达成等效）。
 

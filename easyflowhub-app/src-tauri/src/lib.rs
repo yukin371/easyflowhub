@@ -329,11 +329,24 @@ pub fn run() {
     // 启动，应用退出时回收子进程，避免孤儿进程长期占用 8765 端口。
     app.manage(scriptmgr_server::ScriptmgrState::default());
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
+    app.run(|app_handle, event| match event {
+        // T-Gate 0 之后这个进程通常只剩 Manager 一个窗口，而 Tauri 的默认规则是
+        // 「最后一个窗口销毁即退出」：runtime 收到 Destroyed、窗口表清空就发
+        // `ExitRequested { code: None }`。接管态里本进程一个热键都不注册，托盘是
+        // 唯一入口——关掉 Manager 会把托盘一起带走，用户再想打开只能重新启动程序。
+        //
+        // 所以「没有窗口」是一种休息态：只挡 `code: None` 这条隐式路径。托盘
+        // 「退出」走的是 `app.exit(0)`，带 `Some(0)`，仍然照常退出。
+        tauri::RunEvent::ExitRequested { code: None, api, .. } => {
+            if shell::current().takeover() {
+                api.prevent_exit();
+            }
+        }
+        tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<scriptmgr_server::ScriptmgrState>() {
                 state.shutdown();
             }
         }
+        _ => {}
     });
 }

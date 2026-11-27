@@ -7,7 +7,12 @@ param(
     # C1 (font footprint) needs the same release build, a desktop session and
     # ~90 s: three probe runs per mode plus three pixel captures. Opt-in for the
     # same reason as the bench, and skipped (exit 0) when the exe is not built.
-    [switch]$NativeFont
+    [switch]$NativeFont,
+    # T-Gate 1: watches the running build (0 WebView2 children, second launch
+    # forwards, Manager created on demand). Opt-in because it needs the session
+    # to itself: the single-instance mutex is keyed by the app identifier, so it
+    # would quit the copy the user is running. Also needs a fresh release build.
+    [switch]$TauriResident
 )
 
 $ErrorActionPreference = "Stop"
@@ -152,6 +157,22 @@ if ($NativeFont) {
     }
     else {
         Write-Host "SKIP  Font footprint (native): build native/ first" -ForegroundColor DarkYellow
+    }
+}
+
+# T-Gate 1: "0 webviews" is a claim about a running process, which --shell-report
+# cannot answer. This observes the process instead (process tree + windows), so it
+# needs a built binary and an exclusive session; it refuses rather than measuring
+# the user's copy when one is already running.
+if ($TauriResident) {
+    $tauriExe = Join-Path $repoRoot (Join-Path "easyflowhub-app\src-tauri\target\release" "easyflowhub.exe")
+    if (Test-Path $tauriExe) {
+        Invoke-Step -Name "Resident shape (tauri)" -WorkingDirectory "." -Action {
+            python (Join-Path $scriptRoot "check-tauri-resident.py") --exe $tauriExe
+        }
+    }
+    else {
+        Write-Host "SKIP  Resident shape (tauri): build easyflowhub-app/src-tauri first" -ForegroundColor DarkYellow
     }
 }
 
