@@ -515,6 +515,25 @@ def scenario_a(session: Session, report: Report) -> None:
         session.line("launcher_hide reason=blur")[-90:] or "no blur hide",
     )
 
+    # --- and the key that opened it closes it -------------------------------
+    # The three checks above cover the panel's own doors -- action, Esc, blur -- and
+    # all three run on the UI thread. The hotkey door is the only one that *queues*
+    # its hide, and it queued a request the UI thread then declined to act on:
+    # `toggle` had already cleared `visible` on the hotkey thread (that is how it
+    # chooses a direction), so `Shell::hide`'s "only hide what is shown" guard
+    # answered "not shown" and the panel stayed on screen with its flag off. Nothing
+    # in this gate pressed the key twice, so nothing here saw it.
+    report.check("it opens for the hotkey case", session.reveal(), "hotkey case shown")
+    wininput.wait_for(lambda: user32.GetForegroundWindow() == session.panel(), 1.5)
+    before = session.count("launcher_hide reason=hotkey")
+    session.press()
+    queued = session.later("launcher_hide reason=hotkey", before, 3.0)
+    report.check(
+        "the same hotkey hides it, and the window actually moves",
+        bool(queued) and off_screen(rect(session.panel())),
+        queued[-100:] or "no launcher_hide reason=hotkey",
+    )
+
     # --- recent notes, opened from the panel --------------------------------
     report.check("it opens for the recent list", session.reveal(), "fourth launcher_shown")
     wininput.wait_for(lambda: user32.GetForegroundWindow() == session.panel(), 1.5)

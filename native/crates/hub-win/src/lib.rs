@@ -17,6 +17,7 @@ pub mod dpi;
 pub mod dwm;
 pub mod font;
 pub mod hotkey;
+pub mod instance;
 pub mod monitor;
 pub mod probe;
 pub mod tray;

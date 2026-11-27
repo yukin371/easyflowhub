@@ -163,6 +163,12 @@ class Session:
         # Readiness is the registration line, not the process existing: a chord
         # another program owns leaves a running process with no working key.
         wininput.wait_for(lambda: "hotkeys registered=" in text(self.log), 25)
+        # And then the banner that follows it, because that is the next thing this
+        # gate asserts on. Registration is written by the hotkey thread's setup and
+        # `hub_start` ~20 ms later by the controller; reading in between made the
+        # first check fail about one run in ten on a loaded machine, which reads
+        # exactly like "the shell did not start".
+        wininput.wait_for(lambda: "hub_start" in text(self.log), 5)
         return self.process
 
     def alive(self) -> bool:

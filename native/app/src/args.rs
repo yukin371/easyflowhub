@@ -42,6 +42,9 @@ pub struct Args {
     /// Bring up the product process with **no** note window: hotkeys, tray and the
     /// parked panel, nothing on screen. The shape a login entry starts in.
     pub resident: bool,
+    /// Started by the login entry: implies `resident`, and a forwarded launch stays
+    /// silent instead of summoning the panel.
+    pub autostart: bool,
     /// Open this note id in the quick-note shell instead of creating a new note.
     pub note_id: Option<String>,
     /// Run this many timed keystrokes in the island, then print the distribution.
@@ -87,6 +90,7 @@ impl Default for Args {
             editor: false,
             note: false,
             resident: false,
+            autostart: false,
             note_id: None,
             editor_bench: None,
             launcher_bench: None,
@@ -124,6 +128,8 @@ easyflowhub-native — S1 shell spike
   --editor               draw the RichEdit island instead of the action grid
   --note                 open the Phase 1 quick-note shell (title strip + island)
   --resident             same process, no note window: tray + hotkeys + parked panel
+  --autostart            how the login entry starts it: --resident, and a second
+                         instance forwards nothing (no panel, no focus steal)
   --note-id <uuid>       open that note in the shell instead of a new one
   --editor-bench <N>     type N timed characters into the island, print, exit
   --launcher-bench <N>   reveal the launcher N times (product path), print, exit
@@ -205,6 +211,17 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
                 // The resident process *is* the product process, minus the first
                 // window. Implying `note` here is what keeps one code path: the
                 // alternative is a second composition root that would drift.
+                args.resident = true;
+                args.note = true;
+            }
+            "--autostart" => {
+                // The flag the login entry passes. It means two things, and both are
+                // needed: start resident (a note window at login is not what "开机
+                // 自启" asks for), and *if this turns out to be a second instance*,
+                // forward nothing -- stealing focus while the desktop is still
+                // settling is the wrong first impression. Same meaning as the Tauri
+                // build's `--autostart`, so the registry entry survives the handover.
+                args.autostart = true;
                 args.resident = true;
                 args.note = true;
             }
@@ -330,6 +347,21 @@ mod tests {
     #[test]
     fn resident_refuses_a_note_to_open() {
         assert!(parse_args(&["app", "--resident", "--note-id", "abc"]).is_err());
+    }
+
+    #[test]
+    fn autostart_is_the_login_entry_and_stays_silent_when_forwarded() {
+        let args = parse_args(&["app", "--autostart"]).unwrap();
+        assert!(args.autostart, "the forward path reads this to decide silence");
+        assert!(args.resident, "a note window at login is not what the entry asks for");
+        assert!(args.note, "one composition root");
+    }
+
+    #[test]
+    fn a_plain_resident_launch_is_not_an_autostart_launch() {
+        // The distinction only matters to a *second* instance: a user who clicks the
+        // icon expects the panel, and that is what forwarding does by default.
+        assert!(!parse_args(&["app", "--resident"]).unwrap().autostart);
     }
 
     #[test]

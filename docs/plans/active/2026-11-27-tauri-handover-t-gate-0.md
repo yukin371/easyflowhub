@@ -1,6 +1,6 @@
 # T-Gate 0：Tauri 版停掉那些 webview（默认接管，`--legacy-ui` 回退）
 
-> 状态：`active`（Tauri 侧已交付并门禁化；原生常驻入口见 §7；T-Gate 0 只剩选区 / 翻译迁移一件）
+> 状态：`active`（Tauri 侧已交付并门禁化；原生常驻入口见 §7；单实例互斥见 [completed/2026-11-27-native-single-instance.md](../completed/2026-11-27-native-single-instance.md)；T-Gate 0 只剩选区 / 翻译迁移一件）
 >
 > 上游判据：[原生重构总设计](./2026-11-24-native-runtime-redesign.md) §Phase 1 过渡期约束表 T-Gate 0——「Tauri 版必须停止创建 launcher / 快速笔记的 webview，只保留一个按需的 Manager 实例」
 > 归属批次：Phase 1 收口（C2 通过、Launcher 产品化之后）
@@ -77,11 +77,12 @@ Tauri 版从"两个栈都在服务"改成"只有一个按需的 Manager"：启�
 - **两个托盘图标**。Tauri 的托盘留着（它是打开 Manager 的入口，因为接管后它没有热键），原生壳也有自己的托盘。Phase 2 Manager 迁进原生后删掉 Tauri 那个。
 - **Tauri 侧没有全局热键**。Manager 只能从托盘图标或开始菜单打开。
 
-## 6. 没做的（T-Gate 0 真正关闭还缺两件）
+## 6. 没做的（T-Gate 0 只剩一件）
 
 1. ~~**原生壳没有"常驻但不开笔记"的入口**~~ —— 已交付，见 §7。
-2. **选区与翻译迁移**（见 §5）。
-3. 之外：`--shell-report` 只证明构建行为，不证明"启动之后 0 个 webview"——后者靠本文第 4 节那次实测。把实测脚本化需要先解决单实例互斥（第二个进程会转发 argv 并退出），留待 T-Gate 1。
+2. ~~**原生壳没有单实例互斥**~~ —— 已交付，见 [completed/2026-11-27-native-single-instance.md](../completed/2026-11-27-native-single-instance.md)。它顺带修掉一个从没被按过的入口：用热键隐藏面板从来没有真正停窗（三个既有隐藏路径都在 UI 线程直接调用，只有热键那条排队）。
+3. **选区与翻译迁移**（见 §5）—— 只剩这一件。
+4. 之外：`--shell-report` 只证明构建行为，不证明"启动之后 0 个 webview"——后者靠本文第 4 节那次实测。把实测脚本化现在只差"脚本起第二个进程、看它转发后退出"，互斥已就位，留待 T-Gate 1。
 
 ## 7. 原生常驻入口 `--resident`：零窗口、满热键
 
@@ -119,4 +120,6 @@ Tauri 版从"两个栈都在服务"改成"只有一个按需的 Manager"：启�
 
 **门禁顺手抓到的一件事**：面板落定（`park`）后 50 ms 内注入的组合，系统会整个丢掉——日志里连 `launcher_toggle` 都没有。用上一提交的二进制复测同样丢，所以它是注入与隐藏抢同一个前台切换的竞速，不是产品回归；真人下一次按键是秒级之后。`check-native-launcher.py` 的 `reveal()` 因此先等"已 parked"再等 250 ms 才按，`check-native-resident.py` 也在 Esc 后等落地。
 
-**还没做**：原生壳没有单实例互斥。自启 + 手动启动会得到第二个托盘图标和一轮 `RegisterHotKey failed (1409)`。这是 Tauri 版有、原生版还没有的一件，做它之前不该把自启真指向原生 exe。
+**已做（上一批）**：原生壳有了单实例互斥。自启 + 手动启动不再产生第二个托盘和一整轮 `RegisterHotKey failed (1409)`——第二次启动转发后退出（0.09–0.12 s），面板已经开着时是 `refocus` 而不是切换，`--autostart` 的那一次则完全不出声。门禁 `check-native-single-instance.py` 17 项，含"第二个进程一个字节都没写"（证明 claim 先于日志打开）。详见 [completed/2026-11-27-native-single-instance.md](../completed/2026-11-27-native-single-instance.md)。
+
+**还没做**：自启注册表尚未指向原生 exe。argv 侧（`--autostart` 蕴含 `--resident`、且转发不出声）已经就绪，切换本身属于 G1。

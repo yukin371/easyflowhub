@@ -4,9 +4,15 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
+- `2026-11-27` **原生壳有了单实例：一个会话一个壳，第二次启动是一条请求而不是第二个进程**。自启 + 手动启动原本得到两个托盘图标和一整轮 `RegisterHotKey failed (1409)`——第二个进程承诺了五个组合，一个都不归它。
+  - 三个决定：`Local\` 而非 `Global\`（会话互相独立，RDP 用户各自要一个壳）；用自动重置事件而不是互斥本身传请求（互斥在语义上要等对方退出）；事件和互斥**一起**在 `claim()` 里建——落在这两者之间的信号会被丢掉，而那正是登录竞态，有专门单测。
+  - **顺序是承重的**：claim 必须在 `Log::new` 之前，因为它在构造时就 `remove_file`——先开日志的第二个进程会先抹掉第一个的证据。门禁判据因此是"第二个进程一个字节都没写"。
+  - 顺带修掉一个从没被按过的入口：`toggle` 先把 `visible` 置 false，UI 线程随后被 `Shell::hide` 的 `if !visible { return }` 挡住，**用热键隐藏从来没有真正停窗**；另外三条隐藏路径都在 UI 线程直接调用、`visible` 仍为 true，所以 25 项门禁全绿。拆出 `park()`，launcher 门禁补两项。
+  - 转发早于面板窗口会被丢 → 启动请求是排队的：`reveal_when_ready` 等窗口（≤3 s）且每轮叫帧（窗口是帧建的），实测 82–91 ms。证据：新门禁 **17/17**、第二个实例 **0.09–0.12 s** 退出、`cargo test` **283**、其余全绿；`launcher.rs` 破 800 行 → 拆 `launcher/handle.rs`。详见 [plans/completed/2026-11-27-native-single-instance.md](../plans/completed/2026-11-27-native-single-instance.md)。
+
 - `2026-11-27` **原生常驻入口 `--resident`：零窗口、满热键，`hub.rs` 顺带拆回硬顶之下**。登录自启要的是"什么都没有，但什么都能叫出来"——托盘在、五个组合在、面板已建好藏在屏外。
 - `2026-11-27` **主题 token：7 个色槽扩成 21 个语义 token，删掉 5 处自己乘系数的调用点**。乘数没有方向——`gamma_multiply(0.72)` 在暗色面板上是"低一档"，换亮色主题就成了"比脚下的页面还暗"。派生改为 `lift(base, ink, t)`，方向由文字色决定，一条规则两个主题都对。
-  - 面板顺带重排：选中/悬停/静息三态可辨（accent 填充 + 左缘竖条）、搜索框有聚焦环、分组带计数、页脚键位画成 chip、空结果给下一步；列数阈值 96 → 130，5 个动作从 4+1 的孤卡变 3+2，`PanelSpec::scale` 修掉"物理宽减逻辑内边距"的混算。证据：`check-native-theme.py` 17/17 连跑 3 次（采样真实像素），`cargo test` 274 项，五个原生门禁全绿。详见 [plans/completed/2026-11-27-theme-tokens.md](../plans/completed/2026-11-27-theme-tokens.md)。
+  - 面板顺带重排：三态可辨、搜索框有聚焦环、分组带计数、页脚 chip、空结果给下一步；列数阈值 96 → 130（4+1 孤卡 → 3+2），`PanelSpec::scale` 修掉物理/逻辑混算。证据：`check-native-theme.py` 17/17 连跑 3 次（采样真实像素），`cargo test` 274 项，五个原生门禁全绿。详见 [plans/completed/2026-11-27-theme-tokens.md](../plans/completed/2026-11-27-theme-tokens.md)。
 
 - `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
   - 三个不显然的决定：关闭 = 挪到 `-30000,-30000`（`SW_HIDE` 停掉 `WM_PAINT` 投递，eframe 循环停摆，第九次唤起会画出第八次）；揭示在热键线程、隐藏在 UI 线程（`GetFocus` 只回答调用线程），`epoch` 挡住连按交叉；门禁逼出四个真缺陷（空结果 Enter 后交出焦点、点别处不消失、全新目录 `Store::open` 不建父目录、预览重复标题）。证据：`check-native-launcher.py` 25/25 连跑 4 次，p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100），泄漏按两次运行的增量差判。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。

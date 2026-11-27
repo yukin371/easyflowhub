@@ -189,6 +189,44 @@ pub fn register_hotkeys(
     }
 }
 
+/// Wait for forwarded launches and answer them.
+///
+/// The first launch owns the shell; every later one rings the doorbell and exits
+/// (`hub_win::instance`). Answering means showing the panel if it is not already up --
+/// `reveal`, not `toggle`, because a second launch asks for the panel rather than for
+/// a change to its state.
+///
+/// The thread is detached and never joined: it lives exactly as long as the process,
+/// and its `Arc<Guard>` is what keeps the mutex held, so there is nothing to join
+/// *to*. It is started after the tray because both are "the shell is now reachable",
+/// and a forwarded launch that arrives before this point is still waiting on the
+/// auto-reset event rather than lost.
+pub fn watch_instance(
+    guard: Arc<hub_win::instance::Guard>,
+    launcher: Arc<launcher::Handle>,
+    log: &Arc<Log>,
+) {
+    let log = log.clone();
+    let _ = guard.watch(move || {
+        // The only trace a forwarded launch leaves: the process that sent it exited
+        // without touching the log (it must not), so this line is where "the second
+        // double-click did something" becomes visible. `waited_ms` is the whole story
+        // of a login race -- a forward that arrives before the panel has a window is
+        // queued, not dropped.
+        match launcher.reveal_when_ready() {
+            Some(waited) => log.mark(
+                0,
+                "instance",
+                &format!(
+                    "action=reveal reason=second-launch waited_ms={:.1}",
+                    waited.as_secs_f64() * 1000.0
+                ),
+            ),
+            None => log.mark(0, "instance", "action=dropped reason=no_window"),
+        }
+    });
+}
+
 pub fn install_tray(
     inbox: Arc<Mutex<Vec<Request>>>,
     ctx: egui::Context,

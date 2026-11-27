@@ -119,7 +119,11 @@ pub struct Config {
 }
 
 /// Create the controller and run until the user quits from the tray.
-pub fn run(config: Config) -> ! {
+///
+/// `instance` is the shell's claim on the session (one shell per session). It is only
+/// passed in, never taken here: `main` has to hold it *before* opening the log, so
+/// that a second launch forwards instead of truncating the first one's evidence.
+pub fn run(config: Config, instance: hub_win::instance::Guard) -> ! {
     let options = eframe::NativeOptions {
         // 1×1 is deliberate: the window exists to own a message queue, and any
         // area it has is area it must paint. It is parked off-screen on the first
@@ -138,7 +142,7 @@ pub fn run(config: Config) -> ! {
     let result = eframe::run_native(
         HUB_TITLE,
         options,
-        Box::new(move |cc| Ok(Box::new(Hub::new(cc, config)))),
+        Box::new(move |cc| Ok(Box::new(Hub::new(cc, config, instance)))),
     );
 
     match result {
@@ -198,10 +202,20 @@ struct Hub {
     /// Logged one pass later, because the OS destroys the window at the end of the
     /// pass that stops declaring it.
     released: Option<(u32, usize)>,
+    /// This process's claim on the session.
+    ///
+    /// Held for the process lifetime, and that is the whole point: dropping it would
+    /// release the mutex and let the next launch become a second shell -- a bug that
+    /// would only show up as "two tray icons again, sometimes".
+    _instance: Arc<hub_win::instance::Guard>,
 }
 
 impl Hub {
-    fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: Config,
+        instance: hub_win::instance::Guard,
+    ) -> Self {
         let ctx = cc.egui_ctx.clone();
         // Read before the struct literal moves the fields it needs: whether to open
         // a window on the first pass is the only difference between the two modes.
@@ -290,6 +304,7 @@ impl Hub {
             manager: None,
             launcher,
             released: None,
+            _instance: Arc::new(instance),
         };
         hub._hotkeys = boot::register_hotkeys(
             hub.inbox.clone(),
@@ -299,6 +314,10 @@ impl Hub {
             hub.launcher.handle(),
         );
         hub.tray = boot::install_tray(hub.inbox.clone(), ctx.clone(), &hub.log);
+        // Listening starts here rather than in `run`: the doorbell is already wired
+        // (the event was created with the mutex), so a launch that arrived while the
+        // shell was still booting is still waiting on it. See `hub_win::instance`.
+        boot::watch_instance(hub._instance.clone(), hub.launcher.handle(), &hub.log);
         hub.log.mark(
             0,
             "hub_start",

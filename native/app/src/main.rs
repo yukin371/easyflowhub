@@ -117,6 +117,15 @@ fn main() {
     // so closing one note no longer ends the process by accident. `--resident`
     // comes through this same branch and skips only the first spawn.
     if parsed.note {
+        // Claimed before the log exists, and that order is load-bearing: `Log::new`
+        // truncates its file, so a second instance that opened the log first would
+        // erase the first one's evidence and only then discover it had nothing to do.
+        // It is also before the store, the chords and the tray -- everything a second
+        // shell would have to undo.
+        let instance = match hub_win::instance::claim() {
+            hub_win::instance::Claim::First(guard) => guard,
+            hub_win::instance::Claim::Taken => forward(parsed.autostart),
+        };
         let log_path = parsed
             .log_path
             .clone()
@@ -134,25 +143,35 @@ fn main() {
                 source.as_str()
             ),
         );
-        hub::run(hub::Config {
-            settings,
-            scale,
-            lite,
-            log,
-            store_root: parsed.store_root.clone(),
-            note_id: parsed.note_id.clone(),
-            resident: parsed.resident,
-            settings_path: settings_path.clone(),
-            no_font: parsed.no_font,
-            font_heap: parsed.font_heap,
-            launcher: launcher::Wiring {
-                monitors,
-                spec,
-                bench: parsed.launcher_bench,
-                budget_p95_ms: parsed.budget_p95_ms,
-                budget_p99_ms: parsed.budget_p99_ms,
+        // A null mutex is handle exhaustion, not a rival shell: the process runs and
+        // says so, because refusing to start would be the worse failure.
+        log.mark(
+            0,
+            "instance",
+            &format!("claimed=true exclusive={}", instance.owned()),
+        );
+        hub::run(
+            hub::Config {
+                settings,
+                scale,
+                lite,
+                log,
+                store_root: parsed.store_root.clone(),
+                note_id: parsed.note_id.clone(),
+                resident: parsed.resident,
+                settings_path: settings_path.clone(),
+                no_font: parsed.no_font,
+                font_heap: parsed.font_heap,
+                launcher: launcher::Wiring {
+                    monitors,
+                    spec,
+                    bench: parsed.launcher_bench,
+                    budget_p95_ms: parsed.budget_p95_ms,
+                    budget_p99_ms: parsed.budget_p99_ms,
+                },
             },
-        });
+            instance,
+        );
     }
 
     let log_path = parsed
@@ -233,6 +252,30 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(1);
     }
+}
+
+/// Hand the launch to the shell that already owns it, then leave.
+///
+/// Printed rather than logged on purpose: this process does not own the log, and the
+/// whole point is that it touches no shared state before exiting. The evidence that
+/// the handover worked is the owner's line (`instance action=reveal`), written by the
+/// process that can still see the panel.
+fn forward(autostart: bool) -> ! {
+    if autostart {
+        // The login entry's second instance. Windows starts it while the desktop is
+        // still settling and the user has not asked for anything yet, so summoning
+        // the panel here would be a window appearing over the login for no reason.
+        eprintln!("instance action=quiet reason=autostart");
+        std::process::exit(0);
+    }
+    match hub_win::instance::signal() {
+        Ok(()) => eprintln!("instance action=forward"),
+        // The owner died between our claim attempt and the ring. Nothing to show the
+        // user: the panel they wanted does not exist any more, and starting a shell
+        // from inside the failure path is the bug, not the fix.
+        Err(error) => eprintln!("instance action=give-up error=\"{error}\""),
+    }
+    std::process::exit(0);
 }
 
 fn primary_scale(monitors: &Arc<Mutex<MonitorCache>>) -> f32 {

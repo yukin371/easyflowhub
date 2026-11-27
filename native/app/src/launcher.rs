@@ -28,11 +28,10 @@
 //! a newer show has happened since. Without it the panel would be parked right
 //! after being put on screen, and the user sees a key that does nothing.
 
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use hub_core::{place, Command, Placement, Rect, Table};
+use hub_core::{Command, Placement, Table};
 use hub_ui::launcher;
 use hub_ui::{LauncherAction, LauncherItem, LauncherState};
 use hub_win::MonitorCache;
@@ -42,7 +41,10 @@ use crate::hub::Request;
 use crate::log::Log;
 use hub_core::Store;
 
+mod handle;
 mod recent;
+
+pub use handle::{binding, Handle};
 
 /// Title of the panel window. Also the only way back to its `HWND`: eframe 0.31
 /// does not expose it through `App` (see `hub_win::window::find_by_title`).
@@ -65,153 +67,6 @@ const BLUR_POLL: Duration = Duration::from_millis(200);
 
 pub fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("launcher")
-}
-
-/// The hotkey thread's half: geometry, show, focus.
-pub struct Handle {
-    spec: hub_core::PanelSpec,
-    monitors: Arc<Mutex<MonitorCache>>,
-    hwnd: AtomicIsize,
-    visible: AtomicBool,
-    epoch: AtomicU64,
-    inbox: Arc<Mutex<Vec<Request>>>,
-    ctx: egui::Context,
-    log: Arc<Log>,
-}
-
-impl Handle {
-    pub fn new(
-        spec: hub_core::PanelSpec,
-        monitors: Arc<Mutex<MonitorCache>>,
-        inbox: Arc<Mutex<Vec<Request>>>,
-        ctx: egui::Context,
-        log: Arc<Log>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            spec,
-            monitors,
-            hwnd: AtomicIsize::new(0),
-            visible: AtomicBool::new(false),
-            epoch: AtomicU64::new(0),
-            inbox,
-            ctx,
-            log,
-        })
-    }
-
-    /// Called by the shell once the OS window exists.
-    pub fn attach(&self, hwnd: isize) {
-        self.hwnd.store(hwnd, Ordering::SeqCst);
-    }
-
-    pub fn visible(&self) -> bool {
-        self.visible.load(Ordering::SeqCst)
-    }
-
-    pub fn set_visible(&self, visible: bool) {
-        self.visible.store(visible, Ordering::SeqCst);
-    }
-
-    pub fn epoch(&self) -> u64 {
-        self.epoch.load(Ordering::SeqCst)
-    }
-
-    /// The reveal path. Runs on the hotkey thread; nothing here waits.
-    pub fn toggle(&self) {
-        let hwnd = self.hwnd.load(Ordering::SeqCst);
-        if hwnd == 0 {
-            // Pressed between process start and the first frame. Saying so is the
-            // difference between "the key is broken" and "it was not ready yet".
-            self.log
-                .mark(0, "launcher_toggle", "ready=false reason=no_window");
-            return;
-        }
-        let at = Instant::now();
-        let epoch = self.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-
-        if self.visible.swap(false, Ordering::SeqCst) {
-            // Hiding needs the UI thread (see the module comment); the epoch rides
-            // along so a show that happens first is not undone by this hide.
-            self.log.mark(epoch, "launcher_toggle", "action=hide");
-            self.push(Request::LauncherHidden { epoch });
-            return;
-        }
-
-        // One line per press, on the hotkey thread, before any work. The hide path
-        // used to leave no trace at all, so "the key did nothing" and "the key hid
-        // the panel" read the same in the log -- and a press that never becomes a
-        // `WM_HOTKEY` leaves nothing behind either. `launcher_shown` follows this
-        // line by the move's duration, which is where a slow reveal hides.
-        self.log.mark(epoch, "launcher_toggle", "action=show");
-
-        let cursor = hub_win::cursor_pos().unwrap_or((0, 0));
-        let (work, monitor_scale) = {
-            let cache = self
-                .monitors
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let monitor = cache.at(cursor.0, cursor.1);
-            (
-                Rect::new(
-                    monitor.work.0,
-                    monitor.work.1,
-                    monitor.work.2,
-                    monitor.work.3,
-                ),
-                monitor.scale,
-            )
-        };
-        let placement = place(cursor, work, &self.spec);
-
-        hub_win::window::move_on_screen(
-            hwnd,
-            placement.x,
-            placement.y,
-            placement.width,
-            placement.height,
-            true,
-        );
-        let moved_us = at.elapsed().as_micros() as u64;
-        let focused = hub_win::window::focus(hwnd);
-        let shown_us = at.elapsed().as_micros() as u64;
-        self.visible.store(true, Ordering::SeqCst);
-
-        self.log.mark(
-            epoch,
-            "launcher_shown",
-            &format!(
-                "shown_ms={:.2} move_ms={:.2} focus_ms={:.2} focused={focused} cursor={},{} monitor_scale={monitor_scale:.2} at=+{}+{} size={}x{} cols={} work={}x{}",
-                shown_us as f64 / 1000.0,
-                moved_us as f64 / 1000.0,
-                (shown_us - moved_us) as f64 / 1000.0,
-                cursor.0,
-                cursor.1,
-                placement.x,
-                placement.y,
-                placement.width,
-                placement.height,
-                placement.columns,
-                work.width(),
-                work.height()
-            ),
-        );
-
-        self.push(Request::LauncherShown(Shown {
-            at,
-            shown_us,
-            focused,
-            placement,
-            epoch,
-        }));
-    }
-
-    fn push(&self, request: Request) {
-        self.inbox
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(request);
-        self.ctx.request_repaint_of(egui::ViewportId::ROOT);
-    }
 }
 
 /// What the controller has to hand the panel at startup.
@@ -328,17 +183,6 @@ impl Launcher {
         self.with(|shell| shell.bench_tick(ctx));
         self.with(|shell| shell.bench_result())
     }
-}
-
-/// The press handler for `Command::Launcher`.
-///
-/// Not a queue entry: it moves the window on the hotkey thread, because waiting
-/// for the UI thread to wake is 30-47 ms of the 60 ms budget (§5.8).
-pub fn binding(chord: &hub_core::Chord, handle: Arc<Handle>) -> hub_win::hotkey::Binding {
-    hub_win::hotkey::Binding::new(
-        chord.display(),
-        Arc::new(move || handle.toggle()) as hub_win::hotkey::PressHandler,
-    )
 }
 
 pub struct Spawn {
@@ -673,13 +517,29 @@ impl Shell {
             );
             return;
         }
-        self.hide(reason);
+        // Straight to `park`, deliberately *not* `hide`: the press that issued this
+        // request already cleared `visible` on the hotkey thread (that is how `toggle`
+        // decides which direction it is going), so `hide`'s "only hide what is shown"
+        // guard would answer "not shown" and leave the panel sitting on screen with
+        // its flag off. The epoch check above is the guard for this path -- it proves
+        // this is still the newest intent, which is the thing `visible` was being
+        // asked to approximate.
+        self.park(reason);
     }
 
     pub fn hide(&mut self, reason: &str) {
         if !self.handle.visible() {
             return;
         }
+        self.park(reason);
+    }
+
+    /// Move the window off every monitor and give the keyboard back.
+    ///
+    /// `park` releases the keyboard with `SetFocus`, and `GetFocus` only answers for
+    /// the calling thread -- which is why this runs on the UI thread and why the
+    /// hotkey path queues instead of doing it itself. See the module comment.
+    fn park(&mut self, reason: &str) {
         let hwnd = self.hwnd.unwrap_or(0);
         let released = if hwnd != 0 {
             hub_win::window::park(hwnd)
