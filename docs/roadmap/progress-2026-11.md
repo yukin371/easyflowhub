@@ -4,12 +4,18 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
-- `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2（三种输入法人机验收）通过，Phase 1 唯一的人工启动项解除，launcher 从 spike 面板变成产品件（§5.1 / §5.8）。440×860 逻辑像素，跟随光标所在显示器的工作区夹紧，够宽两列、不够一列。
-  - **关闭 = 挪到 `-30000,-30000`，不是 `SW_HIDE`**：`ShowWindow(SW_HIDE)` 停掉 `WM_PAINT` 投递，winit 收不到重绘，eframe 循环随之停摆——藏起来的第九次唤起会显示第八次的画面。所以"已关闭"的判据是**矩形在任何显示器之外**，不是 `IsWindowVisible`。
-  - **揭示在热键线程，隐藏在 UI 线程**：`GetCursorPos`→命中显示器缓存→算矩形→`SetWindowPos`+`SetForegroundWindow` 四步都在热键线程（move 3.0–7.0 ms、focus < 1 ms），省下唤 UI 线程的 30–47 ms。`GetFocus` 只回答调用线程，在热键线程隐藏会"窗口走了键盘还归它"，故隐藏是 `Request::LauncherHidden { epoch }` 由 UI 线程 `park`（`SetFocus(null)` + 移出屏）；`epoch` 挡住"按一下、UI 醒来前又按一下"的交叉（`skipped=superseded`）。
-  - **门禁逼出四个真缺陷**：①空结果按 Enter 后面板再也不收键——`TextEdit::singleline` 把 Enter 当提交并交出焦点，没选中项时无人接手，之后每个键都被吞，看着像卡死；修法是 `Action::None` 时当帧 `take_focus = true`。②点别处不消失——判据读 `viewport().focused`，eframe 只在下一次事件唤醒时更新，用户走了面板还挂数秒；改问 `GetForegroundWindow`。③全新机器上库打不开——`Store::open` 不建父目录，SQLite 答 `unable to open database file`，shell 静默退回 memory-only，这一场写的笔记关窗即失且界面一字不说；现在建父目录 + 单测。④预览重复标题——快速笔记正文第一行就是标题，`first_line` 跳过与标题相同的那行。
-  - **顺带**：搜索面扩到整篇正文，与 Ctrl+K 同口径；800 行硬顶触发两次拆分（`hub.rs` 889→794、`launcher.rs` 905→754 + `launcher/recent.rs` 178）；Tauri 版常驻占着 `Ctrl+Alt+Space`（1409），门禁写临时设置挪到 `Ctrl+Alt+F9/F10/F11` 的首个可用键并**要求注册成功**（"静默什么都没测"比失败更坏）；打字时机由产品新打的一行 `launcher_ready keyboard=true` 判定（显示后约 80 ms 查询框才拿到键盘）。
-  - **验证**：`check-native-launcher.py` **25/25，连跑 4 次全过**；揭示延迟 n=40 p50 1.8–2.1 / p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100）；泄漏改比两次运行的**增量差**（绝对手柄含一次性预热，会假红），private 19.2–20.3 vs 19.3–20.4 MB、handles 187–189 vs 187–189；回归 notes 25 / manager 19 / switcher 22 / store-schema 24、`cargo test` 263 项。**未做**：停掉 Tauri 版自己的 launcher webview（T-Gate 0 退出条件，另批）、reveal 时刷新内容、面板 IME、`Ctrl+Alt+Space` 冲突的用户可见提示。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。
+- `2026-11-27` **T-Gate 0 的 Tauri 侧关闭：本进程只剩一个按需 Manager，宿主 18 MB、0 个 WebView2 子进程**。退出条件是"Tauri 版必须停止创建 launcher / 快速笔记的 webview"，做法是从配置层拿掉，不是启动后藏起来。
+  - **默认接管，回退要显式**：`--legacy-ui` 或 `EFH_LEGACY_UI=1`（flag 压过环境变量，有单测）。默认"继续做旧事"的开关会让过渡永久化——两个栈都能用，没人知道是谁应的键。
+  - **门禁读的计划就是注册用的计划**：`shell::shortcut_plan` 单一来源；`--shell-report` 在 `tauri::Builder` 之前返回，不碰单实例互斥、不拉 WebView，于是能在"用户那份正在跑"的机器上判构建行为。
+  - **运行时抓到结构门禁抓不到的**：第一版把 `Ctrl+Alt+M` 留在 Tauri，结构门禁 15/15 全绿，真跑起来原生壳当场 `RegisterHotKey failed (1409)`；改成接管态零热键后 `hotkeys registered=5 failed=0`，`Ctrl+Alt+Space` 落到原生面板 `shown_ms=6.94`。
+  - **证据**：`check-tauri-takeover.py` 16/16；同机实测宿主 18 MB / 0 webview（旧构建 58.9 MB + webview）、`cargo test --lib` 100 项。一次偶发 `logging` 单测（单跑复跑均过）照实记下。
+  - **已知差异**：选区→翻译随 webview 下线（下一批迁移）、Manager 里"新建快速笔记"报错、两个托盘。**还没做**：原生壳没有"常驻但不开笔记"的入口（无参跑的是 S1 spike，产品壳在 `--note` 且启动即 spawn 一个笔记窗口）。详见 [plans/active/2026-11-27-tauri-handover-t-gate-0.md](../plans/active/2026-11-27-tauri-handover-t-gate-0.md)。
+
+- `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
+  - **关闭 = 挪到 `-30000,-30000`，不是 `SW_HIDE`**：后者停掉 `WM_PAINT` 投递，winit 收不到重绘、eframe 循环停摆，藏起来的第九次唤起会显示第八次的画面；"已关闭"的判据因此是矩形在任何显示器之外。
+  - **揭示在热键线程、隐藏在 UI 线程**：四步 Win32 调用省下 30–47 ms；`GetFocus` 只回答调用线程，故隐藏走 `Request::LauncherHidden { epoch }` 由 UI 线程 `park`，`epoch` 挡住"按一下、UI 醒来前又按一下"的交叉。
+  - **门禁逼出四个真缺陷**：空结果 Enter 后 `TextEdit::singleline` 交出焦点（看着像卡死）、点别处不消失（改问 `GetForegroundWindow`）、全新目录 `Store::open` 不建父目录而静默 memory-only、`first_line` 重复标题；顺带把搜索面扩到整篇正文。
+  - **证据**：`check-native-launcher.py` 25/25 连跑 4 次，p50 1.8–2.1 / p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100），泄漏比两次运行的增量差。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。
 
 - `2026-11-27` **C1 关闭：字库不再计入私有内存，常驻 130.1 → 91.5 MB，一个字没少**。S1 记的 37.7 MB「字体 + 图集」拆开看，字库字节是全部、图集只有 0.5 MB（`16384x32`），所以杠杆在字库本身。根因在 epaint：`FontData::from_owned` 走 `Cow::Owned`，`ab_glyph_font_from_font_data` 会 `bytes.clone()` 再建一个 `FontVec`——`msyh.ttc` 19.7 MB 至少一份常驻私有堆。
   - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 做只读映射，`FontData::from_static` 取 `&'static [u8]` 走 `FontRef` 零拷贝。不做子集化有三条理由——微软字体子集化产物是分发物（授权另说）、固定子集会丢掉用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具与产物校验的构建链。方向没变，C1 里"三种口径都要记"照旧执行。

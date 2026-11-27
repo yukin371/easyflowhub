@@ -123,7 +123,12 @@ function Measure-ColdStart {
     }
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $proc = Start-Process -FilePath $resolved.Path -PassThru
+    # `--legacy-ui` is required from T-Gate 0 on: the default build serves only
+    # an on-demand Manager, so it has no main window to wait for and no launcher
+    # webview to time. This script measures the Tauri baseline, which is now the
+    # fallback path -- the native shell has its own gate
+    # (`measure-native-latency.ps1`).
+    $proc = Start-Process -FilePath $resolved.Path -ArgumentList '--legacy-ui' -PassThru
     $deadline = $sw.ElapsedMilliseconds + $Timeout
     $seen = $false
 

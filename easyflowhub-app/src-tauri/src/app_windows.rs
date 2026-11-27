@@ -55,8 +55,15 @@ pub async fn close_window(window: tauri::WebviewWindow) -> Result<(), String> {
 }
 
 /// 创建快速笔记窗口
+///
+/// T-Gate 0 之后本进程不再创建这个 webview：快速笔记归原生壳。命令仍然
+/// 存在，是因为 Manager 的设置面板还在调用它——静默返回成功会让"按钮点了
+/// 没反应"看起来像缺陷，所以这里明确拒绝并写日志。
 #[tauri::command]
 pub async fn create_note_window(app: tauri::AppHandle, note_id: Option<String>) -> Result<String, String> {
+    if crate::shell::current().takeover() {
+        return Err(crate::shell::moved_to_native("快速笔记"));
+    }
     let counter = NOTE_WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("quick-note-{}", counter);
 
@@ -118,8 +125,14 @@ pub async fn create_note_window(app: tauri::AppHandle, note_id: Option<String>) 
 }
 
 /// 创建 Todo 卡片窗口（桌面悬浮）
+///
+/// 与快速笔记同理：接管后待办卡片归原生壳（Phase 1 的待办卡片），本进程
+/// 不再为它拉起第三个 WebView。
 #[tauri::command]
 pub async fn create_todo_card_window(app: tauri::AppHandle) -> Result<String, String> {
+    if crate::shell::current().takeover() {
+        return Err(crate::shell::moved_to_native("待办卡片"));
+    }
     let counter = TODO_CARD_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("todo-card-{}", counter);
 

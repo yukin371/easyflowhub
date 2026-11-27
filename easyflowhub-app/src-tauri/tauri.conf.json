@@ -10,22 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "launcher",
-        "title": "EasyFlowHub Launcher",
-        "width": 440,
-        "height": 860,
-        "minWidth": 380,
-        "minHeight": 520,
-        "transparent": true,
-        "alwaysOnTop": false,
-        "decorations": false,
-        "visible": false,
-        "skipTaskbar": true,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null,
       "assetProtocol": {

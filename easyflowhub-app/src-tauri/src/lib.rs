@@ -11,7 +11,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 mod app_windows;
 mod autostart;
@@ -29,6 +29,7 @@ mod notes;
 mod scriptmgr;
 mod scriptmgr_server;
 mod settings;
+mod shell;
 mod transcription;
 mod voice;
 mod widget;
@@ -37,6 +38,14 @@ mod file_search;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `--shell-report` 回答"这个构建会做什么"，但不构造 App：不抢单实例互斥、
+    // 不拉 WebView、不注册热键。于是门禁可以在"真程序已经在跑"的机器上判断
+    // 构建行为，而不是先杀掉用户正在用的进程。
+    if std::env::args().any(|arg| arg == "--shell-report") {
+        println!("{}", shell::report());
+        return;
+    }
+
     let app = tauri::Builder::default()
         // 单实例必须是第一个注册的插件：它要在其余插件初始化、以及
         // tauri.conf.json 的窗口创建之前就完成 argv 转发并退出第二个进程。
@@ -83,6 +92,15 @@ pub fn run() {
 
             // Launcher 窗口生命周期归 launcher 模块：重置置顶标记、聚焦
             // 事件、关闭改为隐藏。
+            //
+            // T-Gate 0 起这个窗口不再由 tauri.conf.json 声明：本进程只保留
+            // 按需的 Manager，面板归原生壳。回退模式（`--legacy-ui`）才现建
+            // 一个，否则"回退"只是一句没人验证过的话。
+            let handover = shell::current();
+            shell::announce(handover);
+            if !handover.takeover() {
+                launcher::ensure_window(app.handle())?;
+            }
             launcher::setup_launcher_window(app.handle());
 
             // 创建托盘菜单
@@ -93,8 +111,15 @@ pub fn run() {
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
                 .map_err(|e| format!("Failed to create menu item: {}", e))?;
 
-            let menu = Menu::with_items(app, &[&show_manager, &new_note, &quit])
-                .map_err(|e| format!("Failed to create menu: {}", e))?;
+            // 接管后托盘只剩「打开管理中心」与「退出」：托盘上的快速笔记入口
+            // 会创建快速笔记 webview，那正是 T-Gate 0 要停的东西，原生托盘
+            // 有自己的「新建快速笔记」。回退模式保留原来的三项。
+            let menu = if handover.takeover() {
+                Menu::with_items(app, &[&show_manager, &quit])
+            } else {
+                Menu::with_items(app, &[&show_manager, &new_note, &quit])
+            }
+            .map_err(|e| format!("Failed to create menu: {}", e))?;
 
             // 创建托盘图标
             let _tray = TrayIconBuilder::new()
@@ -144,71 +169,41 @@ pub fn run() {
             // 先清除所有已注册的快捷键
             let _ = app.global_shortcut().unregister_all();
 
-            // Ctrl+Alt+N - 创建快速笔记窗口
-            let new_note_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
-            let app_handle = app.handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(new_note_shortcut, move |_app, _shortcut, event| {
-                if event.state != ShortcutState::Pressed {
-                    return;
+            // 接管后本进程一个全局键都不注册：五个组合全归原生壳。让位不是
+            // 礼貌问题——第一次跑这个切换时这里还留着 Ctrl+Alt+M，原生壳当场
+            // 报 `RegisterHotKey failed (1409)`，同一个程序里两个栈抢一个组合，
+            // 谁赢取决于启动顺序。Manager 仍可从托盘打开。
+            //
+            // 这份计划由 `shell::shortcut_plan` 给出，`--shell-report` 读的是
+            // 同一份：门禁断言"那三条键没有注册"时，断的是这个进程真正的行为。
+            for planned in shell::shortcut_plan(handover.takeover()) {
+                let Ok(shortcut) = planned.chord.parse::<Shortcut>() else {
+                    eprintln!("Warning: cannot parse {} for {}", planned.chord, planned.action.id());
+                    continue;
+                };
+                let app_handle = app.handle().clone();
+                let action = planned.action;
+                if let Err(e) = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    shell::run_shortcut(&app_handle, action);
+                }) {
+                    eprintln!("Warning: Failed to register {}: {:?}", planned.chord, e);
                 }
-                let app = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = app_windows::create_note_window(app, None).await;
-                });
-            }) {
-                eprintln!("Warning: Failed to register Ctrl+Alt+N shortcut: {:?}", e);
-            }
-
-            // Ctrl+Alt+M - 显示/隐藏管理窗口（防抖归 app_windows）
-            let toggle_manager_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyM);
-            let app_handle = app.handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(toggle_manager_shortcut, move |_app, _shortcut, event| {
-                if event.state != ShortcutState::Pressed {
-                    return;
-                }
-                app_windows::toggle_manager_window(&app_handle);
-            }) {
-                eprintln!("Warning: Failed to register Ctrl+Alt+M shortcut: {:?}", e);
             }
 
             // Launcher trigger - loaded from persisted settings. Both the
             // keyboard registration and optional mouse hook are configured in
-            // the launcher module.
-            let launcher_settings = settings::get_settings(app.handle().clone())
-                .map(|response| response.settings.launcher_trigger)
-                .unwrap_or_default();
-            if let Err(e) = launcher::register_launcher_trigger(app.handle(), &launcher_settings) {
-                eprintln!("Warning: Failed to register Launcher trigger: {e}");
-            }
-
-            // Ctrl+Alt+D - 关闭所有快速笔记窗口
-            let close_all_notes_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyD);
-            let app_handle = app.handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(close_all_notes_shortcut, move |_app, _shortcut, event| {
-                if event.state != ShortcutState::Pressed {
-                    return;
+            // the launcher module. Skipped under handover: the native shell owns
+            // the combination now, and registering it here would take it back.
+            if !handover.takeover() {
+                let launcher_settings = settings::get_settings(app.handle().clone())
+                    .map(|response| response.settings.launcher_trigger)
+                    .unwrap_or_default();
+                if let Err(e) = launcher::register_launcher_trigger(app.handle(), &launcher_settings) {
+                    eprintln!("Warning: Failed to register Launcher trigger: {e}");
                 }
-                let app = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = app_windows::close_all_note_windows(app).await;
-                });
-            }) {
-                eprintln!("Warning: Failed to register Ctrl+Alt+D shortcut: {:?}", e);
-            }
-
-            // Ctrl+Alt+H - 隐藏/显示所有快速笔记窗口
-            let toggle_notes_visibility_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyH);
-            let app_handle = app.handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(toggle_notes_visibility_shortcut, move |_app, _shortcut, event| {
-                if event.state != ShortcutState::Pressed {
-                    return;
-                }
-                let app = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = app_windows::toggle_note_windows_visibility(app).await;
-                });
-            }) {
-                eprintln!("Warning: Failed to register Ctrl+Alt+H shortcut: {:?}", e);
             }
 
             Ok(())

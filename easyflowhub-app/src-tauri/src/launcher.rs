@@ -364,9 +364,37 @@ pub fn report_first_frame() {
     crate::logging::log_timing("first_frame");
 }
 
+/// Build the Launcher webview at runtime.
+///
+/// Only reachable with `--legacy-ui`. The window is no longer declared in
+/// `tauri.conf.json`, because creating it during startup is exactly what
+/// T-Gate 0 forbids -- the native shell owns the panel now. Keeping this
+/// builder alive is what makes the rollback real rather than a claimed one:
+/// the fallback path has to construct the same window the config used to.
+pub(crate) fn ensure_window(app: &tauri::AppHandle) -> Result<(), String> {
+    if app.get_webview_window("launcher").is_some() {
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(app, "launcher", tauri::WebviewUrl::App("/".into()))
+        .title("EasyFlowHub Launcher")
+        .inner_size(440.0, 860.0)
+        .min_inner_size(380.0, 520.0)
+        .transparent(true)
+        .decorations(false)
+        .visible(false)
+        .skip_taskbar(true)
+        .center()
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Show the action launcher and focus its search field.
 #[tauri::command]
 pub async fn show_launcher_window(app: tauri::AppHandle) -> Result<(), String> {
+    if crate::shell::current().takeover() {
+        return Err(crate::shell::moved_to_native("Launcher"));
+    }
     reveal_launcher(&app, None)
 }
 
@@ -463,6 +491,9 @@ pub(crate) fn register_launcher_trigger(
     app: &tauri::AppHandle,
     config: &settings::LauncherTriggerSettings,
 ) -> Result<(), String> {
+    if crate::shell::current().takeover() {
+        return Err(crate::shell::moved_to_native("Launcher 快捷键"));
+    }
     let previous = LAUNCHER_SHORTCUT.lock().unwrap().clone();
 
     if !config.enabled {
