@@ -16,12 +16,20 @@
 #   L3 a different SQLite build reads it           (sqlite3 CLI: integrity + row compare)
 #
 # Exit codes: 0 pass (or SKIP when the native app is not built), 1 any failure.
+#
+# The work tree is `%TEMP%\efh-s3-gate\s3-gate-<stamp>` (override with -WorkRoot). It
+# lives outside the repo on purpose: the copy needs a journal, and a checkout that
+# cannot be written to turns that into `attempt to write a readonly database` -- a red
+# gate about the checkout, not about the migrator. L2 shells out to `cargo test` in the
+# Tauri crate, so CARGO_TARGET_DIR is inherited; set it to a writable directory when
+# the repo itself is not writable.
 param(
     [string]$Label,
     [string]$OutDir,
     [string]$Exe,
     [string]$Sqlite3,
     [string]$TauriDir,
+    [string]$WorkRoot,
     [int]$HoldShort = 400,
     [int]$HoldLong = 7000,
     [switch]$KeepWork
@@ -35,6 +43,8 @@ if (-not $Exe) { $Exe = Join-Path $repoRoot 'native\target\release\easyflowhub-n
 if (-not $TauriDir) { $TauriDir = Join-Path $repoRoot 'easyflowhub-app\src-tauri' }
 if (-not $OutDir) { $OutDir = Join-Path $repoRoot 'docs\releases\native-s3' }
 if (-not $Label) { $Label = 'windows' }
+# See the header: the work tree must be writable, and `%TEMP%` is by construction.
+if (-not $WorkRoot) { $WorkRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'efh-s3-gate' }
 
 if (-not (Test-Path $Exe)) {
     Write-Host 'SKIP native store: native/target/release/easyflowhub-native.exe not built.'
@@ -65,7 +75,7 @@ if (-not $Sqlite3) {
 }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$work = Join-Path $repoRoot ("native\target\s3-gate-{0}" -f $stamp)
+$work = Join-Path $WorkRoot ("s3-gate-{0}" -f $stamp)
 $root = Join-Path $work 'root'
 $art = Join-Path $work 'art'
 New-Item -ItemType Directory -Path $root -Force | Out-Null

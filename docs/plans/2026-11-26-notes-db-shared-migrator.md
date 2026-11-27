@@ -168,7 +168,7 @@ INSERT INTO inbox_attachments SELECT id, item_id, kind, name, mime_type, filenam
 | 2 | `c958ed9` | `cargo check --locked` 通过（手写补 `Cargo.lock` 的 `hub-core` 包块，离线且 `spin 0.9.8` 已 yank，无法重生成）；`cargo test --lib` 95 passed / 1 ignored；真实库 sha256 与字节数不变 |
 | 3 | 本批 | `cargo test -p hub-core` 112 项、workspace 244 项；`the_tauri_build_owns_no_ddl` 做了反向验证——往 `src/` 放一个含 `CREATE TABLE` 的探针文件，测试按 `zz_probe.rs:1: CREATE TABLE` 失败，删除后恢复绿；不做"按文件截断"，而是 `#[cfg(test)]` 项级跳过，`settings.rs`（测试模块下仍有 `pub fn update_settings`）与 `inbox/mod.rs`（`#[cfg(test)] mod schema;`）都没误报；S3 跨实现测试加的两条断言在原生写出的库上通过（39 → 41 条笔记，`version 6/6`、`legacy_capture_kinds=false`） |
 
-E2E 门禁 `scripts/measure-native-store.ps1` 本轮在 `native/target` 下跑写通道时报 `attempt to write a readonly database`（同一份库复制到 `%TEMP%` 后 `--store-bench --store-write` 立刻 `verdict=PASS`），判定为那台机器上该目录的写入限制，不是迁移器行为；L1/L2 用 `%TEMP%` 副本手工复跑通过，L3 与 G-1 仍以批 2 记录的那次完整 `RESULT: PASS` 为准。
+E2E 门禁 `scripts/measure-native-store.ps1` 在批 3 当时曾于 `native/target` 下报 `attempt to write a readonly database`（同一份库复制到 `%TEMP%` 后立刻 `verdict=PASS`），**2026-11-27 已修**：工作目录默认落 `%TEMP%\efh-s3-gate\s3-gate-<stamp>`（`-WorkRoot` 可覆盖），并顺带跑出一次完整 `RESULT: PASS`——36 项检查全绿，含本批新加的两条断言（`tauri compat: passed`）。L2 需要写 `cargo` 的 target 目录，脚本继承 `CARGO_TARGET_DIR`，仓库不可写时指向外部目录即可。
 
 ## 8. 风险与回退
 

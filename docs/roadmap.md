@@ -164,7 +164,7 @@
   - **"无 schema 破坏"是可 diff 的**：`sqlite_master` 全量 dump 写前写后**逐字节相同**；`journal_mode=delete` / `user_version=0` / `page_size=4096` / `encoding=UTF-8` 四项不动；`integrity_check` 在 native 写后、Tauri 写后、独立 CLI 三次全 `ok`。**刻意不切 WAL**：那会改文件头 write version 并留下 `-wal`/`-shm`，属产品级决定（备份/同步/"复制 db"的语义都变），不该由 spike 替用户定。
   - **真实数据不是造的**：live 库 `143,360 B`，**40 条笔记 / 9 个设置 / 待办箱**全部读出，字段与 CLI 逐项相等；排序（置顶优先 + `updated_at` 降序）与产品查询口径一致。
   - **并发是实测的**：另一进程持 `IMMEDIATE` 写锁 400 ms 时本进程写入被 `busy_timeout` 吸收并成功；持锁 7 s（超 5 s 超时）时本进程**明确失败**（`database is locked`）、无半行、`integrity_check` 仍 `ok`、持锁方的行还在。
-  - **G-1**：live 库字节数 / sha256 / mtime 三项写前写后完全相同——全程只碰 `native/target/s3-gate-<stamp>/root/notes.db` 副本；`--store-bench --store-write` 还会**拒绝**指向真实 app data 目录（代码约束，不是操作纪律）。
+  - **G-1**：live 库字节数 / sha256 / mtime 三项写前写后完全相同——全程只碰工作副本（`%TEMP%\efh-s3-gate\s3-gate-<stamp>\root\notes.db`，`-WorkRoot` 可改；早先落在 `native/target/` 时在只读 checkout 上会假红成 `readonly database`）；`--store-bench --store-write` 还会**拒绝**指向真实 app data 目录（代码约束，不是操作纪律）。
   - **4 个真实发现**：①`autostart` 是 `{"enabled":true}` **对象不是布尔**（设计时按 bool 写，实测纠正）；②`notes` 表物理列序因 `ALTER TABLE` 追加而不同于建表文本，`INSERT ... VALUES` 会把 `tags` 写进 `created_at` 槽——静默损坏，全部语句显式列名；③PS 5.1 `Start-Process` 在环境变量大小写重复（`HTTPS_PROXY`/`https_proxy`）时直接抛异常，并发测试改用 .NET Process API；④PS 5.1 把原生 stderr 变成 `ErrorRecord`，`-is [string]` 过滤会吞掉 `database is locked`，门禁因此差点把"被拒绝"判成"失败"。
   - **未测（4 项，明确列出）**：22 389 个既有附件的批量可读性（只验契约与新写入文件）、待办 parser 完整口径（只看 `- [ ]`/`- [x]` 行数）、随机并发压力、Win10 双系统。
   - **工具化**：`--store-bench [--store-write] [--store-hold <ms>]` + `scripts/measure-native-store.ps1`（L1 native / L2 Tauri 真代码 / L3 独立 CLI / 并发 / G-1，一条命令 `RESULT: PASS`）；`cargo test --workspace` 43 → **58 项**；样本归档 `docs/releases/native-s3/`（两次独立运行逐项相同）。
