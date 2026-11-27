@@ -85,7 +85,7 @@
 
 - 发布说明：[docs/releases/v0.2.0.md](./docs/releases/v0.2.0.md)
 - 需求基线：[docs/PRD-v0.2.0.md](./docs/PRD-v0.2.0.md)
-- 实施计划：[docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md](./docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md)
+- 实施计划：[docs/plans/completed/2026-10-16-v0.2.0-product-delivery-plan.md](docs/plans/completed/2026-10-16-v0.2.0-product-delivery-plan.md)
 - 视觉与入口决策：[docs/decisions/ADR-0004-glass-theme-and-efficiency-workspace.md](./docs/decisions/ADR-0004-glass-theme-and-efficiency-workspace.md)
 
 ## 文档入口

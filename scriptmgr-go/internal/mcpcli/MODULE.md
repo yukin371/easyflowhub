@@ -11,7 +11,7 @@
 ## 相关文档
 
 - 当前版本目标与阶段顺序：`docs/roadmap.md`
-- Stage B 真实消费链方案：`docs/plans/2026-04-11-stage-b-contribution-consumption-plan.md`
+- Stage B 真实消费链方案：`docs/plans/proposals/2026-04-11-stage-b-contribution-consumption-plan.md`
 - MCP 协议层边界：`scriptmgr-go/internal/mcp/MODULE.md`
 
 ## 数据流

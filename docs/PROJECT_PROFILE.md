@@ -58,7 +58,7 @@ EasyFlowHub 的产品主入口不是一组彼此独立的笔记、待办和脚�
 - Rust：51 项 library tests、Windows target `cargo check` 通过
 - TypeScript、Vite production build、Manager theme token audit、Go tests 通过
 - Windows portable、NSIS、MSI 产物重新生成并通过 artifact preflight；portable 启动预检保持运行 5 秒通过
-- 真实 Windows 交互、Snow Shot、Relay、麦克风和高对比度视觉 smoke 仍按 [windows-package-smoke.md](./checklists/windows-package-smoke.md) 待人工回填
+- 真实 Windows 交互、Snow Shot、Relay、麦克风和高对比度视觉 smoke 仍按 [./checklists/windows-package-smoke.md](./checklists/windows-package-smoke.md) 待人工回填
 
 ### 2026-04-07 本地验证结果
 

@@ -3,8 +3,8 @@
 > status: draft
 > owner: EasyFlowHub maintainers
 > last_updated: 2026-04-25
-> paired_execution_doc: `docs/plans/2026-04-25-ai-host-routing-implementation-plan.md`
-> supersedes_in_scope: `docs/plans/2026-04-25-claude-codex-relay-switch-design.md`
+> paired_execution_doc: `docs/plans/active/2026-04-25-ai-host-routing-implementation-plan.md`
+> supersedes_in_scope: `docs/plans/completed/2026-04-25-claude-codex-relay-switch-design.md`
 
 ## 1. 产品定义
 
@@ -168,6 +168,6 @@
 ## 11. 文档分工
 
 - `docs/PRD-v1.1.0-ai-host-routing.md`：正式需求基线。
-- `docs/plans/2026-04-25-ai-host-routing-implementation-plan.md`：实施与验收计划。
+- `docs/plans/active/2026-04-25-ai-host-routing-implementation-plan.md`：实施与验收计划。
 - `docs/roadmap.md`：当前执行状态与后续收口队列。
-- `docs/plans/2026-04-25-claude-codex-relay-switch-design.md`：降级为专题设计参考，不再充当需求基线。
+- `docs/plans/completed/2026-04-25-claude-codex-relay-switch-design.md`：降级为专题设计参考，不再充当需求基线。

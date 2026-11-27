@@ -11,8 +11,8 @@
 ## 相关文档
 
 - 当前版本目标与 active tracks：`docs/roadmap.md`
-- manager / extension 长期演进路线：`docs/plans/2026-04-11-vscode-style-extension-platform-roadmap.md`
-- Stage B 统一接入方案：`docs/plans/2026-04-11-stage-b-contribution-consumption-plan.md`
+- manager / extension 长期演进路线：`docs/plans/proposals/2026-04-11-vscode-style-extension-platform-roadmap.md`
+- Stage B 统一接入方案：`docs/plans/proposals/2026-04-11-stage-b-contribution-consumption-plan.md`
 - 当前 manager builtin 模块边界以本文件为准，不以旧 `Deskflow` 模块化设计为准
 
 ## 数据流

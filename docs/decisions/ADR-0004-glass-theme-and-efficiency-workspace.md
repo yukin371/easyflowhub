@@ -3,7 +3,7 @@
 - status: accepted
 - date: 2026-10-16
 - scope: v0.2.0 and later
-- related PRD: [PRD-v0.2.0.md](../PRD-v0.2.0.md)
+- related PRD: [../PRD-v0.2.0.md](../PRD-v0.2.0.md)
 
 ## 背景
 

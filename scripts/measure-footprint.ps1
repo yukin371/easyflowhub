@@ -9,7 +9,7 @@ param(
 #
 # Read-only: never launches, stops, or mutates the app. It reports the live
 # process tree (host + WebView2 children + Go sidecar) and the static disk
-# footprint, so memory goals in docs/plans/2026-11-24-native-runtime-redesign.md
+# footprint, so memory goals in docs/plans/active/2026-11-24-native-runtime-redesign.md
 # can be checked with the same tool before and after the native migration.
 #
 # Usage:

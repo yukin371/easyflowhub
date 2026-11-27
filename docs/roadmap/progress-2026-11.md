@@ -1,8 +1,14 @@
 # 进展日志 · 2026-11
 
-> 从 [roadmap.md](../roadmap.md) 拆出：ADR-0001 要求路线图只维护当前版本目标、活跃轨道、验证债与下一队列，不保留长历史。
+> 从 [../roadmap.md](../roadmap.md) 拆出：ADR-0001 要求路线图只维护当前版本目标、活跃轨道、验证债与下一队列，不保留长历史。
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
+
+- `2026-11-27` **`docs/plans` 有了生命周期：43 份方案按状态分进五个目录，关掉"写完不动"这条路**。之前 41 份方案平铺在一个目录里，已交付的、废弃的和正在实施的看起来一模一样，唯一的状态信号是每份文件里的 `状态:` 一行——而那一行从来没人有义务去改。
+  - **状态改由位置表达**：`proposals/`（7 想清楚没排期）、`active/`（8 当前依据）、`completed/`（17 已交付）、`rejected/`（1 评估后废弃）、`archive/`（10 历史 / superseded / deferred）。归档动作就是 `git mv`，不是加一句"已完成"；`active/` 因此会随交付变短，这是它和"只加不改"的区别。旧 `docs/archive/plans/` 的两份 AI CLI facade 一并并入 `plans/archive/`，两个平行归档地不再存在。
+  - **搬的是字节，不是重写**：43 次 `git mv` 保历史，126 处相对链接按"文件新位置"重算（移动文件指向未移动文件的链接也要改，例如 `../decisions/` 变 `../../decisions/`——第一轮漏了这条，`check-doc-budget` 当场报出 20 条断链），另有 90 处链接**标签**里写的是旧路径，一并改成实际目标。
+  - **门禁 `scripts/check-plan-lifecycle.mjs` 判六件事**：根目录只许 `README.md`（散文件等于没有状态）；头部有且只有一行状态行（`> 状态：` + 反引号包住的 token）；token 与目录必须一致（写错了是"move it, do not relabel it"）；活跃目录要 `YYYY-MM-DD-` 前缀，`archive/` 保留历史名；每个方案都要在索引里；`superseded` 必须指向存在的取代者；**全文任何 `docs/plans/...md` 提及都要能解析**——脚本注释、`doc-budget.json` 的钉子同样算，这是"移动不破坏引用"的兜底。自检 `check-plan-lifecycle.selfcheck.mjs` **15/15**（含 4 条"不该报"的用例，例如 `archive/` 的旧文件名）。
+  - **两道反向验证**：往 `docs/plans/` 根塞一个文件 → 报"1 file(s) in the root with no state"；把 `active` 的文件复制到 `completed/` → 报 `status is "active" but the file sits in completed/`，同时按未索引与命名规则各报一条。两处都能红，删掉即绿。
 
 - `2026-11-27` **路线文档开始受预算约束：`roadmap.md` 从 90.2 KB 拆到 22.1 KB，并加了一道会失败的门禁**。ADR-0001 早就写了"路线图不保留长历史"，但每轮都往同一段里追加，几个月就长到 90 KB——规则没有门禁时只是注释。
   - **按 ADR-0001 分层**：`Recent Progress` 按月拆到 [progress-2026-11.md](./progress-2026-11.md)（26.8 KB）、[progress-2026-10.md](./progress-2026-10.md)（8.6 KB）、[progress-2026-04.md](./progress-2026-04.md)（4.3 KB）；已发布的 v0.2.0 整段移进 [v0.2.0.md](./v0.2.0.md)（30.4 KB）冻结。`roadmap.md` 只剩当前状态、活跃轨道与索引。
@@ -10,23 +16,23 @@
   - **门禁 `scripts/check-doc-budget.mjs` 判三件事**：①单文件字节预算——软 40 KB、硬 128 KB，超软上限的文件在 `scripts/doc-budget.json` 里钉住、**只许缩不许涨**，`--pin` 拒绝抬高（否则它就变成洗增长的工具）；②相对链接能否解析（搬文件的头号事故，现在 255 条全过）；③`roadmap.md` 里一旦又冒出具名日期的条目就报错，并检查 `docs/roadmap/` 下每个分层文件都被索引链接到。
   - **首轮钉住三个超软上限的老文件**：`phase1-quicknote-shell` 107.6 KB、`native-runtime-redesign` 80.1 KB、`mcp-implementation-plan` 48.8 KB。它们还能改，但不能再长；要继续写就先拆。
 
-- `2026-11-25` **G0 通过（有条件）：进入 Phase 1，栈版本锁定 egui/eframe 0.31**。裁决与得分板见 [plans/2026-11-25-g0-review.md](../plans/2026-11-25-g0-review.md)。
+- `2026-11-25` **G0 通过（有条件）：进入 Phase 1，栈版本锁定 egui/eframe 0.31**。裁决与得分板见 [../plans/completed/2026-11-25-g0-review.md](../plans/completed/2026-11-25-g0-review.md)。
   - **硬门槛不是险胜**：热唤起 p95 48.9 ms 对 60 ms，余量 18%；S2 键入 p95 4.95 ms 对 16 ms。退路（C# WinUI 3）需要的触发证据不存在。
   - **两条判据未满足，都转成有期限的退出条件**：S2 三种输入法各 30 分钟（无人验收 → C2，Phase 1 第一周硬性）；常驻 130.1 MB vs 65 MB 解释线（→ C1 字体子集化 ≤ 100 MB，加 C5 收口）。
   - **内存这条线补了现网参照**：实测在跑的 Tauri 版全树 9 进程 **Commit 429.6 MB / 私有工作集 203.9 MB**，其中 **WebView2 GPU 进程一项私有工作集 176.8 MB**，已超过原生壳全进程的 Commit 130.1 MB。三列口径分开记（任务管理器的「内存」列是私有工作集，不是 Commit），采样脚本 `scripts/measure-process-tree.ps1` 可复现，原生侧用 `-ProcessName app`。
   - **65 MB 不改**：改成 130 等于把"还没做任何优化"的数字定成标准。但如果 C1 压到 100 MB 就压不动，说明 65 在设计时未经实测校准——届时应由 G1 判断是否改线并写 ADR，而不是在 Phase 1 里悄悄挪。
   - **WAL 仍保持 `delete`**：ADR 暂不写（只能写"暂不切换"，是空文档），改为把触发条件登记进本 Track 的「待办」。
 
-- `2026-11-25` **S4 通过：架构门禁从"能通过"变成"能失败"，并补上三个真实缺口**。设计与验收标准先落在 [plans/2026-11-25-native-architecture-gate-spike.md](../plans/2026-11-25-native-architecture-gate-spike.md)，再按 A/B/C 三批实现。**G0 的四项 spike（S1–S4）至此全部完成（G0 已过，见上一条）。**
+- `2026-11-25` **S4 通过：架构门禁从"能通过"变成"能失败"，并补上三个真实缺口**。设计与验收标准先落在 [../plans/completed/2026-11-25-native-architecture-gate-spike.md](../plans/completed/2026-11-25-native-architecture-gate-spike.md)，再按 A/B/C 三批实现。**G0 的四项 spike（S1–S4）至此全部完成（G0 已过，见上一条）。**
   - **绿不能证明规则有效**：从 S1 起 CI 每次都是绿的，但那时门禁的每一条规则都可以是空实现。S4 的实质是让它失败一次——23 项自检在 `os.tmpdir()` 的临时工作区里逐条打破规则（越界边含 `[dependencies.foo]` 表形式、两节点环、层符号泄漏、801 行、未登记 crate、两条 skip 分支），断言精确到条目文本而不是只看 `failed`。
   - **自检本身也做了变异**：8 次故意改坏规则，8 次都被杀。其中 2 次第一轮**存活**，暴露的是自检的缺陷而不是规则的缺陷——尺寸用例拿被测的 `HARD_CAP` 自己算自己（改到 900 时 fixture 也跟着变 901 行，测试照样绿）；表形式依赖走的是与 kv 形式**不同的正则**，只测 kv 就等于没测。两处都补了用例，`HARD_CAP === 800` 现在被字面量钉死。
   - **三个真实缺口，都是写测试时撞出来的**：①`hub-core` 里 `use windows_sys::…` 不报错——规则写的是 `windows::`，而本项目用的是 `windows-sys`，下划线让 `\b` 匹配不到；②manifest 声明 `egui` 但源码不 `use` 完全不报——而"声明了"距离"用了"只差一行；③`[target.'cfg(windows)'.dependencies]` 整段解析不到，**放在 cfg 后面就等于隐身**。禁表因此合成**一张** `BANNED_DEPS`，符号正则与 manifest 检查都从它派生，避免两侧漂移。
   - **重构也要求证，不是声称**：把判断抽成 `analyzeNativeArchitecture(nativeRoot)` 时，成功路径与失败路径（种一个 `use egui::Context;`）都拿 HEAD 里的旧脚本对同一棵树跑 diff，输出**逐字节相同**。抽取过程中我一度把 `app` 的 `/tauri/` 收窄成 `/\btauri::/`，那是悄悄放宽，已改回。
   - **未测**：注释内 `crate::` 的误报（**有意保留**：剥注释的剥离器出错会漏报，漏报比误报危险）、规则集完整性（未穷举 `cfg_attr` / `include!`）、真实越界 PR 的拦截演练。CI runner 上的耗时后续补测：`architecture-gates` 三步各自 < 1 s。
 
-- `2026-11-26` **`notes.db` 的 DDL 只剩一份：Tauri 调 `hub-core::store` 的同一把梯子**（[plans/2026-11-26-notes-db-shared-migrator.md](../plans/2026-11-26-notes-db-shared-migrator.md)，批 1–3）。Tauri 新增 `src-tauri/src/db.rs` 作唯一连接入口（路径 + `busy_timeout` + `foreign_keys` + `Rebuild::Run`，梯子没到顶就拒连并点名 rung），`notes.rs` / `inbox/schema.rs` / `settings.rs` 的 DDL 与三处 `db_path` 删除，`file_search_recent` 改调 `hub_core::store::ensure_file_search_recent`（仍懒建、不进梯子，开门零写入）。守卫方向随之翻转：`the_tauri_build_owns_no_ddl` 递归扫 Tauri `src/**/*.rs`、按 `#[cfg(test)]` 项跳过测试夹具，生产代码出现 `CREATE`/`ALTER`/`PRAGMA user_version` 即失败（反向验证：塞一个探针文件，按 `zz_probe.rs:1: CREATE TABLE` 报红）。S3 跨实现测试加两条断言：迁移后 `schema.is_current()` 且 `legacy_capture_kinds == false`。**`user_version` 仍不写**（§5），门禁里"原生写后仍是 0"的断言继续保持。
+- `2026-11-26` **`notes.db` 的 DDL 只剩一份：Tauri 调 `hub-core::store` 的同一把梯子**（[../plans/completed/2026-11-26-notes-db-shared-migrator.md](../plans/completed/2026-11-26-notes-db-shared-migrator.md)，批 1–3）。Tauri 新增 `src-tauri/src/db.rs` 作唯一连接入口（路径 + `busy_timeout` + `foreign_keys` + `Rebuild::Run`，梯子没到顶就拒连并点名 rung），`notes.rs` / `inbox/schema.rs` / `settings.rs` 的 DDL 与三处 `db_path` 删除，`file_search_recent` 改调 `hub_core::store::ensure_file_search_recent`（仍懒建、不进梯子，开门零写入）。守卫方向随之翻转：`the_tauri_build_owns_no_ddl` 递归扫 Tauri `src/**/*.rs`、按 `#[cfg(test)]` 项跳过测试夹具，生产代码出现 `CREATE`/`ALTER`/`PRAGMA user_version` 即失败（反向验证：塞一个探针文件，按 `zz_probe.rs:1: CREATE TABLE` 报红）。S3 跨实现测试加两条断言：迁移后 `schema.is_current()` 且 `legacy_capture_kinds == false`。**`user_version` 仍不写**（§5），门禁里"原生写后仍是 0"的断言继续保持。
 
-- `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [plans/2026-11-25-notes-db-compat-spike.md](../plans/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。（当时 S4 未做。）
+- `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [../plans/completed/2026-11-25-notes-db-compat-spike.md](../plans/completed/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。（当时 S4 未做。）
   - **双向兼容用真代码验，不自证**：native 写入后，读它的是 **Tauri 那份代码**（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽出的连接级函数），不是复制一遍 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，另一套 build，原生侧 bundled 是 3.46.0）与我们的读者对 **42 行逐字段一致**（`rows-identical 42`）。反向也验了：Tauri 写 → native 读回同一内容。
   - **"无 schema 破坏"是可 diff 的**：`sqlite_master` 全量 dump 写前写后**逐字节相同**；`journal_mode=delete` / `user_version=0` / `page_size=4096` / `encoding=UTF-8` 四项不动；`integrity_check` 在 native 写后、Tauri 写后、独立 CLI 三次全 `ok`。**刻意不切 WAL**：那会改文件头 write version 并留下 `-wal`/`-shm`，属产品级决定（备份/同步/"复制 db"的语义都变），不该由 spike 替用户定。
   - **真实数据不是造的**：live 库 `143,360 B`，**40 条笔记 / 9 个设置 / 待办箱**全部读出，字段与 CLI 逐项相等；排序（置顶优先 + `updated_at` 降序）与产品查询口径一致。
@@ -36,7 +42,7 @@
   - **未测（4 项，明确列出）**：22 389 个既有附件的批量可读性（只验契约与新写入文件）、待办 parser 完整口径（只看 `- [ ]`/`- [x]` 行数）、随机并发压力、Win10 双系统。
   - **工具化**：`--store-bench [--store-write] [--store-hold <ms>]` + `scripts/measure-native-store.ps1`（L1 native / L2 Tauri 真代码 / L3 独立 CLI / 并发 / G-1，一条命令 `RESULT: PASS`）；`cargo test --workspace` 43 → **58 项**；样本归档 `docs/releases/native-s3/`（两次独立运行逐项相同）。
 
-- `2026-11-25` **S2 通过：文本岛键入 p95 4.95 ms（阈值 16，余量 11）**。设计与验收标准先落在 [plans/2026-11-25-richedit-island-spike.md](../plans/2026-11-25-richedit-island-spike.md)，再按 A/B/C 三批实现并逐条验收。（当时 S3 / S4 未做。）
+- `2026-11-25` **S2 通过：文本岛键入 p95 4.95 ms（阈值 16，余量 11）**。设计与验收标准先落在 [../plans/completed/2026-11-25-richedit-island-spike.md](../plans/completed/2026-11-25-richedit-island-spike.md)，再按 A/B/C 三批实现并逐条验收。（当时 S3 / S4 未做。）
   - **工作区**：新增 `hub-editor` crate（第五个），`check-native-architecture.mjs` → `passed (5 crates)`；`cargo test --workspace` 27 → **43 项**。CI 的 `native-crates` job 自动覆盖新 crate。
   - **承载方式**：`RICHEDIT50W`（`Msftedit.dll`）作为 egui 面板的**子 HWND**，矩形由布局给出、按物理像素对齐；父窗口补 `WS_CLIPCHILDREN`，这是"GL 不盖子控件"的唯一保证。`hub-editor` 只吃 `PixelRect`、只吐文本，门禁禁止出现 `egui::`。
   - **实测**（n=200 @1k / n=100 @10k，150% 单屏，三次运行）：`type` p50 **2.9** / p95 **4.95** / p99 **6.33** / max 6.8 ms；10k 文档 p95 **5.09 ms**，比值 **0.95–1.07**（**曲线是平的，不是线性上涨**——插入成本与文档长度无关，这是 S2 最想确认的一件事）。10k 加载 8–11 ms、粘贴 13–14 ms、连发 200 字符 203–225 ms。`compose` 仅报告 p50 4.9–7.5 ms。
@@ -47,7 +53,7 @@
   - **未测（2 项，都在 §9.2 标明）**：①三种输入法各 30 分钟人机验收（需要人，只自动验了 `ImmGetContext` 非空、`WM_IME_*` 不被截获）；②真实 Ctrl+Z 组合键（桩不出 `GetKeyState(VK_CONTROL)`，只验到非截获键仍到达控件）。
   - **工具化**：`--editor-bench N` + `scripts/measure-native-editor.ps1`（预算 + **17 项结构证据**一起判：颜色是否上屏、光标是否滚动、矩形是否只在变化时移动、Esc/Tab 是否被截获、撤销是否有深度……一条命令 `RESULT: PASS` / 退出码 0），样本归档到 `docs/releases/native-s2/`。
 
-- `2026-11-25` **S1 通过：原生壳热唤起 p95 48.9 ms（阈值 60，余量 11.1）**。设计与验收标准先落在 [plans/2026-11-25-native-shell-spike.md](../plans/2026-11-25-native-shell-spike.md)，再按 A/B/C 三批实现并逐条验收。**G0 仍未过**：S2 / S3 / S4 未做。
+- `2026-11-25` **S1 通过：原生壳热唤起 p95 48.9 ms（阈值 60，余量 11.1）**。设计与验收标准先落在 [../plans/completed/2026-11-25-native-shell-spike.md](../plans/completed/2026-11-25-native-shell-spike.md)，再按 A/B/C 三批实现并逐条验收。**G0 仍未过**：S2 / S3 / S4 未做。
   - **工作区**：`native/` 四个 crate（`hub-core` 纯几何 + 设置、`hub-win` Win32 薄封装、`hub-ui` egui 面板、`app` 装配）。`cargo test` 27 项（core 12 / win 5 / app 10）；`check-native-architecture.mjs` 从 `skip` 变成真实 `passed (4 crates)`，这条门禁到今天才算真的存在。egui / eframe **钉在 0.31**——spike 要可复现，升级即作废全部归档样本。
   - **两段式显示（本轮唯一的结构性发现）**：跨线程 `SetWindowPos` 是**同步**的，要等目标线程处理消息，所以"把搬窗放到热键线程"并不能省下唤醒成本，实测仍是 30–47 ms。改为 **phase 1 = 测量 + 夹紧 + 搬窗 + 聚焦（热键线程，计入门禁）**、**phase 2 = 刷新内容（UI 线程，p50 140 ms，只记录不门禁）**。门禁量的是前者（屏幕上是预热帧），后者作为"内容新鲜度"另行记录——这是本轮唯一放宽的口径，写在 §4.4 里。
   - **预热到稳态**：启动即建窗，预绘 3 帧（着色器编译 / 图集上传 / 稳态帧），唤起只剩搬窗。窗口以 `SWP_NOSIZE` 停在 `(-30000, -30000)` 且 `with_taskbar(false)`，**不能用 `SW_HIDE`**——隐藏会停发 `WM_PAINT`，winit 没有 redraw 可驱动，bench 第 2 轮起永久停住。
@@ -59,7 +65,7 @@
   - **文档回填**：主设计 §4.3 状态、§7.1 新增"原生 S1 实测"表（含门禁口径），`native/README.md` 列出 Phase 1 必须偿还的捷径（`FindWindowW` 拿 HWND、`--scale` 模拟缩放、无 blit 缓存、面板内容静态、无托盘）。
   - **未测**：真实多显示器 + 混合 DPI 跨屏（本机单屏，`--scale` 只证明数学）、`lite` 在真实 RDP 回环（本机 `remote=0`）、首帧直接 blit 上一帧纹理（未做，当前靠预热帧留在 swap chain 达成等效）。
 
-- `2026-11-24` **P0.5 完成：窗口生命周期 + 计时契约，静置 600 → 282.8 MB**。设计与验收标准先落在 [plans/2026-11-24-window-lifecycle-and-latency-contract.md](../plans/2026-11-24-window-lifecycle-and-latency-contract.md)，再按 A/B/C 三批实施并逐条验收。
+- `2026-11-24` **P0.5 完成：窗口生命周期 + 计时契约，静置 600 → 282.8 MB**。设计与验收标准先落在 [../plans/completed/2026-11-24-window-lifecycle-and-latency-contract.md](../plans/completed/2026-11-24-window-lifecycle-and-latency-contract.md)，再按 A/B/C 三批实施并逐条验收。
   - **Batch A（度量）**：`measure-footprint.ps1` 增加 `-Label` / `-OutFile`，三姿态（idle / launcher / manager-2notes）快照归档到 `docs/releases/footprint/0.2.0/`。注意 PS 5.1 里 `$json` 与开关 `-Json` 是同一个变量，赋值会直接报错。
   - **Batch B（生命周期）**：Manager 从 `tauri.conf.json` 移除，改由 `ensure_manager_window` 按需创建、关闭即销毁；`close_all_note_windows` 改用 `destroy()`。实测 **idle Private 600.0 → 261.6–282.8 MB（−53% ~ −56%）**、WebView2 进程 7 → 6、sidecar 静置 0（懒启动）；关闭 Manager 12 ms 内释放，重建 222–248 ms；10 轮开关与 2 笔记开关均无累积。**顺带修掉两个真实缺陷**：`single-instance` 插件必须最先注册（否则第二个进程先建窗再退出，留下 `about:blank` 与热键冲突），且不能在事件循环线程里就地 `build()` WebView（会死锁，改为 `async_runtime::spawn`）。
   - **Batch C（计时契约）**：热键回调打 `[timing] hotkey_down`（在选区捕获之前，180 ms 上限要计入），Launcher 连续两帧后回调 `report_first_frame`；`log_timing()` 无视 debug 开关落盘。实测 **p50 87 ms / p95 101 ms / p99 130 ms（n=31）**，作为原生壳的对照组写入设计 §7.1；目标仍是 p95 ≤ 60 ms。

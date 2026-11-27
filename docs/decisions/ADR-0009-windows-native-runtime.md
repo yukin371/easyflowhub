@@ -3,7 +3,7 @@
 - status: accepted（2026-11-24 用户确认方向；具体栈细节由 G0 验证后锁定）
 - date: 2026-11-24
 - scope: v1.2+（Native Runtime track）
-- related plan: [plans/2026-11-24-native-runtime-redesign.md](../plans/2026-11-24-native-runtime-redesign.md)
+- related plan: [../plans/active/2026-11-24-native-runtime-redesign.md](../plans/active/2026-11-24-native-runtime-redesign.md)
 - supersedes: 无（与 ADR-0003 的产品方向、ADR-0004 的视觉方向兼容；本 ADR 修正 ADR-0004 中"重特效"的实现方式）
 
 ## 背景

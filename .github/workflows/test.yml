@@ -130,6 +130,12 @@ jobs:
       - name: Doc budget guard self-check
         run: node --test scripts/check-doc-budget.selfcheck.mjs
 
+      - name: Plan lifecycle guard (placement / state token / index / references)
+        run: node scripts/check-plan-lifecycle.mjs
+
+      - name: Plan lifecycle guard self-check
+        run: node --test scripts/check-plan-lifecycle.selfcheck.mjs
+
   native-windows:
     name: Native Tests (Windows)
     runs-on: windows-latest

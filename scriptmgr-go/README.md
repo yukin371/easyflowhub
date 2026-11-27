@@ -261,4 +261,4 @@ scriptmgr relay hosts switch \
 
 查看当前项目 Roadmap：[docs/roadmap.md](../docs/roadmap.md)
 
-relay / extension 第一阶段设计见：[docs/plans/2026-04-07-api-relay-and-extension-phase1.md](../docs/plans/2026-04-07-api-relay-and-extension-phase1.md)
+relay / extension 第一阶段设计见：[docs/plans/active/2026-04-07-api-relay-and-extension-phase1.md](../docs/plans/active/2026-04-07-api-relay-and-extension-phase1.md)

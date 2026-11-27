@@ -4,7 +4,7 @@
     Collects the environment facts the C2 IME acceptance run needs, as Markdown.
 
 .DESCRIPTION
-    C2 (docs/plans/2026-11-25-c2-ime-acceptance.md) asks for three input methods
+    C2 (docs/plans/active/2026-11-25-c2-ime-acceptance.md) asks for three input methods
     typing into the RichEdit island for 30 minutes each. The result is only
     evidence if it says *which* input methods and *which* binary were used --
     "I tested Sogou" is not reproducible, "Sogou 16.10 on build 26300 with exe

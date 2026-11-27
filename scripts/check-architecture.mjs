@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Architecture guard (Phase D / V1-F5). See docs/plans/2026-10-19-architecture-and-file-size-review.md section 6.
+// Architecture guard (Phase D / V1-F5). See docs/plans/completed/2026-10-19-architecture-and-file-size-review.md section 6.
 // 1) no static import cycles  2) layer reverse-deps (lib, features)
 // 3) raw Tauri invoke() outside src/lib/tauri is baselined and may only shrink
 // 4) file size: hard cap 800; the 501-800 band is debt that may only shrink

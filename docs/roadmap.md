@@ -8,8 +8,8 @@
 - 项目画像：[PROJECT_PROFILE.md](./PROJECT_PROFILE.md)
 - 架构边界：[ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md)
 - 长期产品方向：[decisions/ADR-0003-product-direction-and-action-first.md](./decisions/ADR-0003-product-direction-and-action-first.md)
-- 交付拆解计划：[plans/2026-04-24-v1-delivery-plan.md](./plans/2026-04-24-v1-delivery-plan.md)
-- 任务看板：[plans/2026-04-24-v1-task-board.md](./plans/2026-04-24-v1-task-board.md)
+- 交付拆解计划：[plans/active/2026-04-24-v1-delivery-plan.md](plans/active/2026-04-24-v1-delivery-plan.md)
+- 任务看板：[plans/active/2026-04-24-v1-task-board.md](plans/active/2026-04-24-v1-task-board.md)
 
 ### 产品方向
 
@@ -93,7 +93,7 @@
 #### Track F. Architecture Health
 
 - owner scope: `easyflowhub-app/src`, `easyflowhub-app/src-tauri/src`, `scriptmgr-go/internal`, `.github/workflows`, `docs`
-- 审查基线：[2026-10-19 架构与大文件审查](./plans/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）与阶段B（F06–F14）已实施，阶段A（F01–F05）、阶段B（F06–F14）、阶段C（F11 + 第5节大文件拆分）与阶段D（V1-F5 CI 门禁）均已实施，四个阶段全部完成。
+- 审查基线：[2026-10-19 架构与大文件审查](plans/completed/2026-10-19-architecture-and-file-size-review.md)。审查已完成；阶段A（F01–F05）与阶段B（F06–F14）已实施，阶段A（F01–F05）、阶段B（F06–F14）、阶段C（F11 + 第5节大文件拆分）与阶段D（V1-F5 CI 门禁）均已实施，四个阶段全部完成。
 - 当前任务：
   - `V1-F1` `[done]` 盘点规模、依赖、owner 和异常路径；24 个实现文件物理行数超过 500，剔除 Rust 内联测试后约 23 个；TS 静态依赖未发现循环。
   - `V1-F2` `[done]` 优先修复审查 F01–F05：跨进程 sessions 旧快照覆盖、回收站失败误删、Inbox 非事务迁移、自动保存旧响应、todo 旧行号误写，并补故障/并发回归。
@@ -156,9 +156,9 @@
 
 ## Native Runtime Track（`accepted`，ADR-0009）
 
-> 状态：**G0 已通过（有条件，2026-11-25）**，进入 Phase 1。四项 spike（S1 壳 + S2 文本岛 + S3 数据 + S4 门禁）全部完成；裁决与 5 条退出条件（C1 字体子集化 / C2 三种输入法人机验收 / C3 多屏混合 DPI / C4 门禁常绿 / C5 内存线收口）见 [plans/2026-11-25-g0-review.md](./plans/2026-11-25-g0-review.md) §9。栈版本锁定：egui/eframe **0.31**、`rusqlite 0.32 bundled`、RichEdit（系统组件不锁）。
+> 状态：**G0 已通过（有条件，2026-11-25）**，进入 Phase 1。四项 spike（S1 壳 + S2 文本岛 + S3 数据 + S4 门禁）全部完成；裁决与 5 条退出条件（C1 字体子集化 / C2 三种输入法人机验收 / C3 多屏混合 DPI / C4 门禁常绿 / C5 内存线收口）见 [plans/completed/2026-11-25-g0-review.md](plans/completed/2026-11-25-g0-review.md) §9。栈版本锁定：egui/eframe **0.31**、`rusqlite 0.32 bundled`、RichEdit（系统组件不锁）。
 >
-> - 设计：[plans/2026-11-24-native-runtime-redesign.md](./plans/2026-11-24-native-runtime-redesign.md)
+> - 设计：[plans/active/2026-11-24-native-runtime-redesign.md](plans/active/2026-11-24-native-runtime-redesign.md)
 > - 决策：[decisions/ADR-0009-windows-native-runtime.md](./decisions/ADR-0009-windows-native-runtime.md)
 > - 架构约束：[ARCHITECTURE_GUARDRAILS.md](./ARCHITECTURE_GUARDRAILS.md) 第 10 节
 > - 度量 / 门禁：`scripts/measure-native-latency.ps1`（原生热唤起，p95 48.9 ms 实测）、`scripts/measure-latency.ps1`（现 Tauri 版，**对照基线**）、`scripts/measure-footprint.ps1`（内存/磁盘）、`scripts/check-native-architecture.mjs`（分层）
@@ -223,7 +223,7 @@
 - Launcher 的输入应逐步支持当前剪贴板、选中文本、拖入文件和显式参数；输出应支持剪贴板、文件、笔记和通知。
 - v1.1.0 不要求一次完成复杂 Flow 编辑器、社区市场、云同步或任意代码插件执行。
 - AI 宿主切换与 relay 的正式需求基线：[PRD-v1.1.0-ai-host-routing.md](./PRD-v1.1.0-ai-host-routing.md)
-- AI 宿主切换实施计划：[plans/2026-04-25-ai-host-routing-implementation-plan.md](./plans/2026-04-25-ai-host-routing-implementation-plan.md)
+- AI 宿主切换实施计划：[plans/active/2026-04-25-ai-host-routing-implementation-plan.md](plans/active/2026-04-25-ai-host-routing-implementation-plan.md)
 - extensions `Phase 2-4`：启停状态持久化、热重载、安装 / 卸载。
 - relay 运行时与负载均衡能力继续收口，明确正式支持的 route selection、weighted round robin 与最小 failover 边界。
 - relay 密钥管理与配置体验进一步收口，减少 raw JSON 依赖。
@@ -238,3 +238,4 @@
 - **进展日志按月分层**：条目写进 `docs/roadmap/progress-YYYY-MM.md`，本文件只留索引；已发布版本整段移进 `docs/roadmap/vX.Y.Z.md` 冻结（见 [v0.2.0](./roadmap/v0.2.0.md)）。依据 ADR-0001：路线图不保留长历史。
 - **单文件预算**：`docs/**/*.md` 软上限 40 KB、硬上限 128 KB，超软上限的文件在 `scripts/doc-budget.json` 里钉住、只许缩不许涨。`node scripts/check-doc-budget.mjs` 同时检查相对链接能否解析、以及本文件有没有又长出带日期的条目。
 - 每轮 checkpoint 结束后，回填验证结果、剩余风险和 next queue。
+- **方案走生命周期**：`docs/plans/` 下分 `proposals/`（想清楚没排期）、`active/`（当前依据）、`completed/`（已交付）、`rejected/`（不做）、`archive/`（历史 / superseded / deferred）。状态由目录位置表达，归档就是 `git mv`；`node scripts/check-plan-lifecycle.mjs` 判位置与头部状态行是否一致、索引有没有漏、以及移动后有没有留下悬空路径。

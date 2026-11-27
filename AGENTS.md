@@ -43,7 +43,7 @@
    - `docs/roadmap.md`
    - related `MODULE.md`
    - related `docs/decisions/ADR-*.md`
-   - related `docs/plans/*.md`
+   - related plan in `docs/plans/`（新方案进 `proposals/`，实施期在 `active/`，交付后 `git mv` 到 `completed/`——状态由目录位置表达，不靠在文件里改一句话）
 
 ## EasyFlowHub Guardrails
 

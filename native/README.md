@@ -1,6 +1,6 @@
 # native/ — Windows 原生运行时（S1 + S2 + S3 spike）
 
-这是 [Native Runtime 重构](../docs/plans/2026-11-24-native-runtime-redesign.md) 的可运行切片：[S1 验收](../docs/plans/2026-11-25-native-shell-spike.md)（热唤起 p95 48.9 ms）、[S2 验收](../docs/plans/2026-11-25-richedit-island-spike.md)（键入 p95 4.95 ms）与 [S3 验收](../docs/plans/2026-11-25-notes-db-compat-spike.md)（直读直写 `notes.db`，39 项检查）的实体。**它不是产品代码**：它回答三个问题——单进程 + 预创建窗口，热唤起能不能压到 p95 ≤ 60 ms；系统文本控件贴在 egui 自绘面板里，键入能不能压到 p95 ≤ 16 ms；以及脱离 Tauri 之后，现有 `notes.db` 还读不读得动、写下去旧版本还认不认。
+这是 [Native Runtime 重构](../docs/plans/active/2026-11-24-native-runtime-redesign.md) 的可运行切片：[S1 验收](../docs/plans/completed/2026-11-25-native-shell-spike.md)（热唤起 p95 48.9 ms）、[S2 验收](../docs/plans/completed/2026-11-25-richedit-island-spike.md)（键入 p95 4.95 ms）与 [S3 验收](../docs/plans/completed/2026-11-25-notes-db-compat-spike.md)（直读直写 `notes.db`，39 项检查）的实体。**它不是产品代码**：它回答三个问题——单进程 + 预创建窗口，热唤起能不能压到 p95 ≤ 60 ms；系统文本控件贴在 egui 自绘面板里，键入能不能压到 p95 ≤ 16 ms；以及脱离 Tauri 之后，现有 `notes.db` 还读不读得动、写下去旧版本还认不认。
 
 ## 结构
 

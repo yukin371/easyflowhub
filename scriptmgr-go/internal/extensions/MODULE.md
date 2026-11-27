@@ -11,10 +11,10 @@
 ## 相关文档
 
 - 当前版本目标与阶段顺序：`docs/roadmap.md`
-- 长期平台路线：`docs/plans/2026-04-11-vscode-style-extension-platform-roadmap.md`
-- 当前声明式扩展实施主线：`docs/plans/2026-04-08-extension-enhancement-plan.md`
-- Stage B 真实消费链方案：`docs/plans/2026-04-11-stage-b-contribution-consumption-plan.md`
-- 生命周期边界：`docs/plans/2026-04-07-extension-lifecycle-design.md`
+- 长期平台路线：`docs/plans/proposals/2026-04-11-vscode-style-extension-platform-roadmap.md`
+- 当前声明式扩展实施主线：`docs/plans/proposals/2026-04-08-extension-enhancement-plan.md`
+- Stage B 真实消费链方案：`docs/plans/proposals/2026-04-11-stage-b-contribution-consumption-plan.md`
+- 生命周期边界：`docs/plans/proposals/2026-04-07-extension-lifecycle-design.md`
 
 ## 数据流
 

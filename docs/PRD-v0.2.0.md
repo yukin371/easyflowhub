@@ -3,7 +3,7 @@
 > status: active
 > owner: EasyFlowHub maintainers
 > target package line: `0.2.0`
-> paired execution doc: `docs/plans/2026-10-16-v0.2.0-product-delivery-plan.md`
+> paired execution doc: `docs/plans/completed/2026-10-16-v0.2.0-product-delivery-plan.md`
 > visual decision: `docs/decisions/ADR-0004-glass-theme-and-efficiency-workspace.md`
 
 ## 1. 产品定义
