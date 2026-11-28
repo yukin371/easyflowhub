@@ -13,6 +13,7 @@
 //! shell, and it is the reason the manager can be tested without a database: the
 //! widget crate never sees SQL, and this file never draws.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use hub_core::{clock, Store, Table};
@@ -49,10 +50,10 @@ pub struct Shell {
     shortcuts: Arc<RwLock<Table>>,
     inbox: Arc<Mutex<Vec<Request>>>,
     closing: bool,
-    /// The header button's rectangle as last written to the log, so the gate can
-    /// click what the window actually laid out instead of guessing. Only logged when
-    /// it moves: a per-frame line would bury the rest of the log.
-    hit_logged: Option<[i32; 4]>,
+    /// Every control's rectangle as last written to the log, keyed by the name the
+    /// widget gave it (`new-note`, `pin:note-1`, ...). Only logged when it moves: a
+    /// per-frame line per button would bury the rest of the log.
+    hit_logged: HashMap<String, [i32; 4]>,
 }
 
 impl Shell {
@@ -66,7 +67,7 @@ impl Shell {
             shortcuts: spawn.shortcuts,
             inbox: spawn.inbox,
             closing: false,
-            hit_logged: None,
+            hit_logged: HashMap::new(),
         };
         shell.reload();
         shell.log.mark(
@@ -149,34 +150,38 @@ impl Shell {
         self.act(ctx, action);
     }
 
-    /// Write the "新建笔记" rectangle when it changes.
+    /// Write every control's rectangle that moved this frame.
     ///
-    /// Physical client pixels, which is what a click posts and what
-    /// `click_client()` in the gate takes -- the script must not have to know the
-    /// monitor scale.
+    /// Physical client pixels, which is what a click posts and what `click_client()`
+    /// in the gate takes -- the script must not have to know the monitor scale. A
+    /// name that stops being reported (its row scrolled away) keeps its last line and
+    /// stops matching: the gate always reads the *latest* line per name, so a stale
+    /// one cannot be clicked by accident.
     fn log_hit(&mut self, ctx: &egui::Context) {
-        let Some(rect) = self.state.new_note else {
-            return;
-        };
         let scale = ctx.pixels_per_point();
-        let now = [
-            (rect.min.x * scale).round() as i32,
-            (rect.min.y * scale).round() as i32,
-            (rect.width() * scale).round() as i32,
-            (rect.height() * scale).round() as i32,
-        ];
-        if self.hit_logged == Some(now) {
-            return;
+        for (name, rect) in &self.state.hits {
+            let now = [
+                (rect.min.x * scale).round() as i32,
+                (rect.min.y * scale).round() as i32,
+                (rect.width() * scale).round() as i32,
+                (rect.height() * scale).round() as i32,
+            ];
+            if now[2] <= 0 || now[3] <= 0 {
+                continue;
+            }
+            if self.hit_logged.get(name) == Some(&now) {
+                continue;
+            }
+            self.hit_logged.insert(name.clone(), now);
+            self.log.mark(
+                0,
+                "manager_hit",
+                &format!(
+                    "button={name} x={} y={} w={} h={}",
+                    now[0], now[1], now[2], now[3]
+                ),
+            );
         }
-        self.hit_logged = Some(now);
-        self.log.mark(
-            0,
-            "manager_hit",
-            &format!(
-                "button=new-note x={} y={} w={} h={}",
-                now[0], now[1], now[2], now[3]
-            ),
-        );
     }
 
     fn close(&mut self, ctx: &egui::Context, reason: &str) {
@@ -207,6 +212,14 @@ impl Shell {
             Action::Open(id) => {
                 self.state.status = "已打开".to_string();
                 self.push(Request::OpenNote(id));
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            }
+            Action::TodoCard => {
+                // Same request as the tray item and `--todo-card`: the controller owns
+                // the singleton, so the button can never make a second card.
+                self.state.status = "已打开待办卡片".to_string();
+                self.log.mark(0, "manager_todo_card", "from=button");
+                self.push(Request::TodoCard);
                 ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
             Action::Pin { id, pinned } => {

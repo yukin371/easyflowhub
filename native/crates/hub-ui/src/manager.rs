@@ -126,45 +126,11 @@ impl Tab {
     }
 }
 
-/// A checkbox line out of the todo note.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TodoItem {
-    pub text: String,
-    pub done: bool,
-}
-
-/// Parse the Markdown checkboxes the todo note is made of.
-///
-/// Todos are **not a table**: the product keeps them as `- [ ]` lines inside a
-/// note titled 待办箱. Parsing here rather than in `hub-core` is deliberate -- the
-/// store already exposes `count_todo_lines` for the counts, and this is the view's
-/// list, which only has to be good enough to show.
-pub fn todo_items(content: &str) -> Vec<TodoItem> {
-    let mut out = Vec::new();
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        let (done, rest) = if let Some(rest) = trimmed
-            .strip_prefix("- [ ]")
-            .or_else(|| trimmed.strip_prefix("* [ ]"))
-        {
-            (false, rest)
-        } else if let Some(rest) = trimmed
-            .strip_prefix("- [x]")
-            .or_else(|| trimmed.strip_prefix("- [X]"))
-            .or_else(|| trimmed.strip_prefix("* [x]"))
-            .or_else(|| trimmed.strip_prefix("* [X]"))
-        {
-            (true, rest)
-        } else {
-            continue;
-        };
-        out.push(TodoItem {
-            text: rest.trim().to_string(),
-            done,
-        });
-    }
-    out
-}
+// The todo parser used to live here, with a comment saying it was "deliberate" that
+// it did not live in `hub-core`. That was true when this list was the only reader.
+// The desktop card now reads the same checkbox grammar (and rewrites it), so two
+// copies would drift the first time someone typed a numbered list -- the view uses
+// `hub_core::todo::lines`, one parser for the card, the list and the writer.
 
 /// What the user asked the workbench to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,6 +140,10 @@ pub enum Action {
     /// A blank note, exactly what `Ctrl+Alt+N` does. The window itself is opened by
     /// the controller -- a frame must not create viewports.
     NewNote,
+    /// The desktop todo card. Same window the tray item opens; the workbench was the
+    /// last place that could only *point at* it (frontend had a button, the native
+    /// manager had none, so in takeover mode nobody could reach it).
+    TodoCard,
     Open(String),
     Pin { id: String, pinned: bool },
     Trash(String),
@@ -192,12 +162,16 @@ pub struct State {
     pub capturing: Option<Command>,
     /// One line of feedback under the header: "已移到回收站" and so on.
     pub status: String,
-    /// Where the header's "新建笔记" button ended up, in client points.
+    /// Every control drawn this frame, in client points.
     ///
-    /// Reported rather than recomputed by the gate, for the same reason the todo
-    /// card reports its strip: a script that hardcodes a coordinate inside a layout
-    /// free to change fails for reasons that have nothing to do with the button.
-    pub new_note: Option<egui::Rect>,
+    /// The row buttons used to be unclickable by any gate: the old note in this file
+    /// said a script must not hardcode a coordinate inside a layout free to change,
+    /// which is true, but the conclusion "so do not click them" was wrong. The todo
+    /// card settled the better contract: the *product* reports the rectangle, and the
+    /// gate clicks the rectangle. Names are `verb:id` for row buttons (`pin:note-1`)
+    /// and bare for chrome (`new-note`, `todo-card`, `tab:trash`), so a click can be
+    /// addressed without the script knowing the arrangement.
+    pub hits: Vec<(String, egui::Rect)>,
 }
 
 impl Default for State {
@@ -208,9 +182,14 @@ impl Default for State {
             selected: None,
             capturing: None,
             status: String::new(),
-            new_note: None,
+            hits: Vec::new(),
         }
     }
+}
+
+/// Record where a control ended up, for the gate to click.
+fn report(state: &mut State, name: &str, rect: egui::Rect) {
+    state.hits.push((name.to_string(), rect));
 }
 
 /// Draw the whole workbench and return what the user asked for.
@@ -224,6 +203,9 @@ pub fn draw(
     table: &Table,
 ) -> Action {
     let mut action = Action::None;
+    // Rects belong to one frame: a row that moved must not be clickable at its old
+    // place, and a button that disappeared must stop being addressable.
+    state.hits.clear();
 
     // Capture mode owns the keyboard: a click on a chip is a request to press the
     // next key, and nothing else should happen while that is pending.
@@ -268,7 +250,7 @@ pub fn draw(
                         .fill(palette.surface)
                         .stroke(Stroke::new(1.0, palette.border_strong)),
                     );
-                    state.new_note = Some(new_note.rect);
+                    report(state, "new-note", new_note.rect);
                     if hint::hint(new_note, palette, "新建一条快速笔记", "Ctrl+Alt+N").clicked()
                     {
                         action = Action::NewNote;
@@ -306,6 +288,7 @@ pub fn draw(
                     state.status.clear();
                     action = Action::SetTab(tab);
                 }
+                report(state, &format!("tab:{}", tab.id()), button.rect);
             }
         });
 
@@ -339,8 +322,9 @@ pub fn draw(
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for row in visible {
-                        if let Some(clicked) = note_row(ui, palette, row, state.selected.as_deref()) {
-                            state.selected = Some(row.id.clone());
+                        if let Some(clicked) =
+                            note_row(ui, palette, state, row)
+                        {
                             action = clicked;
                         }
                     }
@@ -348,13 +332,32 @@ pub fn draw(
             }
             Tab::Todos => {
                 let content = todo.unwrap_or("");
-                let items = todo_items(content);
+                let items = hub_core::todo::lines(content);
                 let open = items.iter().filter(|item| !item.done).count();
-                ui.label(
-                    RichText::new(format!("待办箱 · 未完成 {open} / 共 {}", items.len()))
-                        .size(11.0)
-                        .color(palette.ink_soft),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("待办箱 · 未完成 {open} / 共 {}", items.len()))
+                            .size(11.0)
+                            .color(palette.ink_soft),
+                    );
+                    // The frontend panel has had this button since the card shipped;
+                    // in takeover mode the frontend panel is not on screen, so the
+                    // card was reachable only from the tray. Same request either way
+                    // (`Request::TodoCard`), so there is still one window, not two.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let card = ui.add(
+                            egui::Button::new(
+                                RichText::new("悬浮卡片").size(10.5).color(palette.ink),
+                            )
+                            .fill(palette.surface)
+                            .stroke(Stroke::new(1.0, palette.border_strong)),
+                        );
+                        report(state, "todo-card", card.rect);
+                        if hint::hint(card, palette, "在桌面显示待办卡片", "").clicked() {
+                            action = Action::TodoCard;
+                        }
+                    });
+                });
                 ui.add_space(6.0);
                 if items.is_empty() {
                     ui.label(
@@ -447,13 +450,17 @@ pub fn draw(
 fn note_row(
     ui: &mut egui::Ui,
     palette: Theme,
+    state: &mut State,
     row: &Row,
-    selected: Option<&str>,
 ) -> Option<Action> {
     let mut action = None;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 34.0), Sense::click());
-    let chosen = selected == Some(row.id.as_str());
+    // The row is addressable too: the buttons only exist once a row is selected, so
+    // the gate has to be able to *select* one, and "click the third row" is exactly
+    // the coordinate this file refused to hardcode.
+    report(state, &format!("row:{}", row.id), rect);
+    let chosen = state.selected.as_deref() == Some(row.id.as_str());
     if chosen || response.hovered() {
         ui.painter().rect_filled(
             rect,
@@ -508,6 +515,12 @@ fn note_row(
     );
 
     if response.clicked() {
+        // Selecting is not conditional on having an action. A trashed row has no
+        // "open", and the first version therefore never set `selected` for it -- so
+        // 恢复 could only ever act on the row that had just been deleted (the one
+        // whose selection survived from the notes tab). Found by the gate clicking
+        // a trashed row and watching nothing happen.
+        state.selected = Some(row.id.clone());
         action = if row.deleted_at.is_some() {
             None
         } else {
@@ -520,31 +533,39 @@ fn note_row(
     if chosen {
         ui.horizontal(|ui| {
             if row.deleted_at.is_some() {
-                if ui.button(RichText::new("恢复").size(10.5)).clicked() {
+                let restore = ui.button(RichText::new("恢复").size(10.5));
+                report(state, &format!("restore:{}", row.id), restore.rect);
+                if restore.clicked() {
                     action = Some(Action::Restore(row.id.clone()));
                 }
-                if hint::hint(
+                let purge = hint::hint(
                     ui.button(RichText::new("彻底删除").size(10.5)),
                     palette,
                     "从数据库删除这一行",
                     "",
-                )
-                .clicked()
-                {
+                );
+                report(state, &format!("purge:{}", row.id), purge.rect);
+                if purge.clicked() {
                     action = Some(Action::Purge(row.id.clone()));
                 }
             } else {
-                if ui.button(RichText::new("打开").size(10.5)).clicked() {
+                let open = ui.button(RichText::new("打开").size(10.5));
+                report(state, &format!("open:{}", row.id), open.rect);
+                if open.clicked() {
                     action = Some(Action::Open(row.id.clone()));
                 }
                 let pin_label = if row.pinned { "取消置顶" } else { "置顶" };
-                if ui.button(RichText::new(pin_label).size(10.5)).clicked() {
+                let pin = ui.button(RichText::new(pin_label).size(10.5));
+                report(state, &format!("pin:{}", row.id), pin.rect);
+                if pin.clicked() {
                     action = Some(Action::Pin {
                         id: row.id.clone(),
                         pinned: !row.pinned,
                     });
                 }
-                if ui.button(RichText::new("移到回收站").size(10.5)).clicked() {
+                let trash = ui.button(RichText::new("移到回收站").size(10.5));
+                report(state, &format!("trash:{}", row.id), trash.rect);
+                if trash.clicked() {
                     action = Some(Action::Trash(row.id.clone()));
                 }
             }
@@ -603,18 +624,20 @@ mod tests {
     }
 
     #[test]
-    fn todo_lines_are_parsed_in_both_marks() {
-        let items = todo_items("- [ ] 买菜\n* [x] 洗衣\n- [X] 回邮件\nnot a todo\n");
-        assert_eq!(items.len(), 3);
-        assert_eq!(items[0], TodoItem { text: "买菜".to_string(), done: false });
-        assert!(items[1].done);
-        assert!(items[2].done);
+    fn the_list_shows_the_same_todos_the_card_does() {
+        // One parser now, but this test stays: it pins what the *list* relies on --
+        // the marks a shipped note actually uses (`-`/`*`, `x`/`X`) and that a plain
+        // bullet is not a todo.
+        let items =
+            hub_core::todo::lines("- [ ] 买菜\n* [x] 洗衣\n- [X] 回邮件\nnot a todo\n");
+        let seen: Vec<(&str, bool)> = items.iter().map(|i| (i.text.as_str(), i.done)).collect();
+        assert_eq!(seen, vec![("买菜", false), ("洗衣", true), ("回邮件", true)]);
     }
 
     #[test]
     fn an_empty_todo_note_has_no_items_rather_than_a_blank_one() {
-        assert!(todo_items("").is_empty());
-        assert!(todo_items("普通段落\n- 列表但不是待办").is_empty());
+        assert!(hub_core::todo::lines("").is_empty());
+        assert!(hub_core::todo::lines("普通段落\n- 列表但不是待办").is_empty());
     }
 
     #[test]
@@ -631,5 +654,114 @@ mod tests {
         assert_eq!(Tab::Notes.id(), "notes");
         assert_eq!(Tab::Trash.id(), "trash");
         assert_eq!(Tab::ALL.len(), 4);
+    }
+
+    /// Run one frame and hand back the rectangles it reported.
+    fn frame(state: &mut State, rows: &[Row]) -> Vec<(String, egui::Rect)> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::Vec2::new(900.0, 620.0),
+            )),
+            ..Default::default()
+        };
+        let table = Table::defaults();
+        let mut hits = Vec::new();
+        let _ = ctx.run(input, |ctx| {
+            let _ = draw(ctx, Theme::standard(), state, rows, None, &table);
+            hits = state.hits.clone();
+        });
+        hits
+    }
+
+    fn named(hits: &[(String, egui::Rect)], name: &str) -> bool {
+        hits.iter().any(|(other, _)| other == name)
+    }
+
+    #[test]
+    fn a_row_reports_its_own_buttons_only_once_it_is_selected() {
+        // The buttons are drawn under the selected row, so the gate needs two things
+        // to be true: the row is addressable before it is selected (to select it) and
+        // the buttons appear only then. Asserting the absence as well as the presence
+        // is what stops "report every row's buttons" from passing by accident.
+        let rows = vec![
+            row("note-1", "一", "一\n正文", "", false),
+            row("note-2", "二", "二\n正文", "", false),
+        ];
+        let mut state = State::default();
+        let before = frame(&mut state, &rows);
+        assert!(named(&before, "row:note-1"), "the row itself must be clickable");
+        assert!(!named(&before, "pin:note-1"), "no row was selected yet");
+
+        state.selected = Some("note-2".to_string());
+        let after = frame(&mut state, &rows);
+        assert!(named(&after, "open:note-2"));
+        assert!(named(&after, "pin:note-2"));
+        assert!(named(&after, "trash:note-2"));
+        assert!(!named(&after, "pin:note-1"), "only the selected row has buttons");
+    }
+
+    #[test]
+    fn the_todo_tab_offers_the_card_and_the_notes_tab_does_not() {        // The card could only be opened from the tray in takeover mode. The button
+        // lives on the todo tab, next to the count, like the frontend panel's.
+        let rows = vec![row("note-1", "一", "一", "", false)];
+        let mut state = State::default();
+        assert!(!named(&frame(&mut state, &rows), "todo-card"));
+        state.tab = Tab::Todos;
+        let hits = frame(&mut state, &rows);
+        assert!(named(&hits, "todo-card"), "todo tab must offer the card");
+        assert!(named(&hits, "tab:todos"));
+    }
+
+    #[test]
+    fn clicking_a_trashed_row_selects_it_so_it_can_be_restored() {
+        // A trashed row has no "open" action, and the first version therefore never
+        // set `selected` for it: 恢复 was unreachable for every row except the one
+        // just deleted. The gate found this by clicking and watching nothing happen;
+        // it is pinned here because the rule is one line and easy to undo.
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::new(900.0, 620.0));
+        let table = Table::defaults();
+        let rows = vec![row("gone", "删掉的", "删掉的", "", true)];
+        let mut state = State {
+            tab: Tab::Trash,
+            ..Default::default()
+        };
+        let pass = |state: &mut State, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                let _ = draw(ctx, Theme::standard(), state, &rows, None, &table);
+            });
+        };
+        pass(&mut state, Vec::new());
+        let rect = state
+            .hits
+            .iter()
+            .find(|(name, _)| name == "row:gone")
+            .expect("the trashed row must be reported")
+            .1;
+        let at = rect.center();
+        let press = |pressed: bool| {
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            }]
+        };
+        pass(&mut state, press(true));
+        pass(&mut state, press(false));
+        assert_eq!(state.selected.as_deref(), Some("gone"));
+        // The buttons are drawn for the row that was *already* selected when the
+        // frame started, so they appear on the next frame -- a click asks for a
+        // repaint, which is that frame in the real window.
+        pass(&mut state, Vec::new());
+        assert!(named(&state.hits, "restore:gone"), "恢复 must become reachable");
+        assert!(!named(&state.hits, "open:gone"), "a trashed row cannot be opened");
     }
 }

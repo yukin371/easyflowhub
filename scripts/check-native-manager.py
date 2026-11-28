@@ -15,16 +15,18 @@ is to own a combination the shipped build does not. Choosing that combination *i
 the feature -- the file is read, the table is built from it, the OS registration
 follows it -- so the gate that needs it also proves it.
 
-The workbench's row buttons are not clicked here. A click needs a coordinate inside
-an egui layout that is free to change, and a gate that hardcodes one would fail for
-a reason that has nothing to do with the behaviour. What those buttons do is covered
-where it is decided: `hub-core`'s store tests write the pin/trash/restore/purge
-columns and `hub-ui`'s manager tests drain the `Action` queue.
+The workbench's buttons are clicked, and none of their coordinates is written down
+here. The window reports where each control landed (`manager_hit button=pin:note-1
+x=… y=…`), which is the same contract the todo card uses for its strip, and the
+script clicks what was reported. That replaced an earlier note in this file that
+said row buttons must not be clicked because a hardcoded coordinate would be
+brittle -- true, but the fix was to stop hardcoding, not to stop clicking.
 
-The one exception is the header's 新建笔记 button, and it is clicked -- because its
-effect is a *window in this process*, which no unit test can assert, and because the
-window now reports the rectangle (`manager_hit button=new-note`) instead of leaving
-the script to guess. Same contract as the todo card's `todocard_hit`.
+What this buys: the pin, trash, restore and purge buttons are now covered where
+they can actually break. The store tests prove the SQL works and the `hub-ui`
+tests prove the right `Action` is returned; neither can show that the button is
+under the pointer, or that the controller applies the action to the same note the
+list is showing.
 
 Usage:
     python scripts/check-native-manager.py --exe native/target/release/easyflowhub-native.exe
@@ -54,11 +56,15 @@ import wininput  # noqa: E402  (path first, then the import)
 
 NOTE_PREFIX = "easyflowhub-note"
 MANAGER_TITLE = "easyflowhub-manager"
+CARD_TITLE = "easyflowhub-todo-card"
 STAMP = "2026-11-26T02:31:00.000000000+00:00"
 
-# The rectangle the workbench reports for its 新建笔记 button, in physical client
-# pixels -- the coordinates `click_client()` takes.
-HIT = re.compile(r"manager_hit button=new-note x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+)")
+# One reported control, in physical client pixels -- the coordinates `click_client()`
+# takes. The name is what the widget called itself: `new-note`, `todo-card`,
+# `tab:trash`, `row:<id>`, `pin:<id>`, `trash:<id>`, `restore:<id>`, `purge:<id>`.
+HIT = re.compile(
+    r"manager_hit button=(\S+) x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+)"
+)
 
 # The combination this gate gives the workbench: `Ctrl+Alt+M` is held by the shipped
 # build, and pressing it here would open *that* window instead.
@@ -111,6 +117,201 @@ def counts(db: str) -> tuple:
         connection.close()
 
 
+def query(db: str, sql: str, params: tuple = ()):
+    """One row, retried: the app may be mid-write when the check runs."""
+    deadline = time.time() + 5.0
+    while True:
+        try:
+            connection = sqlite3.connect(db, timeout=2.0)
+            try:
+                return connection.execute(sql, params).fetchone()
+            finally:
+                connection.close()
+        except sqlite3.OperationalError:
+            if time.time() > deadline:
+                return None
+            time.sleep(0.05)
+
+
+def hit(text: str, name: str):
+    """The latest rectangle reported for `name`, or None.
+
+    Latest, not first: a click that changes the list relayouts the rows, and the gate
+    must click where the button is *now*.
+    """
+    found = None
+    for line in text.splitlines():
+        match = HIT.search(line)
+        if match and match.group(1) == name:
+            found = tuple(int(match.group(i)) for i in (2, 3, 4, 5))
+    return found
+
+
+def hit_names(text: str) -> set:
+    return {match.group(1) for line in text.splitlines() if (match := HIT.search(line))}
+
+
+HWND_TOP = 0
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+user32.SetWindowPos.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_uint,
+]
+user32.IsZoomed.argtypes = [ctypes.c_void_p]
+user32.WindowFromPoint.restype = ctypes.c_void_p
+
+
+def describe(hwnd: int) -> str:
+    cls = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, cls, 256)
+    box = ctypes.wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(box))
+    root = user32.GetAncestor(hwnd, 2)  # GA_ROOT
+    return (
+        f"0x{hwnd:X} class={cls.value!r} rect=({box.left},{box.top},"
+        f"{box.right - box.left}x{box.bottom - box.top}) root=0x{root:X}"
+    )
+
+
+def describe_process(hwnd: int) -> list:
+    """Every top-level window of `hwnd`'s process, one line each.
+
+    Printed only when a click is about to land on something that is not the
+    workbench -- that happened twice (a note covering the button), and "which window
+    is this" is the question the failure asks.
+    """
+    pid = ctypes.wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def visit(window, _):
+        owner = ctypes.wintypes.DWORD()
+        user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
+        if owner.value == pid.value:
+            title = ctypes.create_unicode_buffer(128)
+            user32.GetWindowTextW(window, title, 128)
+            cls = ctypes.create_unicode_buffer(128)
+            user32.GetClassNameW(window, cls, 128)
+            box = ctypes.wintypes.RECT()
+            user32.GetWindowRect(window, ctypes.byref(box))
+            found.append(
+                f"0x{window:X} {cls.value} {box.left},{box.top} "
+                f"{box.right - box.left}x{box.bottom - box.top} {title.value!r}"
+            )
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return found
+
+
+def window_at(x: int, y: int):
+    """Which window would receive a click at this screen point, and its title."""
+    hwnd = user32.WindowFromPoint(ctypes.wintypes.POINT(int(x), int(y)))
+    title = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(hwnd, title, 256)
+    return hwnd, title.value
+
+
+def raise_window(hwnd: int) -> None:
+    """Put the workbench above the notes it just opened.
+
+    A click here is a real mouse event at a screen point, not a message posted to a
+    handle, so whatever is on top receives it. Clicking a row opens that note in
+    front; without this the next click would land on the note instead of the button.
+    """
+    wininput.force(hwnd)
+    user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+    time.sleep(0.05)
+
+
+def park_spawned_notes() -> int:
+    """Move the notes the list opened off the work area.
+
+    The quick note is created on top (and can be pinned there), so a note opened by
+    clicking a row sits over the workbench -- and a click here is a real mouse event
+    at a screen point, so the note receives it. Nothing below asserts anything about
+    where a note is, so moving them off screen only makes the clicks land where they
+    were aimed. The first note (`#0`) is left alone: the gate checks it survives.
+    """
+    moved = 0
+    for index in range(1, 8):
+        hwnd = user32.FindWindowW(None, f"{NOTE_PREFIX}#{index}")
+        if hwnd:
+            user32.SetWindowPos(
+                hwnd, 0, -4000, -4000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            )
+            moved += 1
+    return moved
+
+
+def clear_spot(shell: int, point: tuple, tries: int = 6) -> bool:
+    """Make sure a click at `point` (client pixels) lands on the workbench.
+
+    A note is created on top, so a note opened by the list can sit over the corner
+    where a button is. Parking the spawned notes usually clears it; when it does not
+    (a note whose window has not taken its title yet cannot be found by name), the
+    workbench is nudged instead. The rectangles it reports are client-relative, so
+    moving the window does not invalidate them.
+    """
+    for _ in range(tries):
+        left, top, _, _ = wininput.client_box(shell)
+        under, _title = window_at(left + point[0], top + point[1])
+        if user32.GetAncestor(under, 2) == shell:  # GA_ROOT
+            return True
+        box = ctypes.wintypes.RECT()
+        user32.GetWindowRect(shell, ctypes.byref(box))
+        step = -160 if box.left > 200 else 160
+        user32.SetWindowPos(
+            shell,
+            0,
+            box.left + step,
+            box.top,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+        time.sleep(0.15)
+    return False
+
+
+def click_button(session: "Session", shell: int, name: str, timeout: float = 6.0):
+    """Click the centre of the rectangle the window reported for `name`."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        park_spawned_notes()
+        rect = hit(session.trace.text(), name)
+        if rect and rect[2] > 0 and rect[3] > 0:
+            raise_window(shell)
+            point = (rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
+            clear = clear_spot(shell, point)
+            left, top, _, _ = wininput.client_box(shell)
+            under, under_title = window_at(left + point[0], top + point[1])
+            wininput.click_client(shell, point[0], point[1])
+            print(
+                f"  click {name} at {point} rect={rect}"
+                f" box={(left, top)} zoomed={bool(user32.IsZoomed(shell))}"
+                f" fg=0x{user32.GetForegroundWindow():X}"
+                f" clear={clear}"
+                f" under={describe(under)}({under_title!r})"
+            )
+            if not clear:
+                for line in describe_process(shell):
+                    print(f"    window {line}")
+            return rect
+        time.sleep(0.05)
+    print(f"  click {name}: no rectangle was reported")
+    return None
+
+
 class Trace:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -123,6 +324,10 @@ class Trace:
 
     def count(self, needle: str) -> int:
         return sum(1 for line in self.text().splitlines() if needle in line)
+
+    def tail(self, mark: int) -> str:
+        """Everything written after `mark`, so an earlier run cannot answer for this one."""
+        return self.text()[mark:]
 
     def later(self, needle: str, before: int, timeout: float) -> str:
         deadline = time.time() + timeout
@@ -359,21 +564,19 @@ def main() -> int:
         # Now there is, and the rectangle is reported rather than guessed: a layout
         # that moves the button must not fail this gate.
         shell = wininput.wait_for(manager_window, 10)
-        hit_line = session.trace.later("manager_hit button=new-note", 0, 5)
-        hit = HIT.search(hit_line)
+        new_note = hit(session.trace.text(), "new-note")
         report.check(
             "the workbench reports where its 新建笔记 button is",
-            bool(hit) and int(hit.group(3)) > 0 and int(hit.group(4)) > 0,
-            hit_line.strip() or "no manager_hit line",
+            bool(new_note) and new_note[2] > 0 and new_note[3] > 0,
+            (
+                f"x={new_note[0]} y={new_note[1]} w={new_note[2]} h={new_note[3]}"
+                if new_note
+                else "no manager_hit line"
+            ),
         )
-        if hit:
+        if new_note:
             spawns = session.trace.count("note_spawn")
-            wininput.force(shell)
-            wininput.click_client(
-                shell,
-                int(hit.group(1)) + int(hit.group(3)) // 2,
-                int(hit.group(2)) + int(hit.group(4)) // 2,
-            )
+            click_button(session, shell, "new-note")
             clicked = session.trace.later("manager_new_note", 0, 4)
             report.check(
                 "clicking 新建笔记 is the same request Ctrl+Alt+N sends",
@@ -396,6 +599,117 @@ def main() -> int:
                 f"closes={session.trace.count('manager_close')}",
             )
         session.capture("Q16/Q18 + K1 global + new note button")
+
+        # ------------------------------------ the list's buttons, really clicked
+        # Nothing here hardcodes a coordinate: every click uses the rectangle the
+        # window reported for that control. Assertions read the log from a mark taken
+        # *before* the click, so a line left by an earlier run cannot pass for this
+        # one -- the log is appended to across runs.
+        names = hit_names(session.trace.text())
+        report.check(
+            "the workbench reports every row it draws",
+            {"row:gate-live-1", "row:gate-live-2"} <= names,
+            ", ".join(sorted(n for n in names if n.startswith("row:"))) or "no row rects",
+        )
+
+        # Selecting a row is what reveals its buttons. A click also opens the note --
+        # that is what this list does -- so the workbench is raised first.
+        mark = len(session.trace.text())
+        click_button(session, shell, "row:gate-live-2")
+        revealed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "pin:gate-live-2") is not None, 4
+        )
+        report.check(
+            "clicking a row reveals that row's buttons, and only that row's",
+            bool(revealed) and hit(session.trace.tail(mark), "pin:gate-live-1") is None,
+            "pin:gate-live-2 reported" if revealed else "no pin rect for the clicked row",
+        )
+
+        before = session.trace.count("manager_pin")
+        click_button(session, shell, "pin:gate-live-2")
+        pinned = session.trace.later("manager_pin", before, 5)
+        stored = query(db, "SELECT is_pinned FROM notes WHERE id = ?", ("gate-live-2",))
+        report.check(
+            "the 置顶 button pins that note, in the database",
+            "id=gate-live-2" in pinned and "ok=Some(true)" in pinned and stored == (1,),
+            (pinned.strip() or "no manager_pin line") + f"; is_pinned={stored}",
+        )
+
+        before = session.trace.count("manager_trash")
+        click_button(session, shell, "trash:gate-live-2")
+        trashed = session.trace.later("manager_trash", before, 5)
+        stored = query(db, "SELECT deleted_at FROM notes WHERE id = ?", ("gate-live-2",))
+        report.check(
+            "the 移到回收站 button soft-deletes it, with a stamp",
+            "id=gate-live-2" in trashed and "ok=Some(true)" in trashed and bool(stored and stored[0]),
+            (trashed.strip() or "no manager_trash line") + f"; deleted_at={stored}",
+        )
+
+        mark = len(session.trace.text())
+        click_button(session, shell, "tab:trash")
+        listed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "row:gate-trash") is not None, 4
+        )
+        report.check(
+            "the trash tab lists what was just moved there, still selected",
+            bool(listed) and hit(session.trace.tail(mark), "restore:gate-live-2") is not None,
+            "trash rows reported" if listed else "gate-trash not listed after the switch",
+        )
+
+        mark = len(session.trace.text())
+        click_button(session, shell, "row:gate-trash")
+        wininput.wait_for(lambda: hit(session.trace.tail(mark), "restore:gate-trash") is not None, 4)
+        before = session.trace.count("manager_restore")
+        click_button(session, shell, "restore:gate-trash")
+        restored = session.trace.later("manager_restore", before, 5)
+        stored = query(db, "SELECT deleted_at FROM notes WHERE id = ?", ("gate-trash",))
+        report.check(
+            "the 恢复 button puts the note back",
+            "id=gate-trash" in restored and "ok=Some(true)" in restored and stored == (None,),
+            (restored.strip() or "no manager_restore line") + f"; deleted_at={stored}",
+        )
+
+        mark = len(session.trace.text())
+        click_button(session, shell, "row:gate-live-2")
+        wininput.wait_for(lambda: hit(session.trace.tail(mark), "purge:gate-live-2") is not None, 4)
+        before = session.trace.count("manager_purge")
+        click_button(session, shell, "purge:gate-live-2")
+        purged = session.trace.later("manager_purge", before, 5)
+        stored = query(db, "SELECT COUNT(*) FROM notes WHERE id = ?", ("gate-live-2",))
+        report.check(
+            "the 彻底删除 button removes the row for good",
+            "id=gate-live-2" in purged and "permanent=true" in purged and stored == (0,),
+            (purged.strip() or "no manager_purge line") + f"; rows={stored}",
+        )
+
+        # ------------------------------------- the card, from the workbench
+        # The frontend panel has had this button all along; in takeover mode that
+        # panel is not on screen, so the tray was the only way in. Same request, one
+        # window -- `todo_card action=open` is the controller saying so.
+        mark = len(session.trace.text())
+        click_button(session, shell, "tab:todos")
+        offered = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "todo-card") is not None, 4
+        )
+        report.check(
+            "the todo tab offers the desktop card",
+            bool(offered),
+            "todo-card rect reported" if offered else "no todo-card rect",
+        )
+        before = session.trace.count("manager_todo_card")
+        cards = session.trace.count("todo_card action=open")
+        click_button(session, shell, "todo-card")
+        asked = session.trace.later("manager_todo_card", before, 5)
+        opened = session.trace.later("todo_card action=open", cards, 8)
+        card = wininput.wait_for(lambda: user32.FindWindowW(None, CARD_TITLE), 8)
+        report.check(
+            "the button opens the same card the tray opens",
+            bool(asked) and "from=button" in asked and bool(opened) and bool(card),
+            (asked.strip() or "no manager_todo_card line")
+            + f"; card={'yes' if card else 'no'}"
+            + f"; manager={'open' if manager_window() else 'gone'}",
+        )
+        session.capture("Q16/Q18 + K1 global + new note button + row buttons + card")
         session.stop()
 
         # ------------------------------------ K2 the replaced key stops answering
