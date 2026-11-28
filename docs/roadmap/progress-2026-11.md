@@ -4,6 +4,11 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
+- `2026-11-28` **回收站的三个子页签都有列表了：收集箱是第二张表，脚本是一个目录**。三类是三件事（改 notes、改 inbox、搬一堆文件），所以 `RowKind` 长在 `Row` 上，Action 也带着它。
+  - **收集箱**：彻底删除包括 `assets/` 的字节，文件名与 `DELETE` 同一事务里读（级联之后没人再说哪些文件是这一行的）；文件删除 best-effort。
+  - **脚本**：复刻服务的 `entry.json` 但**只读**——"删进回收站"要判 roots 合法性、要 rollback，第二份实现只会让两个进程各有一套"什么算合法删除"。
+  - **证据**：门禁 **49 → 59**。详见 [plans/completed/2026-11-28-manager-trash-three.md](../plans/completed/2026-11-28-manager-trash-three.md)。
+
 - `2026-11-28` **接管态的入口不再只是拒绝：卡片真开窗，工作台每个按钮都真点过**。两条命令原先只回「已由原生壳接管」，现在一条真开窗、一条真转发。
   - **卡片**：320×400 浮卡，托盘「待办卡片」/ `--todo-card` 入口，Esc 关窗而进程留下。规则落 `hub-core/src/todo.rs`（抄前端 `todoParser`，11 单测），写入**按文本定位**（F05），同名两条拒绝而不是猜；工具条与命中矩形是纯函数。
   - **转发不共用 argv**：`--note` 与 `--todo-card` 是两扇门——共用 builder 加个布尔会让"开出一条笔记"看起来像成功。`open_note`/`open_todo_card` 同走 `launch()`（解析 exe / `CREATE_NO_WINDOW` / **不等子进程**），证据是 argv 单测 + 原生 `--todo-card` 门禁。
@@ -43,14 +48,12 @@
 
 - `2026-11-27` **Launcher 产品化：面板是预创建、藏到屏外的窗口，按下是移动它而不是创建它**。C2 通过后从 spike 面板变成产品件（§5.1 / §5.8）：440×860 逻辑像素，跟随光标所在显示器的工作区夹紧。
   - 三个不显然的决定：关闭 = 挪到 `-30000,-30000`（`SW_HIDE` 停掉 `WM_PAINT` 投递，eframe 循环停摆，第九次唤起会画出第八次）；揭示在热键线程、隐藏在 UI 线程（`GetFocus` 只回答调用线程），`epoch` 挡住连按交叉；门禁逼出四个真缺陷（空结果 Enter 后交出焦点、点别处不消失、全新目录 `Store::open` 不建父目录、预览重复标题）。证据：`check-native-launcher.py` 25/25 连跑 4 次，p95 2.4–3.2 / p99 8.0–14.1 ms（预算 60 / 100），泄漏按两次运行的增量差判。详见 [plans/completed/2026-11-27-c2-launcher-productized.md](../plans/completed/2026-11-27-c2-launcher-productized.md)。
-- `2026-11-27` **C1 关闭：字库不再计入私有内存，常驻 130.1 → 91.5 MB，一个字没少**。S1 记的 37.7 MB「字体 + 图集」拆开看，字库字节是全部、图集只有 0.5 MB（`16384x32`），所以杠杆在字库本身。根因在 epaint：`FontData::from_owned` 走 `Cow::Owned`，`ab_glyph_font_from_font_data` 会 `bytes.clone()` 再建一个 `FontVec`——`msyh.ttc` 19.7 MB 至少一份常驻私有堆。
-  - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 只读映射，`FontData::from_static` 取 `&'static [u8]` 走 `FontRef` 零拷贝。不做子集化：微软子集产物是分发物（授权另说）、固定子集会丢用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具链。方向没变，C1「三种口径都要记」照旧。
-  - **数字（三次采样取中位数）**：快速笔记 mapped **91.5** / heap 129.1 / none 91.5（Commit）；私有工作集 56.4 / 94.0 / 56.4；工作集 90.6 / 128.0 / 90.7。Launcher 面板 mapped **92.6**（S1 的 130.1 是它的旧值）。**mapped − none = 0.0**：字库不再要私有内存；工作集只降 37.4 的一部分，碰过的映射页仍常驻、只是可回收——不掩饰。
-  - **波动写进门禁**：同一份二进制连续启动 Commit 在 91.5–99.3 MB 之间跳（GL 暂存、字形缓存时序），幅度与要证明的差值同量级。所以 `check-native-font.py` 每配置跑三次取中位数、打印 min–max，判据用差值而非绝对值；100 MB 线照实断言，但它只是目标。
-  - **门禁 11 项，核心是三次受控对照**（mapped / heap / none，只差加载路径）：只判「commit < 100」会在「字库静默加载失败、面板全是豆腐块」时也变好。另三项是像素——mapped 与 heap 差 ≤1%（同一张脸）、mapped 与 none 差 ≥2%（实测 4.65%）。**变异验证**：`if !heap` 改成 `if false && !heap` 后四项转红、像素三项仍绿。它也抓到自己第一个缺陷：`capture()` 起初没接 `extra`，三次截图全走 mapped，等于拿一张图和自己比还判了通过。
+- `2026-11-27` **C1 关闭：字库不再计入私有内存，常驻 130.1 → 91.5 MB，一个字没少**。S1 记的 37.7 MB「字体 + 图集」拆开看，字库字节是全部、图集只有 0.5 MB（`16384x32`）。根因在 epaint：`FontData::from_owned` 走 `Cow::Owned`，`ab_glyph_font_from_font_data` 会 `bytes.clone()` 再建一个 `FontVec`——`msyh.ttc` 19.7 MB 至少一份常驻私有堆。
+  - **手段换成映射，不是子集化**：`hub-win::font` 用 `CreateFileW` + `CreateFileMappingW` + `MapViewOfFile` 只读映射，`FontData::from_static` 走 `FontRef` 零拷贝。不做子集化：微软子集产物是分发物（授权另说）、固定子集会丢用户任意输入的汉字（豆腐块比 37.7 MB 贵）、省掉字体工具链。
+  - **数字（三次采样取中位数）**：快速笔记 mapped **91.5** / heap 129.1 / none 91.5（Commit）；Launcher 面板 mapped **92.6**。**mapped − none = 0.0**：字库不再要私有内存；工作集只降 37.4 的一部分，碰过的映射页仍常驻、只是可回收——不掩饰。
+  - **波动写进门禁**：同一份二进制连启 Commit 在 91.5–99.3 之间跳（GL 暂存、字形缓存时序），幅度与要证的差值同量级，所以每配置跑三次取中位数、判据用差值。11 项的核心是三次受控对照（mapped / heap / none，只差加载路径）：只判「commit < 100」会在「字库静默加载失败、面板全是豆腐块」时也变好。**变异验证**：`if !heap` 改成 `if false && !heap` 后四项转红、像素三项仍绿；它也抓到自己第一个缺陷——`capture()` 起初没接 `extra`，三次截图全走 mapped，等于拿一张图和自己比还判了通过。
   - **口径补齐**：`hub_win::ProcessProbe` 改读 `PROCESS_MEMORY_COUNTERS_EX2`，一次给出 Commit（`PrivateUsage`）/ 私有工作集 / 工作集三项——G0 §6 记的"原生只记了 Commit，私有工作集没记"到此修掉。
-  - **顺带**：`--no-font` 现在两条路径共用 `app::font::install_and_log`；九个原生门禁的工作目录默认值从 `native/target/<gate>` 挪到 `%TEMP%`（临时状态不该长在产物目录里）。
-  - **未做**：65 MB 解释线（属 G1，必须写 ADR）、多屏混合 DPI（C3）、8 小时泄漏（G1）、`lite` 档、字体热替换（映射持文件对象，下次启动才换）。验证：`check-native-font.py` 11/11、`cargo test --workspace` 249、架构门禁 5 crates、回归 notes 25 / pin 11 / tools 8 / manager 19 / switcher 22 / edge 23 / size 11 / recover 16 / drag 9 / store-schema 24 全绿。详见 [plans/completed/2026-11-27-c1-font-not-private.md](../plans/completed/2026-11-27-c1-font-not-private.md)。
+  - **顺带与未做**：`--no-font` 两条路径共用 `app::font::install_and_log`；九个原生门禁的工作目录从 `native/target/<gate>` 挪到 `%TEMP%`（临时状态不该长在产物目录里）。未做：65 MB 解释线（属 G1，必须写 ADR）、多屏混合 DPI（C3）、8 小时泄漏（G1）、`lite` 档、字体热替换。验证：font 门禁 11/11、workspace 249、架构 5 crates，其余九道回归门禁全绿。详见 [plans/completed/2026-11-27-c1-font-not-private.md](../plans/completed/2026-11-27-c1-font-not-private.md)。
 
 - `2026-11-27` **ADR 有了生命周期与季度复查；先盘点的结论是「整篇取代 0 份」**。9 份决策没有一份失效，真问题是记账：ADR-0004 §2 的"背景模糊"实现手段已被 ADR-0009 接管，而 0009 写的是 `supersedes: 无`（单向指针）；`decisions/README.md` 只列 7 条，ADR-0001/0002 不在索引里（ADR-0002 全仓零引用）；三处正文过期——ADR-0007 把 `scriptmgr/` 写成旧目录名、ADR-0006/0008 的 adapter 名与实际 trait `TranscriptionTransport` 不符、ADR-0001 第 6 条还写着 plans 平铺。
   - **状态词表五个，关键是 `amended`**：没有它，"方向还对、手段已换"的 ADR 只有两个坏选择——整篇标 `superseded`（把还生效的条款一起作废）或不动（让已死的条款继续被引用）。`amends` 必须带小节号，否则部分取代与整篇取代在读者眼里没有区别。
@@ -74,8 +77,8 @@
 - `2026-11-25` **G0 通过（有条件）：进入 Phase 1，栈版本锁定 egui/eframe 0.31**。裁决与得分板见 [../plans/completed/2026-11-25-g0-review.md](../plans/completed/2026-11-25-g0-review.md)。
   - **硬门槛不是险胜**：热唤起 p95 48.9 ms 对 60 ms，余量 18%；S2 键入 p95 4.95 ms 对 16 ms。退路（C# WinUI 3）需要的触发证据不存在。
   - **两条判据未满足，都转成有期限的退出条件**：S2 三种输入法各 30 分钟（无人验收 → C2，Phase 1 第一周硬性）；常驻 130.1 MB vs 65 MB 解释线（→ C1 字体子集化 ≤ 100 MB，加 C5 收口）。
-  - **内存这条线补了现网参照**：实测在跑的 Tauri 版全树 9 进程 **Commit 429.6 MB / 私有工作集 203.9 MB**，其中 **WebView2 GPU 进程一项私有工作集 176.8 MB**，已超过原生壳全进程的 Commit 130.1 MB。三列口径分开记（任务管理器的「内存」列是私有工作集，不是 Commit），采样脚本 `scripts/measure-process-tree.ps1` 可复现，原生侧用 `-ProcessName app`。
-  - **65 MB 不改**：改成 130 等于把"还没做任何优化"的数字定成标准。但如果 C1 压到 100 MB 就压不动，说明 65 在设计时未经实测校准——届时应由 G1 判断是否改线并写 ADR，而不是在 Phase 1 里悄悄挪。
+  - **内存这条线补了现网参照**：在跑的 Tauri 版全树 9 进程 **Commit 429.6 MB / 私有工作集 203.9 MB**，其中 WebView2 GPU 一项私有工作集 **176.8 MB**，已超过原生壳全进程的 Commit 130.1 MB。三列口径分开记（任务管理器的「内存」是私有工作集，不是 Commit），`measure-process-tree.ps1` 可复现。
+  - **65 MB 不改**：改成 130 等于把"还没做任何优化"的数字定成标准；真压不动时由 G1 判断是否改线并写 ADR，而不是在 Phase 1 里悄悄挪。
   - **WAL 仍保持 `delete`**：ADR 暂不写（只能写"暂不切换"，是空文档），改为把触发条件登记进本 Track 的「待办」。
 
 - `2026-11-25` **S4 通过：架构门禁从"能通过"变成"能失败"，并补上三个真实缺口**。设计与验收标准先落在 [../plans/completed/2026-11-25-native-architecture-gate-spike.md](../plans/completed/2026-11-25-native-architecture-gate-spike.md)，再按 A/B/C 三批实现。**G0 的四项 spike（S1–S4）至此全部完成（G0 已过，见上一条）。**
