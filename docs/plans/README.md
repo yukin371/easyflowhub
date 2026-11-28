@@ -56,7 +56,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-native-quicknote-parity.md](./active/2026-11-25-native-quicknote-parity.md)：快速笔记 T0 parity 28 条 A 级判据 + 6 条允许差异（G1 的判据对象）
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 
-### Completed（27）
+### Completed（28）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -85,6 +85,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-27-tauri-resident-gate.md](./completed/2026-11-27-tauri-resident-gate.md)：运行时门禁：从 Windows 侧数 webview 与窗口（18 项；修掉关掉 Manager 会带走托盘的回归）
 - [2026-11-27-theme-tokens.md](./completed/2026-11-27-theme-tokens.md)：主题 token（7 槽 → 21 语义 token，面板三态与 3+2 网格，17 项像素门禁）
 - [2026-11-27-translation-migration.md](./completed/2026-11-27-translation-migration.md)：翻译迁到原生（纯逻辑进 `hub-core`、网络只在 `app`，一请求一线程，31 项门禁；修掉同线程粘贴）
+- [2026-11-28-todo-card.md](./completed/2026-11-28-todo-card.md)：原生待办卡片窗口（按文本定位写回、工具条纯函数，17 项门禁：真点击勾选 + 像素变化 + 托盘重开）
 
 ### Rejected（1）
 
