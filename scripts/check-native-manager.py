@@ -28,6 +28,12 @@ tests prove the right `Action` is returned; neither can show that the button is
 under the pointer, or that the controller applies the action to the same note the
 list is showing.
 
+The trash section goes one step further than a single row: its sub-tabs, the
+per-row box that picks a row for the batch, 恢复选中 with two rows ticked, and
+清空回收站 (which must ask first and then take everything). Each of those is a
+click at a reported rectangle followed by a read of the database, because "the
+list looked different" is not evidence that anything was written.
+
 Usage:
     python scripts/check-native-manager.py --exe native/target/release/easyflowhub-native.exe
 """
@@ -75,14 +81,17 @@ CLOSE_KEY = "Ctrl+Q"
 VK_Q = 0x51
 VK_D = 0x44
 
-# Three live notes and one in the trash, so "live" and "trash" cannot be the same
-# number by accident. The fourth is the todo inbox: a note whose body is checkbox
-# lines, one of them already ticked -- so "the pane hides what is done" and "the
-# pane can tick" are two different observations on the same list.
+# Three live notes and three in the trash, so "live" and "trash" cannot be the same
+# number by accident, and so a batch restore has more than one row to take. One of
+# the live ones is the todo inbox: a note whose body is checkbox lines, one of them
+# already ticked -- so "the pane hides what is done" and "the pane can tick" are two
+# different observations on the same list.
 SEED = [
     ("gate-live-1", "买菜清单", "买菜清单\n西红柿 鸡蛋", "", None),
     ("gate-live-2", "周报", "周报\n本周三条结论", "工作", None),
     ("gate-trash", "已经删掉的", "已经删掉的", "", STAMP),
+    ("gate-trash-2", "删掉的第二条", "删掉的第二条\n正文", "", STAMP),
+    ("gate-trash-3", "删掉的第三条", "删掉的第三条", "", STAMP),
     (
         "gate-todo",
         "待办箱",
@@ -773,6 +782,141 @@ def main() -> int:
             and stored == (0,),
             (purged.strip() or "no manager_purge line")
             + f"; answer={(answered.strip() or 'none')}; rows={stored}",
+        )
+
+        # ------------------------------------- the trash's sub-tabs, and a batch
+        # The shipped panel splits its trash into notes / captures / scripts. This
+        # window owns notes; the other two chips answer "where did that go" instead of
+        # listing something the native shell cannot see. "A sentence replaced the
+        # list" is only observable if the sentence reports a rectangle, so it does.
+        mark = len(session.trace.text())
+        # Leave and come back: rectangles are written when a control appears, and the
+        # workbench is already on the trash after the purge above.
+        click_button(session, shell, "tab:notes")
+        click_button(session, shell, "tab:trash")
+        chips = wininput.wait_for(
+            lambda: all(
+                hit(session.trace.tail(mark), f"trash-view:{name}") is not None
+                for name in ("notes", "inbox", "scripts")
+            ),
+            4,
+        )
+        report.check(
+            "the trash reports its three sub-tabs",
+            bool(chips),
+            "notes/inbox/scripts"
+            if chips
+            else ", ".join(sorted(n for n in hit_names(session.trace.tail(mark)) if n.startswith("trash"))),
+        )
+
+        before = session.trace.count("manager_trash_view")
+        mark = len(session.trace.text())
+        click_button(session, shell, "trash-view:inbox")
+        notice = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "trash-notice") is not None, 4
+        )
+        switched = session.trace.later("manager_trash_view", before, 5)
+        report.check(
+            "收集箱 says where that trash lives instead of listing notes",
+            bool(notice) and "view=inbox" in switched,
+            (switched.strip() or "no manager_trash_view line")
+            + f"; notice={'yes' if notice else 'no'}",
+        )
+
+        mark = len(session.trace.text())
+        click_button(session, shell, "trash-view:notes")
+        back = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "row:gate-trash-2") is not None, 4
+        )
+        report.check(
+            "笔记 brings the list back",
+            bool(back),
+            "rows reported again" if back else "no row rect after switching back",
+        )
+
+        # ------------------------------------- picking rows and restoring them
+        # Two ticks, one button. The bar appears with the first tick, which moves the
+        # list down; the gate re-reads the rectangle it is about to press, which is
+        # the entire reason the product reports rectangles instead of the script
+        # guessing them.
+        mark = len(session.trace.text())
+        click_button(session, shell, "check:gate-trash-2")
+        click_button(session, shell, "check:gate-trash-3")
+        offered = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "restore-selected") is not None, 4
+        )
+        report.check(
+            "ticking two trash rows offers 恢复选中",
+            bool(offered),
+            "restore-selected reported" if offered else "the batch bar never appeared",
+        )
+
+        before = session.trace.count("manager_restore_many")
+        click_button(session, shell, "restore-selected")
+        restored = session.trace.later("manager_restore_many", before, 5)
+        left = query(
+            db,
+            "SELECT COUNT(*) FROM notes WHERE id IN ('gate-trash-2','gate-trash-3')"
+            " AND deleted_at IS NOT NULL",
+        )
+        report.check(
+            "恢复选中 restores every ticked row in one write",
+            "count=2" in restored and left == (0,),
+            (restored.strip() or "no manager_restore_many line") + f"; still trashed={left}",
+        )
+
+        # An emptied trash must stop offering the destructive header button: one that
+        # stays on screen can only answer "清空 0 条". Leaving and returning is also
+        # what proves the frame was redrawn with no such control -- a fresh chip rect
+        # in the tail is the evidence that a frame happened at all.
+        mark = len(session.trace.text())
+        click_button(session, shell, "tab:notes")
+        click_button(session, shell, "tab:trash")
+        redrew = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "trash-view:notes") is not None, 4
+        )
+        report.check(
+            "an emptied trash stops offering 清空回收站",
+            bool(redrew) and hit(session.trace.tail(mark), "empty-trash") is None,
+            "redrew without an empty-trash rect" if redrew else "no fresh chip rect",
+        )
+
+        # ------------------------------------- 清空回收站 asks first, then takes all
+        # Same rule as 彻底删除: a question, not a decision. The dialog names a count,
+        # so the check is on `verb=empty` and on the rows still being there.
+        click_button(session, shell, "tab:notes")
+        mark = len(session.trace.text())
+        click_button(session, shell, "row:gate-live-1")
+        wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "trash:gate-live-1") is not None, 4
+        )
+        click_button(session, shell, "trash:gate-live-1")
+        mark = len(session.trace.text())
+        click_button(session, shell, "tab:trash")
+        wininput.wait_for(lambda: hit(session.trace.tail(mark), "empty-trash") is not None, 4)
+
+        before = session.trace.count("manager_confirm action=ask")
+        mark = len(session.trace.text())
+        click_button(session, shell, "empty-trash")
+        dialog = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "confirm-ok") is not None, 5
+        )
+        asked = session.trace.later("manager_confirm action=ask", before, 5)
+        stored = query(db, "SELECT COUNT(*) FROM notes WHERE id = ?", ("gate-live-1",))
+        report.check(
+            "清空回收站 asks first, and the row is still there",
+            bool(dialog) and "verb=empty" in asked and stored == (1,),
+            (asked.strip() or "no manager_confirm ask line") + f"; rows={stored}",
+        )
+
+        before = session.trace.count("manager_empty_trash")
+        click_button(session, shell, "confirm-ok")
+        emptied = session.trace.later("manager_empty_trash", before, 5)
+        left = query(db, "SELECT COUNT(*) FROM notes WHERE deleted_at IS NOT NULL")
+        report.check(
+            "the second yes empties the trash for good",
+            "count=1" in emptied and "permanent=true" in emptied and left == (0,),
+            (emptied.strip() or "no manager_empty_trash line") + f"; trashed rows={left}",
         )
 
         # ------------------------------------- todos, ticked in the workbench

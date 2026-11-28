@@ -18,12 +18,13 @@
 //! rectangles instead of one, so "the tick works" and "the jump works" are separate
 //! claims.
 
-use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, StrokeKind, Vec2};
+use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Vec2};
 
 use hub_core::todo::{self, Line};
 
 use crate::theme::Theme;
 
+use super::check::{check_box, BOX};
 use super::{report, Action, State};
 
 /// Height of one todo line.
@@ -38,8 +39,6 @@ const GROUP_HEAD: f32 = 24.0;
 /// The column the checkbox lives in -- the whole column is the click target, not the
 /// 14 px square: a 14 px target is a puzzle, not a control.
 const BOX_COLUMN: f32 = 30.0;
-/// Side of the drawn square.
-const BOX: f32 = 14.0;
 /// Centre of the square inside its column.
 const BOX_LEAD: f32 = 16.0;
 
@@ -277,34 +276,7 @@ fn row(
             egui::pos2(box_area.left() + BOX_LEAD, box_area.center().y),
             Vec2::splat(BOX),
         );
-        let radius = CornerRadius::same(4);
-        if item.done {
-            // Solid accent with a drawn tick, the shipped panel's filled box. A wash
-            // plus a `✓` glyph read as a smudge at this size: the character comes
-            // from whatever face covers it, and at 9 px its strokes are one pixel.
-            ui.painter().rect_filled(boxed, radius, palette.accent);
-            let (cx, cy) = (boxed.center().x, boxed.center().y);
-            let pen = Stroke::new(1.6, palette.on_accent);
-            ui.painter()
-                .line_segment([egui::pos2(cx - 3.5, cy), egui::pos2(cx - 1.0, cy + 2.5)], pen);
-            ui.painter()
-                .line_segment([egui::pos2(cx - 1.0, cy + 2.5), egui::pos2(cx + 4.0, cy - 3.0)], pen);
-        } else {
-            // The outline brightens under the pointer: the square is the only part of
-            // the row that looks like a control, and a control that does not react to
-            // the pointer reads as decoration.
-            let line = if tick.hovered() {
-                palette.accent
-            } else {
-                palette.border_strong
-            };
-            ui.painter().rect_stroke(
-                boxed,
-                radius,
-                Stroke::new(1.0, line),
-                StrokeKind::Inside,
-            );
-        }
+        check_box(ui, palette, boxed, item.done);
 
         let mut text = RichText::new(&item.text)
             .size(11.5)

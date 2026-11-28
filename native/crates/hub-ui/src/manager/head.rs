@@ -96,6 +96,21 @@ pub(super) fn quiet(ui: &mut egui::Ui, palette: Theme, text: &str) -> egui::Resp
     )
 }
 
+/// A quiet button that leads to something irreversible: 清空回收站.
+///
+/// Not the filled danger button the dialog's yes uses. The header should not look
+/// like it is asking a question -- the dialog does that -- but "this one deletes
+/// things" has to be readable before it is pressed, so it carries the danger ink.
+pub(super) fn warn(ui: &mut egui::Ui, palette: Theme, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(text).size(10.5).color(palette.danger))
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(CornerRadius::same(palette.radius.row))
+            .min_size(Vec2::new(0.0, 26.0)),
+    )
+}
+
 /// The one filled button in a panel.
 pub(super) fn primary(ui: &mut egui::Ui, palette: Theme, text: &str) -> egui::Response {
     ui.add(

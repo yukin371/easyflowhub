@@ -57,7 +57,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 - [2026-11-28-manager-parity.md](./active/2026-11-28-manager-parity.md)：原生工作台与旧版管理器的逐项对照、模块入口走 A（只对齐四个核心区）、五刀顺序（第 1 刀视觉骨架已完成）
 
-### Completed（33）
+### Completed（34）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -92,6 +92,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-28-manager-confirm.md](./completed/2026-11-28-manager-confirm.md)：彻底删除的二次确认（待确认是视图状态不是 Action、Esc 分层、三条真 bug：点行不重绘 / 写后不重绘 / 对话框重开不报矩形，门禁 32 → 35）
 - [2026-11-28-manager-skeleton.md](./completed/2026-11-28-manager-skeleton.md)：工作台视觉骨架（侧栏 216 + 图标块行、每面板独立头、行 48 两行、状态条下移；命中名一条未改，门禁 35/35）
 - [2026-11-28-manager-todos.md](./completed/2026-11-28-manager-todos.md)：待办在原生里可勾选（一行两个目标：方框改状态 / 文字开笔记；按文本定位写回正文；筛选与按笔记分组，门禁 35 → 41）
+- [2026-11-28-manager-trash.md](./completed/2026-11-28-manager-trash.md)：回收站收尾（三子页签、逐行勾选 + 恢复选中、清空带确认、“保留 30 天”变成一次真清理；门禁 41 → 49）
 
 ### Rejected（1）
 

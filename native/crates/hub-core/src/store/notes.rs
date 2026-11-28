@@ -229,6 +229,78 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// Take many notes out of the trash in one transaction.
+    ///
+    /// Returns how many rows actually changed, not how many were asked for: the
+    /// list a click was based on is one frame old, and a row another window already
+    /// restored must not be counted as restored again. The `deleted_at IS NOT NULL`
+    /// guard is what makes the count mean "was in the trash, is not now" -- without
+    /// it a live note's `deleted_at` would be set to `NULL` (a no-op) and still be
+    /// counted, so "已恢复 3 条" could name a row that was never in the trash.
+    pub fn restore_notes(&mut self, ids: &[String]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut changed = 0;
+        {
+            let mut statement =
+                tx.prepare("UPDATE notes SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL")?;
+            for id in ids {
+                changed += statement.execute([id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// Delete every row that is in the trash. 清空回收站.
+    ///
+    /// No id list and no selection: the trash is the set, and the dialog that asks
+    /// for this says how big it is. Deleting a `WHERE`-clause's worth of rows is
+    /// still one transaction, so a crash halfway leaves the trash as it was.
+    pub fn purge_trashed(&mut self) -> Result<usize> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL", [])?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// Delete what has been in the trash longer than the retention window.
+    ///
+    /// The panel has been saying "保留 30 天" since it grew a description, and until
+    /// now nothing was doing it -- a trash that only grows is a disk leak with a
+    /// reassuring sentence over it. Comparing stamps **as text** is sound only
+    /// because [`crate::clock`] writes one fixed-width UTC shape and the Tauri build
+    /// writes the same one (`to_rfc3339`, `+00:00`, nine digits); a row with an
+    /// unreadable stamp sorts *below* a cutoff in that shape, i.e. it is kept, which
+    /// is the direction that costs nothing.
+    ///
+    /// `now` is passed in rather than read here so the cutoff is testable: a
+    /// function that proves "40 days is gone, 20 is kept" by waiting is not a test.
+    pub fn purge_expired_trash(&mut self, now: &str, days: i64) -> Result<usize> {
+        if days <= 0 {
+            return Ok(0);
+        }
+        let Some(ms) = crate::clock::unix_ms(now) else {
+            return Ok(0);
+        };
+        let cutoff = crate::clock::iso_from_unix(ms / 1_000 - days * 86_400, 0);
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            [cutoff],
+        )?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// The note that holds the todo list.
     ///
     /// Todos are **not a table**. The product stores them as Markdown checkbox lines
@@ -274,6 +346,14 @@ impl Store {
 }
 
 pub const TODO_INBOX_TITLE: &str = "待办箱";
+
+/// How long a deleted note stays recoverable.
+///
+/// One number, in one place, because two things read it: the sweep that actually
+/// deletes ([`Store::purge_expired_trash`]) and the sentence in the trash panel that
+/// promises it. A panel that says 30 while the sweep uses 14 is worse than no
+/// sentence at all.
+pub const TRASH_RETENTION_DAYS: i64 = 30;
 
 #[cfg(test)]
 mod tests {
@@ -390,6 +470,91 @@ mod tests {
         store.upsert_note(&inbox).expect("write");
         store.soft_delete_note("a", "2026-11-25T00:00:00+00:00").expect("delete");
         assert!(store.todo_inbox().expect("lookup").is_none());
+    }
+
+    #[test]
+    fn batch_restore_reports_what_it_actually_changed() {
+        // The count is what the panel says out loud ("已恢复 2 条"), so it has to mean
+        // rows that were in the trash. A live note in the list must not be counted --
+        // its `deleted_at` is already NULL and setting it to NULL changes nothing.
+        let mut store = store();
+        store.upsert_note(&note("a", "gone")).expect("write");
+        store.upsert_note(&note("b", "gone too")).expect("write");
+        store.upsert_note(&note("c", "still here")).expect("write");
+        store.soft_delete_note("a", "2026-11-25T02:00:00+00:00").expect("delete");
+        store.soft_delete_note("b", "2026-11-25T02:00:00+00:00").expect("delete");
+
+        let asked = ["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(store.restore_notes(&asked).expect("restore"), 2);
+        assert_eq!(store.notes(true).expect("all").len(), 3);
+        assert!(store.notes(false).expect("live").iter().all(|row| row.deleted_at.is_none()));
+
+        // Second call: nothing left to restore, and the count says so rather than
+        // reporting the size of the request.
+        assert_eq!(store.restore_notes(&asked).expect("again"), 0);
+        assert_eq!(store.restore_notes(&[]).expect("empty"), 0);
+    }
+
+    #[test]
+    fn empty_trash_takes_every_trashed_row_and_no_live_one() {
+        let mut store = store();
+        store.upsert_note(&note("live", "keep me")).expect("write");
+        for id in ["t1", "t2", "t3"] {
+            store.upsert_note(&note(id, "trash")).expect("write");
+            store.soft_delete_note(id, "2026-11-25T02:00:00+00:00").expect("delete");
+        }
+        assert_eq!(store.purge_trashed().expect("purge"), 3);
+        assert_eq!(store.notes(true).expect("all").len(), 1);
+        assert!(store.note("live").expect("read").is_some());
+        assert_eq!(store.purge_trashed().expect("again"), 0);
+    }
+
+    #[test]
+    fn the_retention_sweep_deletes_only_what_is_past_the_window() {
+        // "保留 30 天" was a sentence with nothing behind it. The cutoff is text, so
+        // the test uses the same shape the writer produces (`+00:00`, nine digits).
+        let mut store = store();
+        store.upsert_note(&note("stale", "40 days in the trash")).expect("write");
+        store.upsert_note(&note("fresh", "20 days in the trash")).expect("write");
+        store.upsert_note(&note("live", "never deleted")).expect("write");
+        store
+            .soft_delete_note("stale", "2026-10-19T00:00:00.000000000+00:00")
+            .expect("delete");
+        store
+            .soft_delete_note("fresh", "2026-11-08T00:00:00.000000000+00:00")
+            .expect("delete");
+
+        let purged = store
+            .purge_expired_trash("2026-11-28T00:00:00.000000000+00:00", TRASH_RETENTION_DAYS)
+            .expect("sweep");
+        assert_eq!(purged, 1, "only the row past 30 days leaves");
+        assert!(store.note("stale").expect("read").is_none());
+        assert!(store.note("fresh").expect("read").is_some(), "recent trash stays");
+        assert!(store.note("live").expect("read").is_some(), "the list is not the trash");
+
+        // A zero or negative window would mean "delete everything immediately"; it is
+        // refused rather than honoured, because that setting does not exist yet.
+        assert_eq!(
+            store
+                .purge_expired_trash("2026-11-28T00:00:00.000000000+00:00", 0)
+                .expect("zero"),
+            0
+        );
+        assert!(store.note("fresh").expect("read").is_some());
+    }
+
+    #[test]
+    fn an_unreadable_now_keeps_everything() {
+        // The sweep is destructive and runs on a tab click, so a clock it cannot read
+        // must be a no-op -- the alternative is deleting rows because `now` parsed as
+        // the epoch.
+        let mut store = store();
+        store.upsert_note(&note("t", "trash")).expect("write");
+        store
+            .soft_delete_note("t", "2026-11-25T00:00:00.000000000+00:00")
+            .expect("delete");
+        assert_eq!(store.purge_expired_trash("not a date", 30).expect("sweep"), 0);
+        assert!(store.note("t").expect("read").is_some());
     }
 
     fn write(id: &str, content: &str, updated_at: &str) -> NoteWrite {

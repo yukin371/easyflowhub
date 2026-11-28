@@ -28,24 +28,33 @@ pub enum Pending {
     /// Permanent: the row leaves the database. Restoring it is not possible, which
     /// is why this is the one action that asks.
     Purge { id: String, title: String },
+    /// The whole trash at once. Same irreversibility as [`Pending::Purge`], but the
+    /// question has to name a count instead of a title -- "清空回收站？" with no
+    /// number is a question the user cannot answer.
+    EmptyTrash { count: usize },
 }
 
 impl Pending {
     pub fn verb(&self) -> &'static str {
         match self {
             Self::Purge { .. } => "purge",
+            Self::EmptyTrash { .. } => "empty",
         }
     }
 
+    /// The row this question is about. `*` for the whole-trash question, which has
+    /// no id: the log still needs a field there, and an empty one reads as a bug.
     pub fn id(&self) -> &str {
         match self {
             Self::Purge { id, .. } => id,
+            Self::EmptyTrash { .. } => "*",
         }
     }
 
     fn question(&self) -> &'static str {
         match self {
             Self::Purge { .. } => "彻底删除这条笔记？",
+            Self::EmptyTrash { .. } => "清空回收站？",
         }
     }
 
@@ -54,12 +63,25 @@ impl Pending {
             Self::Purge { title, .. } => {
                 format!("「{title}」会从数据库删除，回收站也找不回来。")
             }
+            Self::EmptyTrash { count } => {
+                format!("{count} 条笔记会从数据库删除，回收站也找不回来。")
+            }
         }
     }
 
     fn yes(&self) -> &'static str {
         match self {
             Self::Purge { .. } => "彻底删除",
+            Self::EmptyTrash { .. } => "清空回收站",
+        }
+    }
+
+    /// What answering yes means. One place, so a new destructive verb cannot forget
+    /// to say which [`Action`](super::Action) it produces.
+    fn agreed(self) -> Action {
+        match self {
+            Self::Purge { id, .. } => Action::Purge(id),
+            Self::EmptyTrash { .. } => Action::EmptyTrash,
         }
     }
 }
@@ -138,7 +160,7 @@ pub fn dialog(ctx: &egui::Context, palette: Theme, state: &mut State) -> Action 
     match decision {
         Some(true) => {
             state.pending = None;
-            Action::Purge(pending.id().to_string())
+            pending.agreed()
         }
         Some(false) => {
             state.pending = None;
@@ -284,6 +306,25 @@ mod tests {
         let action = pass(&ctx, &mut state, &rows, click(at));
         assert_eq!(action, Action::Purge("gone".to_string()));
         assert_eq!(state.pending, None, "answering closes the dialog");
+    }
+
+    #[test]
+    fn the_second_yes_empties_the_whole_trash() {
+        // Same dialog, different verb: the yes has to produce `EmptyTrash`, not the
+        // `Purge` of some row -- the two questions are asked by the same widget and
+        // that is exactly where they could be confused.
+        let ctx = egui::Context::default();
+        let rows = trashed();
+        let mut state = State {
+            tab: Tab::Trash,
+            pending: Some(Pending::EmptyTrash { count: 1 }),
+            ..Default::default()
+        };
+        let at = settle(&ctx, &mut state, &rows, "confirm-ok").center();
+
+        let action = pass(&ctx, &mut state, &rows, click(at));
+        assert_eq!(action, Action::EmptyTrash);
+        assert_eq!(state.pending, None);
     }
 
     #[test]

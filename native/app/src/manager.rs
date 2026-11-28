@@ -16,8 +16,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+use hub_core::store::TRASH_RETENTION_DAYS;
 use hub_core::{clock, todo, NoteWrite, Store, Table};
-use hub_ui::manager::{self, Action, Pending, Row, Tab, TodoGroup};
+use hub_ui::manager::{self, Action, Pending, Row, Tab, TodoGroup, TrashView};
 use hub_ui::Theme;
 
 use crate::hub::Request;
@@ -102,8 +103,13 @@ impl Shell {
         self.state.tab = tab;
         self.state.selected = None;
         self.state.status.clear();
+        self.state.trash_view = TrashView::Notes;
+        self.state.checked.clear();
         self.log
             .mark(0, "manager_tab", &format!("tab={}", tab.id()));
+        if tab == Tab::Trash {
+            self.expire_trash();
+        }
     }
 
     /// Constant across frames: eframe diffs the builder against the one it
@@ -185,7 +191,7 @@ impl Shell {
                 &format!("action=ask verb={} id={}", now.verb(), now.id()),
             ),
             (Some(then), None) => {
-                let outcome = if matches!(action, Action::Purge(_)) {
+                let outcome = if matches!(action, Action::Purge(_) | Action::EmptyTrash) {
                     "ok"
                 } else {
                     "cancel"
@@ -253,7 +259,15 @@ impl Shell {
 
     fn act(&mut self, ctx: &egui::Context, action: Action) {
         match action {
-            Action::None | Action::SetTab(_) => {}
+            Action::None => {}
+            Action::SetTab(tab) => {
+                // Opening the trash is the moment its sentence ("保留 30 天") is read,
+                // so it is also the moment the sentence is kept.
+                if tab == Tab::Trash {
+                    self.expire_trash();
+                    self.refresh(ctx);
+                }
+            }
             Action::Close => self.close(ctx, "button"),
             Action::NewNote => {
                 // The hotkey's own request, pushed the same way: opening a note
@@ -285,6 +299,48 @@ impl Shell {
                     .mark(0, "manager_todo_filter", &format!("filter={}", filter.id()));
                 // The pane already asked for a frame; this is the one that also
                 // updates the count of notes at the right of the filter row.
+                self.refresh(ctx);
+            }
+            Action::SetTrashView(view) => {
+                self.state.status = format!("回收站：{}", view.label());
+                self.log
+                    .mark(0, "manager_trash_view", &format!("view={}", view.id()));
+                self.refresh(ctx);
+            }
+            Action::RestoreSelected(ids) => {
+                let restored = self.with_store(|store| store.restore_notes(&ids));
+                let count = restored.unwrap_or(0);
+                self.state.status = if count > 0 {
+                    format!("已恢复 {count} 条")
+                } else {
+                    "没有可恢复的笔记".to_string()
+                };
+                // The count and the ids: the first is what the user was told, the
+                // second is what a post-mortem needs when a note did not come back.
+                self.log.mark(
+                    0,
+                    "manager_restore_many",
+                    &format!("count={count} ids={}", ids.join(",")),
+                );
+                self.state.checked.clear();
+                self.reload();
+                self.refresh(ctx);
+            }
+            Action::EmptyTrash => {
+                let purged = self.with_store(|store| store.purge_trashed());
+                let count = purged.unwrap_or(0);
+                self.state.status = if count > 0 {
+                    format!("已清空 {count} 条")
+                } else {
+                    "回收站是空的".to_string()
+                };
+                self.log.mark(
+                    0,
+                    "manager_empty_trash",
+                    &format!("count={count} permanent=true"),
+                );
+                self.state.checked.clear();
+                self.reload();
                 self.refresh(ctx);
             }
             Action::Pin { id, pinned } => {
@@ -485,19 +541,46 @@ impl Shell {
     }
 
     /// Run one write against the store, returning `None` when there is no database.
-    fn with_store<F>(&self, work: F) -> Option<bool>
+    ///
+    /// Generic over what the write reports back: most of them answer "did a row
+    /// change", but a batch answers "how many rows", and that number is what the
+    /// status line and the log say out loud.
+    fn with_store<T, F>(&self, work: F) -> Option<T>
     where
-        F: FnOnce(&mut Store) -> Result<bool, hub_core::StoreError>,
+        F: FnOnce(&mut Store) -> Result<T, hub_core::StoreError>,
     {
         let store = self.store.as_ref()?;
         let mut guard = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         match work(&mut guard) {
-            Ok(changed) => Some(changed),
+            Ok(value) => Some(value),
             Err(error) => {
                 self.log.mark(0, "manager_store", &format!("error=\"{error}\""));
                 None
             }
         }
+    }
+
+    /// Delete what has sat in the trash past the retention window.
+    ///
+    /// The panel has said "保留 30 天" since it got a description and nothing was
+    /// doing it -- a trash that only grows is a disk leak with a reassuring sentence
+    /// over it. The sweep runs when the trash is opened, which is when the sentence
+    /// is being read, and it reports what it did: a silent delete on a tab click is
+    /// exactly the kind of thing that makes a user distrust the trash.
+    fn expire_trash(&mut self) {
+        let now = clock::now_iso();
+        let purged = self.with_store(|store| store.purge_expired_trash(&now, TRASH_RETENTION_DAYS));
+        let Some(count) = purged else { return };
+        if count == 0 {
+            return;
+        }
+        self.state.status = format!("已清理 {count} 条超过 {TRASH_RETENTION_DAYS} 天的笔记");
+        self.log.mark(
+            0,
+            "manager_trash_expire",
+            &format!("days={TRASH_RETENTION_DAYS} purged={count}"),
+        );
+        self.reload();
     }
 
     /// Re-read the list after a write.

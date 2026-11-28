@@ -182,6 +182,11 @@ fn row(
         state.tab = tab;
         state.query.clear();
         state.status.clear();
+        // The trash's sub-tab and its batch pick are about the trash, not about the
+        // window: leaving must not put the next visit on a sub-tab with no list, and
+        // a pick left behind would return as a count nobody asked for.
+        state.trash_view = super::TrashView::Notes;
+        state.checked.clear();
         ui.ctx().request_repaint();
         true
     } else {

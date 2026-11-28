@@ -12,20 +12,35 @@
 //! preview. The shipped list stacks them: title on top, one line of body under
 //! it, the timestamp at the far right. That is also why the row is 48 px now -- a
 //! single line cannot hold two lines of text.
+//!
+//! ## One hit area, two behaviours
+//!
+//! A trashed row also has to be *picked* (for the batch restore) as well as
+//! *selected* (which reveals 恢复 / 彻底删除 under it). Two overlapping click
+//! regions would make that ambiguous -- egui would hand the click to whichever was
+//! registered last. So the row keeps one `Response` and splits it by x: the left
+//! column is the checkbox, everything else selects. Picking does not select on
+//! purpose: a selection reveals a button strip, which moves every row below it, and
+//! a second tick aimed from the old layout would then land on the wrong row.
 
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Vec2};
 
 use crate::hint;
 use crate::theme::Theme;
 
+use super::check::{check_box, BOX};
 use super::{report, Action, Row, State};
 
 /// Row height: two lines of text plus 12 px of air on each side.
 const HEIGHT: f32 = 48.0;
 
-/// Where the title column starts. The marker column holds "置顶" / "回收站"; the
+/// Where the title column starts. The marker column holds "置顶" / the checkbox; the
 /// widest of them is three characters at 9 px, which fits in 44.
 const TEXT_X: f32 = 56.0;
+
+/// Width of the checkbox target inside the marker column. The whole column is the
+/// target -- 14 px of drawn square is not a 14 px control.
+const CHECK_COLUMN: f32 = 30.0;
 
 /// One note row.
 ///
@@ -72,7 +87,10 @@ pub(super) fn note_row(
     }
 
     if let Some((marker, ink)) = if row.deleted_at.is_some() {
-        Some(("回收站", palette.ink_subtle))
+        // No "回收站" label in the marker column any more: every row on this tab is
+        // in the trash, and the column is needed for the checkbox that picks rows for
+        // the batch restore.
+        None
     } else if row.pinned {
         Some(("置顶", palette.accent))
     } else {
@@ -85,6 +103,15 @@ pub(super) fn note_row(
             FontId::proportional(9.0),
             ink,
         );
+    }
+    if row.deleted_at.is_some() {
+        let target = egui::Rect::from_min_size(rect.min, Vec2::new(CHECK_COLUMN, HEIGHT));
+        report(state, &format!("check:{}", row.id), target);
+        let boxed = egui::Rect::from_center_size(
+            egui::pos2(target.left() + 15.0, target.center().y),
+            Vec2::splat(BOX),
+        );
+        check_box(ui, palette, boxed, state.checked.contains(&row.id));
     }
 
     let text_x = rect.left() + TEXT_X;
@@ -129,24 +156,40 @@ pub(super) fn note_row(
     );
 
     if response.clicked() {
-        // Selecting is not conditional on having an action. A trashed row has no
-        // "open", and the first version therefore never set `selected` for it -- so
-        // 恢复 could only ever act on the row that had just been deleted (the one
-        // whose selection survived from the notes tab). Found by the gate clicking
-        // a trashed row and watching nothing happen.
-        //
-        // The repaint is part of the fix, not a nicety: this frame already painted
-        // the row with the *old* selection, and the buttons are drawn below the
-        // next frame's allocation. Without asking for that frame, selecting a
-        // trashed row changes nothing on screen -- which is what "nothing happened"
-        // looked like in the first place.
-        state.selected = Some(row.id.clone());
-        ui.ctx().request_repaint();
-        action = if row.deleted_at.is_some() {
-            None
+        // The checkbox column is a different verb from the row, and the split is by
+        // x inside this one hit area (see the module comment). Picking a row for the
+        // batch must not also select it: the button strip that selection reveals
+        // moves every row below, and the second tick of a two-row batch would land on
+        // whatever moved into that place.
+        let on_box = response
+            .interact_pointer_pos()
+            .map(|at| at.x < rect.left() + CHECK_COLUMN)
+            .unwrap_or(false);
+        if row.deleted_at.is_some() && on_box {
+            if !state.checked.remove(&row.id) {
+                state.checked.insert(row.id.clone());
+            }
+            ui.ctx().request_repaint();
         } else {
-            Some(Action::Open(row.id.clone()))
-        };
+            // Selecting is not conditional on having an action. A trashed row has no
+            // "open", and the first version therefore never set `selected` for it -- so
+            // 恢复 could only ever act on the row that had just been deleted (the one
+            // whose selection survived from the notes tab). Found by the gate clicking
+            // a trashed row and watching nothing happen.
+            //
+            // The repaint is part of the fix, not a nicety: this frame already painted
+            // the row with the *old* selection, and the buttons are drawn below the
+            // next frame's allocation. Without asking for that frame, selecting a
+            // trashed row changes nothing on screen -- which is what "nothing happened"
+            // looked like in the first place.
+            state.selected = Some(row.id.clone());
+            ui.ctx().request_repaint();
+            action = if row.deleted_at.is_some() {
+                None
+            } else {
+                Some(Action::Open(row.id.clone()))
+            };
+        }
     }
     // Actions live on the selected row's header line rather than inside every row:
     // three 16 px buttons per row is a wall of glyphs, and the list is the part

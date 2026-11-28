@@ -255,10 +255,21 @@ fn group(id: &str, title: &str, content: &str) -> TodoGroup {
     TodoGroup::from_note(id, title, content).expect("the fixture is a note with todos")
 }
 
-/// One frame with events, returning the action it produced.
-fn pass(
+fn rect_of(hits: &[(String, egui::Rect)], name: &str) -> egui::Rect {
+    hits.iter()
+        .find(|(other, _)| other == name)
+        .unwrap_or_else(|| panic!("{name} was not reported"))
+        .1
+}
+
+/// One frame over both lists, returning what it produced.
+///
+/// The trash tests need rows *and* possibly todos; the todo tests need the reverse.
+/// One helper with both parameters keeps the frame exactly as the window runs it.
+fn run(
     ctx: &egui::Context,
     state: &mut State,
+    rows: &[Row],
     todos: &[TodoGroup],
     events: Vec<egui::Event>,
 ) -> Action {
@@ -272,22 +283,14 @@ fn pass(
     };
     let mut action = Action::None;
     let _ = ctx.run(input, |ctx| {
-        action = draw(ctx, Theme::standard(), state, &[], todos, &Table::defaults());
+        action = draw(ctx, Theme::standard(), state, rows, todos, &Table::defaults());
     });
     action
 }
 
-fn rect_of(hits: &[(String, egui::Rect)], name: &str) -> egui::Rect {
-    hits.iter()
-        .find(|(other, _)| other == name)
-        .unwrap_or_else(|| panic!("{name} was not reported"))
-        .1
-}
-
 /// Press and release at the centre of `name`, returning the action of the release.
-fn click_name(state: &mut State, todos: &[TodoGroup], name: &str) -> Action {
-    let ctx = egui::Context::default();
-    pass(&ctx, state, todos, Vec::new());
+fn click(ctx: &egui::Context, state: &mut State, rows: &[Row], name: &str) -> Action {
+    run(ctx, state, rows, &[], Vec::new());
     let at = rect_of(&state.hits, name).center();
     let button = |pressed: bool| {
         vec![egui::Event::PointerButton {
@@ -297,8 +300,25 @@ fn click_name(state: &mut State, todos: &[TodoGroup], name: &str) -> Action {
             modifiers: egui::Modifiers::default(),
         }]
     };
-    pass(&ctx, state, todos, button(true));
-    pass(&ctx, state, todos, button(false))
+    run(ctx, state, rows, &[], button(true));
+    run(ctx, state, rows, &[], button(false))
+}
+
+/// Press and release at the centre of `name`, returning the action of the release.
+fn click_name(state: &mut State, todos: &[TodoGroup], name: &str) -> Action {
+    let ctx = egui::Context::default();
+    run(&ctx, state, &[], todos, Vec::new());
+    let at = rect_of(&state.hits, name).center();
+    let button = |pressed: bool| {
+        vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }]
+    };
+    run(&ctx, state, &[], todos, button(true));
+    run(&ctx, state, &[], todos, button(false))
 }
 
 #[test]
@@ -412,4 +432,152 @@ fn the_all_chip_is_an_action_so_the_log_can_say_what_the_filter_is() {
         Action::SetTodoFilter(Filter::All)
     );
     assert_eq!(state.filter, Filter::All);
+}
+
+// ── the trash pane ───────────────────────────────────────────────────────────
+
+/// Two trashed notes and one live one, so "the trash" and "the list" differ.
+fn trash_rows() -> Vec<Row> {
+    vec![
+        row("gone-a", "删掉的甲", "删掉的甲\n正文", "", true),
+        row("gone-b", "删掉的乙", "删掉的乙", "", true),
+        row("live", "留下的", "留下的\n正文", "", false),
+    ]
+}
+
+fn trash_state() -> State {
+    State {
+        tab: Tab::Trash,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_trashed_row_offers_a_box_that_picks_instead_of_selecting() {
+    // The trash needs two verbs per row: pick it for the batch, or select it to get
+    // 恢复/彻底删除. They are one hit area split by x, so both halves are pinned: the
+    // box must exist, its target must be the column rather than the drawn square, and
+    // a pick must not select (a selection reveals a button strip and moves every row
+    // below it, so the second tick would land on the wrong row).
+    let rows = trash_rows();
+    let mut state = trash_state();
+    let hits = frame(&mut state, &rows);
+    assert!(named(&hits, "check:gone-a"), "a trashed row must be pickable");
+    assert!(!named(&hits, "check:live"), "the notes tab has no boxes");
+    let check = rect_of(&hits, "check:gone-a");
+    assert!(
+        check.width() >= 24.0 && check.height() >= 24.0,
+        "the target is the column, not the 14 px square: {}x{}",
+        check.width(),
+        check.height()
+    );
+
+    let ctx = egui::Context::default();
+    assert_eq!(click(&ctx, &mut state, &rows, "check:gone-a"), Action::None);
+    assert!(state.checked.contains("gone-a"), "the box ticks");
+    assert_eq!(state.selected, None, "picking is not selecting");
+
+    // The text of the same row still selects it, which is what reveals the buttons.
+    assert_eq!(click(&ctx, &mut state, &rows, "row:gone-a"), Action::None);
+    assert_eq!(state.selected.as_deref(), Some("gone-a"));
+}
+
+#[test]
+fn the_batch_bar_shows_up_only_when_something_is_picked() {
+    // A bar that is always there with a "恢复选中 (0)" button is a button that can only
+    // fail. It appears with the first tick and leaves with the restore.
+    let rows = trash_rows();
+    let mut state = trash_state();
+    let hits = frame(&mut state, &rows);
+    assert!(!named(&hits, "restore-selected"), "nothing is picked yet");
+    assert!(!named(&hits, "clear-selection"));
+
+    let ctx = egui::Context::default();
+    click(&ctx, &mut state, &rows, "check:gone-a");
+    let hits = frame(&mut state, &rows);
+    assert!(named(&hits, "restore-selected"), "one tick is enough to offer it");
+    assert!(named(&hits, "clear-selection"), "and there is a way back out");
+}
+
+#[test]
+fn restore_selected_carries_every_picked_id_in_a_stable_order() {
+    // The ids travel with the action, so the log names the rows instead of "whatever
+    // was ticked". A `HashSet` would have made the line differ between runs.
+    let rows = trash_rows();
+    let mut state = trash_state();
+    let ctx = egui::Context::default();
+    click(&ctx, &mut state, &rows, "check:gone-b");
+    click(&ctx, &mut state, &rows, "check:gone-a");
+    assert_eq!(state.checked.len(), 2);
+
+    assert_eq!(
+        click(&ctx, &mut state, &rows, "restore-selected"),
+        Action::RestoreSelected(vec!["gone-a".to_string(), "gone-b".to_string()])
+    );
+    assert!(!state.checked.is_empty(), "the controller clears it, not the click");
+}
+
+#[test]
+fn clearing_the_pick_leaves_the_rows_alone() {
+    let rows = trash_rows();
+    let mut state = trash_state();
+    let ctx = egui::Context::default();
+    click(&ctx, &mut state, &rows, "check:gone-a");
+    assert_eq!(click(&ctx, &mut state, &rows, "clear-selection"), Action::None);
+    assert!(state.checked.is_empty(), "取消选择 clears the set, it does not restore");
+    let hits = frame(&mut state, &rows);
+    assert!(!named(&hits, "restore-selected"));
+    assert!(named(&hits, "row:gone-a"), "the row is still in the trash");
+}
+
+#[test]
+fn the_other_two_sub_tabs_answer_instead_of_listing_notes() {
+    // 收集箱 and 脚本 are the Tauri manager's; the chip leads to a sentence saying so.
+    // A dimmed chip would be a dead control, and an empty list would be a claim about
+    // data this window cannot see.
+    let rows = trash_rows();
+    let mut state = trash_state();
+    let hits = frame(&mut state, &rows);
+    for view in TrashView::ALL {
+        assert!(
+            named(&hits, &format!("trash-view:{}", view.id())),
+            "{} must be addressable",
+            view.id()
+        );
+    }
+    assert!(!named(&hits, "trash-notice"), "笔记 is the default, and it has a list");
+
+    let ctx = egui::Context::default();
+    assert_eq!(
+        click(&ctx, &mut state, &rows, "trash-view:inbox"),
+        Action::SetTrashView(TrashView::Inbox)
+    );
+    let hits = frame(&mut state, &rows);
+    assert!(named(&hits, "trash-notice"), "the notice replaces the list");
+    assert!(!named(&hits, "row:gone-a"), "and the rows are not behind it");
+    assert!(TrashView::Inbox.notice().is_some() && TrashView::Notes.notice().is_none());
+}
+
+#[test]
+fn empty_trash_asks_before_it_takes_anything() {
+    // Same rule as 彻底删除: one click is a question, only the dialog's yes deletes.
+    // It also has no business being on screen when the trash is empty.
+    let rows = trash_rows();
+    let mut state = trash_state();
+    let hits = frame(&mut state, &rows);
+    assert!(named(&hits, "empty-trash"));
+    assert_eq!(state.pending, None);
+
+    let ctx = egui::Context::default();
+    assert_eq!(click(&ctx, &mut state, &rows, "empty-trash"), Action::None);
+    assert_eq!(
+        state.pending,
+        Some(super::Pending::EmptyTrash { count: 2 }),
+        "the question has to name how many rows it would take"
+    );
+
+    // Nothing in the trash, nothing to empty.
+    let mut empty = trash_state();
+    let hits = frame(&mut empty, &[row("live", "留下的", "留下的", "", false)]);
+    assert!(!named(&hits, "empty-trash"), "no rows, no destructive button");
 }
