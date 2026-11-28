@@ -61,7 +61,7 @@
 | `docs/PRD-v1.0.0.md` | `v1.0.0` 正式需求基线、范围和开发阶段设计 | 需求边界或版本策略变化时更新 |
 | `docs/PRD-v0.2.0.md` | 当前个人效率 Hub 版本的需求基线、范围和验收口径 | v0.2.0 需求边界或阶段策略变化时更新 |
 | `docs/roadmap.md` | 当前版本执行状态、active tracks、验证债务与 next queue | 只保留 active 内容，不保留长历史；单文件预算与链接由 `scripts/check-doc-budget.mjs` 判 |
-| `docs/roadmap/progress-YYYY-MM.md` | 按月归档的进展日志（路线图的下层） | 新条目先写这里，再把文件加进 `roadmap.md` 的索引 |
+| `docs/roadmap/journal/` | 三层进展日志：`month/YYYY-MM.md` → `week/YYYY-Www.md` → `log/YYYY-MM-DD.md` | 条目只写当天的日志，周与月只摘下一层的头一句；约定见 [journal/README.md](./roadmap/journal/README.md)，父子引用由 `scripts/check-doc-budget.mjs` 判 |
 | `docs/roadmap/vX.Y.Z.md` | 已发布版本的路线存档（冻结） | 只在发布收尾时整段移入，之后仅改勘误 |
 | `docs/ARCHITECTURE_GUARDRAILS.md` | 架构边界、依赖方向、canonical owners | 边界变化时必须更新 |
 | `docs/checklists/*.md` | 实施前 / review 时的执行清单 | 规则或协作方式变化时更新 |

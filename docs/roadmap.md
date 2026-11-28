@@ -144,11 +144,11 @@
 
 ### Recent Progress
 
-按月归档（ADR-0001：路线图不保留长历史。新条目写进当月文件，再把文件加进这里）：
+三层归档（ADR-0001：路线图不保留长历史。新条目写进当天的日志，周与月只做摘要，约定见 [journal/README.md](./roadmap/journal/README.md)）：
 
-- [2026-11](./roadmap/progress-2026-11.md) —— Native 运行时 G0 与 S1–S4、`notes.db` 统一迁移器、Phase 0.5 止血
-- [2026-10](./roadmap/progress-2026-10.md) —— 架构审查阶段 A–D、语音转写、v0.2.0 发布收尾
-- [2026-04](./roadmap/progress-2026-04.md) —— v1.0.0 立项、PRD 与交付计划、extension 平台
+- [2026-11](./roadmap/journal/month/2026-11.md) —— Native 运行时 G0 与 S1–S4、`notes.db` 统一迁移器、Phase 0.5 止血
+- [2026-10](./roadmap/journal/month/2026-10.md) —— 架构审查阶段 A–D、语音转写、v0.2.0 发布收尾
+- [2026-04](./roadmap/journal/month/2026-04.md) —— v1.0.0 立项、PRD 与交付计划、extension 平台
 
 ## v0.2.0（已发布）
 
@@ -235,7 +235,7 @@
 
 - PRD 负责版本需求边界，roadmap 只保留 active 执行内容。
 - 深设计细节放入 `docs/plans` 或 `docs/decisions`，不要继续堆进 roadmap。
-- **进展日志按月分层**：条目写进 `docs/roadmap/progress-YYYY-MM.md`，本文件只留索引；已发布版本整段移进 `docs/roadmap/vX.Y.Z.md` 冻结（见 [v0.2.0](./roadmap/v0.2.0.md)）。依据 ADR-0001：路线图不保留长历史。
-- **单文件预算**：`docs/**/*.md` 软上限 40 KB、硬上限 128 KB，超软上限的文件在 `scripts/doc-budget.json` 里钉住、只许缩不许涨。`node scripts/check-doc-budget.mjs` 同时检查相对链接能否解析、以及本文件有没有又长出带日期的条目。
+- **进展日志三层**：在 `docs/roadmap/journal/` 下（`log/YYYY-MM-DD.md` → `week/YYYY-Www.md` → `month/YYYY-MM.md`）。条目只写进当天的日志，周与月只做摘要；上层必须引用下层，否则门禁报错。已发布版本整段移进 `docs/roadmap/vX.Y.Z.md` 冻结（见 [v0.2.0](./roadmap/v0.2.0.md)）。依据 ADR-0001：路线图不保留长历史。
+- **单文件预算**：`docs/**/*.md` 软上限 40 KB、硬上限 128 KB；日志三层各有自己的上限（见 `scripts/doc-budget.json` 的 `layers`，日志层**没有**软上限）。超软上限的文件钉在 `pinnedBytes` 里、只许缩不许涨。`node scripts/check-doc-budget.mjs` 同时检查相对链接能否解析、月/周/日是否一条不缺地被上层引用。
 - 每轮 checkpoint 结束后，回填验证结果、剩余风险和 next queue。
 - **方案走生命周期**：`docs/plans/` 下分 `proposals/`（想清楚没排期）、`active/`（当前依据）、`completed/`（已交付）、`rejected/`（不做）、`archive/`（历史 / superseded / deferred）。状态由目录位置表达，归档就是 `git mv`；`node scripts/check-plan-lifecycle.mjs` 判位置与头部状态行是否一致、索引有没有漏、以及移动后有没有留下悬空路径。

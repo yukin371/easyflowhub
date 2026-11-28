@@ -1,7 +1,12 @@
 {
-  "_note": "Budget for docs/**/*.md, README.md, AGENTS.md, native/README.md. softBytes: over this a file must be pinned here and may only shrink. hardBytes: fails outright; split it. Pins are refreshed with `node scripts/check-doc-budget.mjs --pin`, which refuses to raise a value. See docs/README.md and ADR-0001 for why the route document is not a log.",
+  "_note": "Budget for docs/**/*.md, README.md, AGENTS.md, native/README.md. softBytes: over this a file must be pinned here and may only shrink. hardBytes: fails outright; split it. `layers` overrides both by path prefix, first match wins; a layer with `softBytes: null` is append-only, so growth is not a violation there (it still has a hard ceiling). Pins are refreshed with `node scripts/check-doc-budget.mjs --pin`, which refuses to raise a value. See docs/roadmap/journal/README.md and ADR-0001 for why a log is not a route document.",
   "softBytes": 40960,
   "hardBytes": 131072,
+  "layers": [
+    { "match": "docs/roadmap/journal/log/", "softBytes": null, "hardBytes": 65536 },
+    { "match": "docs/roadmap/journal/week/", "softBytes": 16384, "hardBytes": 40960 },
+    { "match": "docs/roadmap/journal/month/", "softBytes": 12288, "hardBytes": 24576 }
+  ],
   "pinnedBytes": {
     "docs/plans/active/2026-11-24-native-runtime-redesign.md": 81253,
     "docs/plans/active/2026-11-25-phase1-quicknote-shell.md": 104058,

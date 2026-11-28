@@ -57,7 +57,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
 - [2026-11-28-manager-parity.md](./active/2026-11-28-manager-parity.md)：原生工作台与旧版管理器的逐项对照、模块入口走 A（只对齐四个核心区）、五刀顺序（第 1 刀视觉骨架已完成）
 
-### Completed（35）
+### Completed（36）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -94,6 +94,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-28-manager-todos.md](./completed/2026-11-28-manager-todos.md)：待办在原生里可勾选（一行两个目标：方框改状态 / 文字开笔记；按文本定位写回正文；筛选与按笔记分组，门禁 35 → 41）
 - [2026-11-28-manager-trash.md](./completed/2026-11-28-manager-trash.md)：回收站收尾（三子页签、逐行勾选 + 恢复选中、清空带确认、“保留 30 天”变成一次真清理；门禁 41 → 49）
 - [2026-11-28-manager-trash-three.md](./completed/2026-11-28-manager-trash-three.md)：三个子页签都有列表（`RowKind` 随动作走、收集箱真删到附件字节、脚本回收站读 `scriptmgr-go` 的目录契约、三类一起到期；门禁 49 → 59）
+- [2026-11-28-roadmap-journal-layers.md](./completed/2026-11-28-roadmap-journal-layers.md)：日志分成日 / 周 / 月三层（切分键换成时间、门禁改判父子引用、日志层取消软上限；40.9 KB → 月志 2.9 KB，自检 12 → 19）
 
 ### Rejected（1）
 

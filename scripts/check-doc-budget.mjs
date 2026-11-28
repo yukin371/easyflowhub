@@ -11,9 +11,13 @@
 //      of a pinned file fails, which is the ratchet: you cannot keep appending.
 //   2. relative links -- moving a section into its own file is how links rot. Every
 //      `](./x)` must resolve, so a split is verified by the guard instead of by eye.
-//   3. roadmap shape -- dated progress entries belong in
-//      `docs/roadmap/progress-YYYY-MM.md`; the route document keeps the index and must
-//      link every month file that exists.
+//   3. journal shape -- dated entries live under `docs/roadmap/journal/`, three layers
+//      deep (month -> week -> log). The key is time, not bytes: every log must be linked
+//      from its week, every week from its month, every month from the route document.
+//      A file named W48 may hold no date outside that week. Early months that predate the
+//      split are single-layer and stay legal -- the rule is "if it exists it is linked",
+//      not "every month must have children". This judges index integrity, which is the
+//      only thing that makes a layered log searchable.
 //
 // Usage:
 //   node scripts/check-doc-budget.mjs [--root <dir>] [--pin]
@@ -60,6 +64,19 @@ function loadBudget() {
     }
   }
   raw.pinnedBytes ??= {};
+  for (const layer of raw.layers ?? []) {
+    if (typeof layer.match !== 'string' || layer.match.length === 0) {
+      throw new Error(`${rel(BUDGET_PATH)}: every layer needs a \`match\` path prefix`);
+    }
+    // `softBytes: null` marks an append-only layer: its size is set by how much happened,
+    // so a soft cap there would only reward deleting the entries it exists to keep.
+    if (layer.softBytes !== null && (typeof layer.softBytes !== 'number' || layer.softBytes <= 0)) {
+      throw new Error(`${rel(BUDGET_PATH)}: layer ${layer.match} needs \`softBytes\` as a positive number or null`);
+    }
+    if (typeof layer.hardBytes !== 'number' || layer.hardBytes <= 0) {
+      throw new Error(`${rel(BUDGET_PATH)}: layer ${layer.match} needs \`hardBytes\` as a positive number`);
+    }
+  }
   return raw;
 }
 
@@ -94,11 +111,23 @@ for (const file of files) {
   sizes.set(rel(file), fs.statSync(file).size);
 }
 
+// A layer inherits the default budget unless a `layers` entry claims it by path prefix.
+// `soft: null` means "no ratchet here": the append-only log layer.
+function limitsFor(name) {
+  for (const layer of budget.layers ?? []) {
+    if (name.startsWith(layer.match)) {
+      return { soft: layer.softBytes, hard: layer.hardBytes };
+    }
+  }
+  return { soft: budget.softBytes, hard: budget.hardBytes };
+}
+
 if (PIN) {
   const pinned = {};
   const raised = [];
   for (const [name, bytes] of sizes) {
-    if (bytes <= budget.softBytes) continue;
+    const { soft } = limitsFor(name);
+    if (soft === null || bytes <= soft) continue;
     const previous = budget.pinnedBytes[name];
     if (typeof previous === 'number' && bytes > previous) raised.push(`${name} ${kb(previous)} -> ${kb(bytes)}`);
     pinned[name] = bytes;
@@ -117,15 +146,17 @@ if (PIN) {
 }
 
 for (const [name, bytes] of sizes) {
-  if (bytes > budget.hardBytes) {
-    failures.push(`${name}: ${kb(bytes)} is over the hard cap (${kb(budget.hardBytes)}) -- split it into layers`);
+  const { soft, hard } = limitsFor(name);
+  if (bytes > hard) {
+    failures.push(`${name}: ${kb(bytes)} is over the hard cap (${kb(hard)}) -- split it into layers`);
     continue;
   }
-  if (bytes <= budget.softBytes) continue;
+  if (soft === null) continue; // append-only layer: growth is the point, not the problem
+  if (bytes <= soft) continue;
   const pinned = budget.pinnedBytes[name];
   if (typeof pinned !== 'number') {
     failures.push(
-      `${name}: ${kb(bytes)} is over the soft cap (${kb(budget.softBytes)}) and not pinned -- split it, or pin it deliberately with --pin`,
+      `${name}: ${kb(bytes)} is over the soft cap (${kb(soft)}) and not pinned -- split it, or pin it deliberately with --pin`,
     );
   } else if (bytes > pinned) {
     failures.push(`${name}: grew ${kb(pinned)} -> ${kb(bytes)} -- this file is closed for growth; split it`);
@@ -136,8 +167,10 @@ for (const name of unpinned) {
   failures.push(`${name}: pinned but no longer exists -- drop it with --pin`);
 }
 for (const [name, bytes] of sizes) {
+  const { soft } = limitsFor(name);
+  if (soft === null) continue;
   const pinned = budget.pinnedBytes[name];
-  if (typeof pinned === 'number' && bytes <= budget.softBytes) {
+  if (typeof pinned === 'number' && bytes <= soft) {
     failures.push(`${name}: ${kb(bytes)} is back under the soft cap -- tighten the ratchet with --pin`);
   } else if (typeof pinned === 'number' && bytes < pinned) {
     // Shrinking is good; it only needs a pin refresh so the ratchet stays tight.
@@ -172,29 +205,119 @@ for (const file of files) {
   }
 }
 
-// ---------------------------------------------------------------- 3. roadmap shape
+// ---------------------------------------------------------------- 3. journal shape
 const ROADMAP = path.join(ROOT, 'docs', 'roadmap.md');
-const PROGRESS_DIR = path.join(ROOT, 'docs', 'roadmap');
+const ROADMAP_DIR = path.join(ROOT, 'docs', 'roadmap');
+const JOURNAL = path.join(ROADMAP_DIR, 'journal');
+
+// The Thursday decides both the ISO week-year and the month a week belongs to. Using
+// the Monday instead would push the last week of a month back into the previous one,
+// and then a week file would name a month that contains none of its days.
+function isoWeekOf(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const thursday = new Date(Date.UTC(y, m - 1, d));
+  thursday.setUTCDate(thursday.getUTCDate() - ((thursday.getUTCDay() + 6) % 7) + 3);
+  const firstThursday = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - ((firstThursday.getUTCDay() + 6) % 7) + 3);
+  return {
+    year: thursday.getUTCFullYear(),
+    week: 1 + Math.round((thursday - firstThursday) / 604800000),
+  };
+}
+
+function thursdayOfWeek(year, week) {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (week - 1) * 7);
+  const thursday = new Date(monday);
+  thursday.setUTCDate(monday.getUTCDate() + 3);
+  return thursday;
+}
+
+function entriesOf(dir) {
+  return fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : [];
+}
+
+function readText(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
+function monthNameOf(thursday) {
+  return `${thursday.getUTCFullYear()}-${String(thursday.getUTCMonth() + 1).padStart(2, '0')}.md`;
+}
+
 if (fs.existsSync(ROADMAP)) {
-  const text = fs.readFileSync(ROADMAP, 'utf8');
-  const dated = text.split('\n').filter((line) => /^- `\d{4}-\d{2}-\d{2}`/.test(line));
+  const route = readText(ROADMAP);
+  const dated = route.split('\n').filter((line) => /^- `\d{4}-\d{2}-\d{2}`/.test(line));
   if (dated.length > 0) {
     failures.push(
-      `${rel(ROADMAP)}: ${dated.length} dated progress entries -- move them to docs/roadmap/progress-YYYY-MM.md and leave a link (ADR-0001)`,
+      `${rel(ROADMAP)}: ${dated.length} dated progress entries -- move them to docs/roadmap/journal/log/ and leave a link (ADR-0001)`,
     );
   }
-  if (fs.existsSync(PROGRESS_DIR)) {
-    for (const entry of fs.readdirSync(PROGRESS_DIR, { withFileTypes: true })) {
-      // Two kinds of layer live here: monthly progress logs and frozen released
-      // versions. Anything else is a file that escaped the convention.
-      if (!entry.isDirectory() && !/^(progress-\d{4}-\d{2}|v\d+\.\d+\.\d+)\.md$/.test(entry.name)) {
-        failures.push(
-          `${rel(path.join(PROGRESS_DIR, entry.name))}: route layers must be progress-YYYY-MM.md or vX.Y.Z.md`,
-        );
-        continue;
-      }
-      const linked = text.includes(`roadmap/${entry.name}`) || text.includes(`./roadmap/${entry.name}`);
-      if (!linked) failures.push(`${rel(path.join(PROGRESS_DIR, entry.name))}: not linked from docs/roadmap.md`);
+  // Two things may sit beside the journal: the journal itself and frozen releases.
+  for (const entry of entriesOf(ROADMAP_DIR)) {
+    if (entry.isDirectory() && entry.name === 'journal') continue;
+    if (!entry.isDirectory() && /^v\d+\.\d+\.\d+\.md$/.test(entry.name)) continue;
+    failures.push(`${rel(path.join(ROADMAP_DIR, entry.name))}: the route layer holds only journal/ and vX.Y.Z.md`);
+  }
+}
+
+if (fs.existsSync(JOURNAL)) {
+  for (const entry of entriesOf(JOURNAL)) {
+    if (entry.isFile() && entry.name === 'README.md') continue;
+    if (entry.isDirectory() && ['month', 'week', 'log'].includes(entry.name)) continue;
+    failures.push(`${rel(path.join(JOURNAL, entry.name))}: journal holds only README.md and month/ week/ log/`);
+  }
+
+  const route = readText(ROADMAP);
+  const monthDir = path.join(JOURNAL, 'month');
+  const weekDir = path.join(JOURNAL, 'week');
+  const logDir = path.join(JOURNAL, 'log');
+
+  for (const entry of entriesOf(monthDir)) {
+    if (!entry.isFile()) continue;
+    const file = path.join(monthDir, entry.name);
+    if (!/^\d{4}-\d{2}\.md$/.test(entry.name)) {
+      failures.push(`${rel(file)}: month files are YYYY-MM.md`);
+      continue;
+    }
+    if (!route.includes(`journal/month/${entry.name}`)) {
+      failures.push(`${rel(file)}: not linked from docs/roadmap.md`);
+    }
+  }
+
+  for (const entry of entriesOf(weekDir)) {
+    if (!entry.isFile()) continue;
+    const file = path.join(weekDir, entry.name);
+    const parsed = /^(\d{4})-W(\d{2})\.md$/.exec(entry.name);
+    if (!parsed) {
+      failures.push(`${rel(file)}: week files are YYYY-Www.md`);
+      continue;
+    }
+    const monthFile = path.join(monthDir, monthNameOf(thursdayOfWeek(Number(parsed[1]), Number(parsed[2]))));
+    if (!fs.existsSync(monthFile)) {
+      failures.push(`${rel(file)}: its Thursday falls in ${path.basename(monthFile)}, which does not exist`);
+    } else if (!readText(monthFile).includes(entry.name)) {
+      failures.push(`${rel(file)}: not linked from ${rel(monthFile)}`);
+    }
+  }
+
+  for (const entry of entriesOf(logDir)) {
+    if (!entry.isFile()) continue;
+    const file = path.join(logDir, entry.name);
+    const parsed = /^(\d{4})-(\d{2})-(\d{2})\.md$/.exec(entry.name);
+    if (!parsed) {
+      failures.push(`${rel(file)}: log files are YYYY-MM-DD.md`);
+      continue;
+    }
+    const { year, week } = isoWeekOf(`${parsed[1]}-${parsed[2]}-${parsed[3]}`);
+    const weekFile = path.join(weekDir, `${year}-W${String(week).padStart(2, '0')}.md`);
+    if (!fs.existsSync(weekFile)) {
+      failures.push(
+        `${rel(file)}: ${parsed[1]}-${parsed[2]}-${parsed[3]} is in ${path.basename(weekFile)}, which does not exist`,
+      );
+    } else if (!readText(weekFile).includes(entry.name)) {
+      failures.push(`${rel(file)}: not linked from ${rel(weekFile)}`);
     }
   }
 }
@@ -207,9 +330,11 @@ if (failures.length > 0) {
 }
 
 const largest = [...sizes.entries()].sort((a, b) => b[1] - a[1])[0];
-console.log(`ok size budget: ok (soft ${kb(budget.softBytes)}, hard ${kb(budget.hardBytes)}, ${Object.keys(budget.pinnedBytes).length} pinned)`);
+console.log(
+  `ok size budget: ok (default soft ${kb(budget.softBytes)}, hard ${kb(budget.hardBytes)}, ${(budget.layers ?? []).length} layer rule(s), ${Object.keys(budget.pinnedBytes).length} pinned)`,
+);
 console.log(`ok relative links: ok (${linkCount} checked)`);
-console.log('ok roadmap shape: ok (no dated entries, every log linked)');
+console.log('ok journal shape: ok (month -> week -> log, every node linked, no dated route entries)');
 console.log(
   `Doc budget guard passed (${files.length} files; largest ${largest[0]} at ${kb(largest[1])}).`,
 );

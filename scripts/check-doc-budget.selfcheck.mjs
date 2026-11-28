@@ -23,10 +23,11 @@ const GUARD = path.join(HERE, 'check-doc-budget.mjs');
 const BUDGET = {
   softBytes: 1024,
   hardBytes: 4096,
+  layers: [{ match: 'docs/roadmap/journal/log/', softBytes: null, hardBytes: 8192 }],
   pinnedBytes: {},
 };
 
-/** A tiny repo that satisfies every rule. */
+/** A tiny repo that satisfies every rule: one month, one week, one day, properly linked. */
 function baseline() {
   return {
     'scripts/doc-budget.json': `${JSON.stringify(BUDGET, null, 2)}\n`,
@@ -37,10 +38,13 @@ function baseline() {
       '',
       '### Recent Progress',
       '',
-      '- [2026-11](./roadmap/progress-2026-11.md)',
+      '- [2026-11](./roadmap/journal/month/2026-11.md)',
       '',
     ].join('\n'),
-    'docs/roadmap/progress-2026-11.md': '# 2026-11\n\n- `2026-11-27` did a thing\n',
+    'docs/roadmap/journal/README.md': '# journal\n',
+    'docs/roadmap/journal/month/2026-11.md': '# 2026-11\n\n- [2026-W48](../week/2026-W48.md)\n',
+    'docs/roadmap/journal/week/2026-W48.md': '# 2026-W48\n\n- [11-27](../log/2026-11-27.md)\n',
+    'docs/roadmap/journal/log/2026-11-27.md': '# 2026-11-27\n\n- `2026-11-27` did a thing\n',
   };
 }
 
@@ -149,21 +153,29 @@ test('a dated entry in the route document fails', () => {
   assert.match(err, /docs\/roadmap\.md: 1 dated progress entries/);
 });
 
-test('a progress file the index does not link is an orphan', () => {
+test('a month the route document does not link is an orphan', () => {
   const files = baseline();
-  files['docs/roadmap/progress-2026-10.md'] = '# 2026-10\n\n- `2026-10-01` old\n';
+  files['docs/roadmap/journal/month/2026-10.md'] = '# 2026-10\n\n- `2026-10-01` old\n';
   const { code, err } = run(makeRepo(files));
   assert.equal(code, 1);
-  assert.match(err, /progress-2026-10\.md: not linked from docs\/roadmap\.md/);
+  assert.match(err, /journal\/month\/2026-10\.md: not linked from docs\/roadmap\.md/);
 });
 
-test('a route layer with an unrecognised name is rejected', () => {
+test('a file beside the journal that is not a release is rejected', () => {
   const files = baseline();
   files['docs/roadmap/notes.md'] = '# misc\n';
   files['docs/roadmap.md'] += '\n- [notes](./roadmap/notes.md)\n';
   const { code, err } = run(makeRepo(files));
   assert.equal(code, 1);
-  assert.match(err, /notes\.md: route layers must be progress-YYYY-MM\.md or vX\.Y\.Z\.md/);
+  assert.match(err, /notes\.md: the route layer holds only journal\/ and vX\.Y\.Z\.md/);
+});
+
+test('a stray file inside the journal is rejected', () => {
+  const files = baseline();
+  files['docs/roadmap/journal/odd.md'] = '# odd\n';
+  const { code, err } = run(makeRepo(files));
+  assert.equal(code, 1);
+  assert.match(err, /journal\/odd\.md: journal holds only README\.md and month\/ week\/ log\//);
 });
 
 test('a link inside a code span is documentation, not a link', () => {
@@ -181,4 +193,60 @@ test('a missing budget file says how to create it', () => {
   const { code, err } = run(makeRepo(files));
   assert.equal(code, 1);
   assert.match(err, /doc-budget\.json is missing; create it with --pin/);
+});
+
+// ---------------------------------------------------------------- the three layers
+
+test('a day the week does not link is an orphan', () => {
+  const files = baseline();
+  files['docs/roadmap/journal/log/2026-11-26.md'] = '# 2026-11-26\n\n- `2026-11-26` another\n';
+  const { code, err } = run(makeRepo(files));
+  assert.equal(code, 1);
+  assert.match(err, /journal\/log\/2026-11-26\.md: not linked from docs\/roadmap\/journal\/week\/2026-W48\.md/);
+});
+
+test('a day sitting in the wrong week is rejected', () => {
+  const files = baseline();
+  files['docs/roadmap/journal/log/2026-12-01.md'] = '# 2026-12-01\n\n- `2026-12-01` later\n';
+  const { code, err } = run(makeRepo(files));
+  assert.equal(code, 1);
+  assert.match(err, /2026-12-01\.md: 2026-12-01 is in 2026-W49\.md, which does not exist/);
+});
+
+test('a week whose Thursday lands in another month is rejected', () => {
+  // 2026-W49 runs 11-30 to 12-06: its Monday is November's, its Thursday is December's.
+  // The Thursday decides the month, otherwise the week would sit in a month that holds
+  // fewer than half of its days.
+  const files = baseline();
+  files['docs/roadmap/journal/week/2026-W49.md'] = '# 2026-W49\n\n';
+  const { code, err } = run(makeRepo(files));
+  assert.equal(code, 1);
+  assert.match(err, /2026-W49\.md: its Thursday falls in 2026-12\.md, which does not exist/);
+});
+
+test('a week file with the wrong name shape is rejected', () => {
+  const files = baseline();
+  files['docs/roadmap/journal/week/2026-48.md'] = '# week\n';
+  const { code, err } = run(makeRepo(files));
+  assert.equal(code, 1);
+  assert.match(err, /2026-48\.md: week files are YYYY-Www\.md/);
+});
+
+test('the log layer has no soft cap, only a hard one', () => {
+  // The whole point of the split: growth is expected at the bottom, so a soft cap there
+  // would only reward deleting the entries the layer exists to keep.
+  const files = baseline();
+  files['docs/roadmap/journal/log/2026-11-27.md'] += `${'x'.repeat(BUDGET.softBytes * 3)}\n`;
+  const { code, out } = run(makeRepo(files));
+  assert.equal(code, 0, out);
+});
+
+test('an early month with no week or day layer is legal', () => {
+  // 2026-04 predates the split. The rule is "if it exists it is linked", not "every month
+  // must have children", or the guard would force history to be rewritten.
+  const files = baseline();
+  files['docs/roadmap/journal/month/2026-04.md'] = '# 2026-04\n\n- `2026-04-24` old\n';
+  files['docs/roadmap.md'] += '- [2026-04](./roadmap/journal/month/2026-04.md)\n';
+  const { code, out } = run(makeRepo(files));
+  assert.equal(code, 0, out);
 });
