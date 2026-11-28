@@ -45,7 +45,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-04-11-stage-b-contribution-consumption-plan.md](./proposals/2026-04-11-stage-b-contribution-consumption-plan.md)：Stage B 贡献消费（draft）
 - [2026-04-11-vscode-style-extension-platform-roadmap.md](./proposals/2026-04-11-vscode-style-extension-platform-roadmap.md)：VSCode 风格扩展平台长期蓝图（draft）
 
-### Active（8）
+### Active（9）
 
 - [2026-04-07-api-relay-and-extension-phase1.md](./active/2026-04-07-api-relay-and-extension-phase1.md)：relay 一期已在 `scriptmgr-go/internal/relay` 落地；extension 部分仍是这条线的依据
 - [2026-04-24-v1-delivery-plan.md](./active/2026-04-24-v1-delivery-plan.md)：`v1.0.0` 四阶段交付拆解、任务包与验收口径
@@ -55,8 +55,9 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-25-c2-ime-acceptance.md](./active/2026-11-25-c2-ime-acceptance.md)：C2 三种输入法人机验收清单（**待执行**，Phase 1 第一周硬性）
 - [2026-11-25-native-quicknote-parity.md](./active/2026-11-25-native-quicknote-parity.md)：快速笔记 T0 parity 28 条 A 级判据 + 6 条允许差异（G1 的判据对象）
 - [2026-11-25-phase1-quicknote-shell.md](./active/2026-11-25-phase1-quicknote-shell.md)：Phase 1 快速笔记壳：窗口与几何、键位、多窗口、透明度、数据层、交互层（1a–2l 已落地）
+- [2026-11-28-manager-parity.md](./active/2026-11-28-manager-parity.md)：原生工作台与旧版管理器的逐项对照、一个待决定的范围问题（模块入口走 A/B/C 哪条）、五刀顺序
 
-### Completed（30）
+### Completed（31）
 
 - [2026-03-15-mcp-implementation-plan.md](./completed/2026-03-15-mcp-implementation-plan.md)：ScriptMgr MCP 实施计划（MCP server 已落地 `scriptmgr-go/internal/mcpcli`）
 - [2026-03-15-mcp-integration-design.md](./completed/2026-03-15-mcp-integration-design.md)：MCP 集成设计（已验证）
@@ -88,6 +89,7 @@ node scripts/check-plan-lifecycle.mjs   # 漏改的链接、写错的状态、�
 - [2026-11-28-todo-card.md](./completed/2026-11-28-todo-card.md)：原生待办卡片窗口（按文本定位写回、工具条纯函数，17 项门禁：真点击勾选 + 像素变化 + 托盘重开）
 - [2026-11-28-manager-new-note.md](./completed/2026-11-28-manager-new-note.md)：待办卡片接 Tauri 转发 + 工作台「新建笔记」按钮（矩形上报后真点，管理器门禁 19 → 23）
 - [2026-11-28-manager-buttons.md](./completed/2026-11-28-manager-buttons.md)：工作台卡片入口 + 行内按钮真点（命中矩形成表，揪出"回收站行选不中"的真 bug，门禁 23 → 32）
+- [2026-11-28-manager-confirm.md](./completed/2026-11-28-manager-confirm.md)：彻底删除的二次确认（待确认是视图状态不是 Action、Esc 分层、三条真 bug：点行不重绘 / 写后不重绘 / 对话框重开不报矩形，门禁 32 → 35）
 
 ### Rejected（1）
 
