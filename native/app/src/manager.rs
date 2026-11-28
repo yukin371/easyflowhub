@@ -49,6 +49,10 @@ pub struct Shell {
     shortcuts: Arc<RwLock<Table>>,
     inbox: Arc<Mutex<Vec<Request>>>,
     closing: bool,
+    /// The header button's rectangle as last written to the log, so the gate can
+    /// click what the window actually laid out instead of guessing. Only logged when
+    /// it moves: a per-frame line would bury the rest of the log.
+    hit_logged: Option<[i32; 4]>,
 }
 
 impl Shell {
@@ -62,6 +66,7 @@ impl Shell {
             shortcuts: spawn.shortcuts,
             inbox: spawn.inbox,
             closing: false,
+            hit_logged: None,
         };
         shell.reload();
         shell.log.mark(
@@ -140,7 +145,38 @@ impl Shell {
             self.todo.as_deref(),
             &table,
         );
+        self.log_hit(ctx);
         self.act(ctx, action);
+    }
+
+    /// Write the "新建笔记" rectangle when it changes.
+    ///
+    /// Physical client pixels, which is what a click posts and what
+    /// `click_client()` in the gate takes -- the script must not have to know the
+    /// monitor scale.
+    fn log_hit(&mut self, ctx: &egui::Context) {
+        let Some(rect) = self.state.new_note else {
+            return;
+        };
+        let scale = ctx.pixels_per_point();
+        let now = [
+            (rect.min.x * scale).round() as i32,
+            (rect.min.y * scale).round() as i32,
+            (rect.width() * scale).round() as i32,
+            (rect.height() * scale).round() as i32,
+        ];
+        if self.hit_logged == Some(now) {
+            return;
+        }
+        self.hit_logged = Some(now);
+        self.log.mark(
+            0,
+            "manager_hit",
+            &format!(
+                "button=new-note x={} y={} w={} h={}",
+                now[0], now[1], now[2], now[3]
+            ),
+        );
     }
 
     fn close(&mut self, ctx: &egui::Context, reason: &str) {
@@ -160,6 +196,14 @@ impl Shell {
         match action {
             Action::None | Action::SetTab(_) => {}
             Action::Close => self.close(ctx, "button"),
+            Action::NewNote => {
+                // The hotkey's own request, pushed the same way: opening a note
+                // creates a viewport, and a frame of this window must not do that.
+                self.state.status = "已新建笔记".to_string();
+                self.log.mark(0, "manager_new_note", "from=button");
+                self.push(Request::NewNote);
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            }
             Action::Open(id) => {
                 self.state.status = "已打开".to_string();
                 self.push(Request::OpenNote(id));

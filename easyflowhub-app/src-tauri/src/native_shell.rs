@@ -46,6 +46,20 @@ pub fn argv(note_id: Option<&str>) -> Vec<String> {
     args
 }
 
+/// The argument vector for "open the todo card".
+///
+/// One bare flag -- and it is *not* `--note`. The two entry points look
+/// interchangeable from up here and are not: `--note` opens a note window, while
+/// `--todo-card` opens the 320x400 card that reads the 待办箱 note. Sharing one
+/// builder with a boolean would make that mistake writable and invisible; two
+/// functions with two names make it a diff.
+///
+/// No id travels: the card is a singleton in the native shell, so there is
+/// nothing to name it by.
+pub fn todo_card_argv() -> Vec<String> {
+    vec!["--todo-card".to_string()]
+}
+
 /// Choose the shell from the candidates, in the order a user would expect.
 ///
 /// A function of three `Option`s rather than of the filesystem so the precedence is
@@ -85,14 +99,32 @@ pub fn exe() -> Result<PathBuf, String> {
 
 /// Ask the native shell for a quick-note window.
 ///
-/// Returns a token for the log rather than a `bool`: "the request left" and "a window
-/// appeared" are different claims, and only the shell can make the second one.
+/// Returns a token for the log rather than a `bool`: "the request left" and "a
+/// window appeared" are different claims, and only the shell can make the second one.
 pub fn open_note(note_id: Option<&str>) -> Result<String, String> {
+    launch("note", &argv(note_id))
+}
+
+/// Ask the native shell for the todo card.
+///
+/// Same contract as `open_note`, down to the token: the card is a window in the
+/// other process, and whether it appeared is the shell's answer to give. A second
+/// tap focuses the card that is already up (`Request::TodoCard` is idempotent), so
+/// this never piles up windows.
+pub fn open_todo_card() -> Result<String, String> {
+    launch("todo-card", &todo_card_argv())
+}
+
+/// Start the shell with `args`, and log what was asked for.
+///
+/// Shared by both entry points because the parts that are easy to get wrong are the
+/// same in both: resolving the exe, suppressing the console window, and *not*
+/// waiting. The `kind` is what makes the log answer "which door was used".
+fn launch(kind: &str, args: &[String]) -> Result<String, String> {
     let exe = exe()?;
-    let args = argv(note_id);
 
     let mut command = Command::new(&exe);
-    command.args(&args);
+    command.args(args);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -107,7 +139,7 @@ pub fn open_note(note_id: Option<&str>) -> Result<String, String> {
         "info",
         "shell",
         &format!(
-            "handover=note target={} args={} pid={}",
+            "handover={kind} target={} args={} pid={}",
             exe.display(),
             args.join(" "),
             child.id()
@@ -139,6 +171,18 @@ mod tests {
         // the next token, and `--note` has to come first for the shell to be in note
         // mode at all.
         assert_eq!(argv(Some("note-42")), vec!["--note", "--note-id", "note-42"]);
+    }
+
+    #[test]
+    fn the_todo_card_is_one_flag_and_it_is_not_the_note_one() {
+        // The two doors must not become one: `--note` would answer with a blank note
+        // window, which looks like success from this side and is the wrong window.
+        assert_eq!(todo_card_argv(), vec!["--todo-card"]);
+        assert!(
+            !todo_card_argv().contains(&"--note".to_string()),
+            "the card forward started a note"
+        );
+        assert_ne!(todo_card_argv(), argv(None));
     }
 
     #[test]

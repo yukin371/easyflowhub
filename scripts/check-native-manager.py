@@ -15,12 +15,16 @@ is to own a combination the shipped build does not. Choosing that combination *i
 the feature -- the file is read, the table is built from it, the OS registration
 follows it -- so the gate that needs it also proves it.
 
-The workbench's own buttons are not clicked here. A click needs a coordinate inside
+The workbench's row buttons are not clicked here. A click needs a coordinate inside
 an egui layout that is free to change, and a gate that hardcodes one would fail for
-a reason that has nothing to do with the behaviour. What the buttons do is covered
+a reason that has nothing to do with the behaviour. What those buttons do is covered
 where it is decided: `hub-core`'s store tests write the pin/trash/restore/purge
-columns and `hub-ui`'s manager tests drain the `Action` queue. This file covers the
-window: it opens, it counts, it closes, and the note behind it is untouched.
+columns and `hub-ui`'s manager tests drain the `Action` queue.
+
+The one exception is the header's 新建笔记 button, and it is clicked -- because its
+effect is a *window in this process*, which no unit test can assert, and because the
+window now reports the rectangle (`manager_hit button=new-note`) instead of leaving
+the script to guess. Same contract as the todo card's `todocard_hit`.
 
 Usage:
     python scripts/check-native-manager.py --exe native/target/release/easyflowhub-native.exe
@@ -29,6 +33,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -50,6 +55,10 @@ import wininput  # noqa: E402  (path first, then the import)
 NOTE_PREFIX = "easyflowhub-note"
 MANAGER_TITLE = "easyflowhub-manager"
 STAMP = "2026-11-26T02:31:00.000000000+00:00"
+
+# The rectangle the workbench reports for its 新建笔记 button, in physical client
+# pixels -- the coordinates `click_client()` takes.
+HIT = re.compile(r"manager_hit button=new-note x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+)")
 
 # The combination this gate gives the workbench: `Ctrl+Alt+M` is held by the shipped
 # build, and pressing it here would open *that* window instead.
@@ -345,7 +354,48 @@ def main() -> int:
             f"notes={live} trash={trash}" in second,
             second.strip() or "no second manager_open line",
         )
-        session.capture("Q16/Q18 + K1 global")
+        # ------------------------------------- the workbench's own 新建笔记 button
+        # The list used to say "按 Ctrl+Alt+N 新建" because there was nothing to click.
+        # Now there is, and the rectangle is reported rather than guessed: a layout
+        # that moves the button must not fail this gate.
+        shell = wininput.wait_for(manager_window, 10)
+        hit_line = session.trace.later("manager_hit button=new-note", 0, 5)
+        hit = HIT.search(hit_line)
+        report.check(
+            "the workbench reports where its 新建笔记 button is",
+            bool(hit) and int(hit.group(3)) > 0 and int(hit.group(4)) > 0,
+            hit_line.strip() or "no manager_hit line",
+        )
+        if hit:
+            spawns = session.trace.count("note_spawn")
+            wininput.force(shell)
+            wininput.click_client(
+                shell,
+                int(hit.group(1)) + int(hit.group(3)) // 2,
+                int(hit.group(2)) + int(hit.group(4)) // 2,
+            )
+            clicked = session.trace.later("manager_new_note", 0, 4)
+            report.check(
+                "clicking 新建笔记 is the same request Ctrl+Alt+N sends",
+                bool(clicked) and "from=button" in clicked,
+                clicked.strip() or "no manager_new_note line",
+            )
+            spawned = session.trace.later("note_spawn", spawns, 8)
+            second_note = wininput.wait_for(
+                lambda: user32.FindWindowW(None, f"{NOTE_PREFIX}#1"), 8
+            )
+            report.check(
+                "the click produced a real second note window",
+                bool(spawned) and bool(second_note),
+                (spawned.strip() if spawned else "no note_spawn line")
+                + f"; window={'yes' if second_note else 'no'}",
+            )
+            report.check(
+                "the workbench stays open after making the note",
+                bool(manager_window()) and session.trace.count("manager_close") == 1,
+                f"closes={session.trace.count('manager_close')}",
+            )
+        session.capture("Q16/Q18 + K1 global + new note button")
         session.stop()
 
         # ------------------------------------ K2 the replaced key stops answering

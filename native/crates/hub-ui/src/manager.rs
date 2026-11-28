@@ -171,6 +171,9 @@ pub fn todo_items(content: &str) -> Vec<TodoItem> {
 pub enum Action {
     None,
     Close,
+    /// A blank note, exactly what `Ctrl+Alt+N` does. The window itself is opened by
+    /// the controller -- a frame must not create viewports.
+    NewNote,
     Open(String),
     Pin { id: String, pinned: bool },
     Trash(String),
@@ -189,6 +192,12 @@ pub struct State {
     pub capturing: Option<Command>,
     /// One line of feedback under the header: "已移到回收站" and so on.
     pub status: String,
+    /// Where the header's "新建笔记" button ended up, in client points.
+    ///
+    /// Reported rather than recomputed by the gate, for the same reason the todo
+    /// card reports its strip: a script that hardcodes a coordinate inside a layout
+    /// free to change fails for reasons that have nothing to do with the button.
+    pub new_note: Option<egui::Rect>,
 }
 
 impl Default for State {
@@ -199,6 +208,7 @@ impl Default for State {
             selected: None,
             capturing: None,
             status: String::new(),
+            new_note: None,
         }
     }
 }
@@ -247,6 +257,21 @@ pub fn draw(
                     );
                     if hint::hint(close, palette, "关闭工作台", "Esc").clicked() {
                         action = Action::Close;
+                    }
+                    // The one action the workbench could only *describe* before: the
+                    // empty list said "press Ctrl+Alt+N" because there was no button
+                    // to point at. It is the hotkey's own request, not a second path.
+                    let new_note = ui.add(
+                        egui::Button::new(
+                            RichText::new("新建笔记").size(11.0).color(palette.ink),
+                        )
+                        .fill(palette.surface)
+                        .stroke(Stroke::new(1.0, palette.border_strong)),
+                    );
+                    state.new_note = Some(new_note.rect);
+                    if hint::hint(new_note, palette, "新建一条快速笔记", "Ctrl+Alt+N").clicked()
+                    {
+                        action = Action::NewNote;
                     }
                 });
             });
@@ -306,7 +331,7 @@ pub fn draw(
                         RichText::new(if trash {
                             "回收站是空的"
                         } else {
-                            "没有笔记 · 按 Ctrl+Alt+N 新建"
+                            "没有笔记 · 点「新建笔记」或按 Ctrl+Alt+N"
                         })
                         .size(11.0)
                         .color(palette.ink_subtle),

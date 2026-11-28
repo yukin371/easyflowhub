@@ -127,11 +127,13 @@ pub async fn create_note_window(app: tauri::AppHandle, note_id: Option<String>) 
 /// 创建 Todo 卡片窗口（桌面悬浮）
 ///
 /// 与快速笔记同理：接管后待办卡片归原生壳（Phase 1 的待办卡片），本进程
-/// 不再为它拉起第三个 WebView。
+/// 不再为它拉起第三个 WebView——这条命令改为**转给原生壳**，而不是拒绝。
+/// 窗口在另一个进程里，但入口是这一条：托盘「待办卡片」、`--todo-card` 与这里
+/// 打到的是同一扇门（原生侧 `Request::TodoCard` 是幂等的，重复点只会聚焦）。
 #[tauri::command]
 pub async fn create_todo_card_window(app: tauri::AppHandle) -> Result<String, String> {
     if crate::shell::current().takeover() {
-        return Err(crate::shell::moved_to_native("待办卡片"));
+        return crate::native_shell::open_todo_card();
     }
     let counter = TODO_CARD_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("todo-card-{}", counter);
