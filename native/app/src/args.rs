@@ -42,6 +42,9 @@ pub struct Args {
     /// Bring up the product process with **no** note window: hotkeys, tray and the
     /// parked panel, nothing on screen. The shape a login entry starts in.
     pub resident: bool,
+    /// Open the desktop todo card. Independent of `--resident`: the card is a window
+    /// of the shell, and a shell can be started for the card alone.
+    pub todo_card: bool,
     /// Started by the login entry: implies `resident`, and a forwarded launch stays
     /// silent instead of summoning the panel.
     pub autostart: bool,
@@ -90,6 +93,7 @@ impl Default for Args {
             editor: false,
             note: false,
             resident: false,
+            todo_card: false,
             autostart: false,
             note_id: None,
             editor_bench: None,
@@ -128,6 +132,7 @@ easyflowhub-native — S1 shell spike
   --editor               draw the RichEdit island instead of the action grid
   --note                 open the Phase 1 quick-note shell (title strip + island)
   --resident             same process, no note window: tray + hotkeys + parked panel
+  --todo-card            open the desktop todo card (implies the product process)
   --autostart            how the login entry starts it: --resident, and a second
                          instance forwards nothing (no panel, no focus steal)
   --note-id <uuid>       open that note in the shell instead of a new one
@@ -207,6 +212,12 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
             "--no-vsync" => args.no_vsync = true,
             "--editor" => args.editor = true,
             "--note" => args.note = true,
+            "--todo-card" => {
+                // The card is a window of the product process; asking for it is
+                // asking for that process, and for no note with it.
+                args.todo_card = true;
+                args.note = true;
+            }
             "--resident" => {
                 // The resident process *is* the product process, minus the first
                 // window. Implying `note` here is what keeps one code path: the
@@ -225,8 +236,7 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
                 args.resident = true;
                 args.note = true;
             }
-            "--note-id" => args.note_id = Some(value("--note-id")?),
-            "--editor-budget-p95" => {
+            "--note-id" => args.note_id = Some(value("--note-id")?),            "--editor-budget-p95" => {
                 args.editor_budget_p95_ms = value("--editor-budget-p95")?
                     .parse()
                     .map_err(|_| "--editor-budget-p95 expects milliseconds".to_string())?;
@@ -337,8 +347,15 @@ mod tests {
     }
 
     #[test]
-    fn resident_is_the_product_process_without_the_first_note() {
-        let args = parse_args(&["app", "--resident"]).unwrap();
+    fn the_todo_card_is_a_window_of_the_product_process() {
+        let args = parse_args(&["app", "--todo-card"]).unwrap();
+        assert!(args.todo_card);
+        assert!(args.note, "one composition root, not a second one");
+        assert!(!args.resident, "the card itself is a window, not a resting shell");
+    }
+
+    #[test]
+    fn resident_is_the_product_process_without_the_first_note() {        let args = parse_args(&["app", "--resident"]).unwrap();
         assert!(args.resident);
         assert!(args.note, "one composition root, not a second one");
         assert!(args.note_id.is_none());

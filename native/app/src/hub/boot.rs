@@ -267,6 +267,7 @@ pub fn install_tray(
     let sink = Arc::new(move |command: TrayCommand| {
         let request = match command {
             TrayCommand::NewNote => Request::NewNote,
+            TrayCommand::TodoCard => Request::TodoCard,
             TrayCommand::CloseAll => Request::CloseAll,
             TrayCommand::Quit => Request::Quit,
         };

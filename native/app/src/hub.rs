@@ -45,6 +45,7 @@ use crate::launcher;
 use crate::log::Log;
 use crate::manager;
 use crate::note::{self, NoteShell, Shared};
+use crate::todocard;
 
 mod boot;
 mod commands;
@@ -69,6 +70,8 @@ pub enum Request {
     ToggleVisible,
     /// `Ctrl+Alt+M`: the workbench window.
     Manager,
+    /// The desktop todo card: one window, created on demand.
+    TodoCard,
     /// Open an existing note in a new window -- the manager's "打开".
     OpenNote(String),
     /// A key was rebound. Handled here because the table, the settings file and
@@ -104,6 +107,11 @@ pub struct Config {
     /// and the tray without putting a note on screen, and because "nothing is open"
     /// with a tray is a resting state, not a reason to exit (`settle`).
     pub resident: bool,
+    /// `--todo-card`: open the desktop todo card instead of a quick note.
+    ///
+    /// Separate from `--note` because it is a different window, not a different
+    /// shape of note: it owns no editor and lives over the wallpaper.
+    pub todo_card: bool,
     /// Where the settings file lives. Needed by the workbench to persist a
     /// rebind; the notes only ever read the values loaded at startup.
     pub settings_path: PathBuf,
@@ -184,6 +192,9 @@ struct Hub {
     /// closing it drops the shell, which is what makes a later `Ctrl+Alt+M`
     /// create a fresh one instead of revealing a stale list.
     manager: Option<manager::Shell>,
+    /// The desktop todo card, while it is open. Same lifecycle as the workbench:
+    /// one window, created on demand, dropped when it closes.
+    todo_card: Option<todocard::Shell>,
     /// The action panel: a viewport of this process, pre-created and parked, so a
     /// reveal is a move rather than a window creation (§5.8).
     launcher: launcher::Launcher,
@@ -220,6 +231,7 @@ impl Hub {
         // Read before the struct literal moves the fields it needs: whether to open
         // a window on the first pass is the only difference between the two modes.
         let resident = config.resident;
+        let todo_card = config.todo_card;
 
         // Fonts live on the `Context`, which every viewport shares. Installing
         // them per note would rebuild the atlas once per window for no gain.
@@ -302,6 +314,7 @@ impl Hub {
             _hotkeys: None,
             tray: None,
             manager: None,
+            todo_card: None,
             launcher,
             released: None,
             _instance: Arc::new(instance),
@@ -336,6 +349,12 @@ impl Hub {
                 if hub.tray.is_some() { "on" } else { "off" }
             ),
         );
+        // The card comes before the "what to open" decision: `--resident --todo-card`
+        // is a shell whose only surface is the card, and `settle` must see it or it
+        // would end the process as "windowless".
+        if todo_card {
+            hub.open_todo_card(&ctx);
+        }
         if resident {
             // Nothing to open. `settle` is the same decision the last note's close
             // makes: with a tray this is a resting state, without one it is a
@@ -453,6 +472,7 @@ impl Hub {
             Request::CloseAll => self.close_all(ctx),
             Request::ToggleVisible => self.toggle_visible(ctx),
             Request::Manager => self.open_manager(ctx),
+            Request::TodoCard => self.open_todo_card(ctx),
             Request::OpenNote(id) => self.open_note(ctx, &id, "manager"),
             Request::Rebind { command, chord } => self.rebind(ctx, command, &chord),
             Request::LauncherShown(shown) => self.launcher.shown(ctx, shown),
@@ -521,6 +541,17 @@ impl Hub {
     /// is why a failed `Shell_NotifyIconW` degrades to the 1b.2 behaviour instead of
     /// leaving an invisible zombie behind.
     fn settle(&mut self) {
+        if self.todo_card.is_some() {
+            // The card is a surface the user can reach, so "no notes" is not
+            // "nothing is left". Ending the process here would close the card the
+            // user just asked for.
+            self.log.mark(
+                0,
+                "hub_idle",
+                &format!("notes={} todo_card=1", self.notes.len()),
+            );
+            return;
+        }
         match self.tray.as_ref() {
             Some(tray) => self
                 .log
@@ -599,6 +630,19 @@ impl eframe::App for Hub {
         }
         if self.manager.as_ref().is_some_and(|shell| shell.closing()) {
             self.manager = None;
+        }
+
+        // The card is immediate for the same reason the workbench is: no island and
+        // no state that has to survive a pass, so a deferred viewport would only add
+        // a frame between the click and the change it causes.
+        if let Some(shell) = self.todo_card.as_mut() {
+            let builder = shell.builder();
+            ctx.show_viewport_immediate(todocard::viewport_id(), builder, |ctx, _class| {
+                shell.frame(ctx);
+            });
+        }
+        if self.todo_card.as_ref().is_some_and(|shell| shell.closing()) {
+            self.todo_card = None;
         }
 
         // The panel is a deferred viewport like a note: its window has to exist

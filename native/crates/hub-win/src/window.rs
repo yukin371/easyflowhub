@@ -206,6 +206,50 @@ pub fn focus(hwnd: isize) -> bool {
     unsafe { SetForegroundWindow(hwnd as HWND) != 0 }
 }
 
+/// Make the window a child of the desktop, or a top-level window again.
+///
+/// This is what the product calls "固定到桌面" (`toggle_todo_card_pin` in the Tauri
+/// build does the same `GWLP_HWNDPARENT` write). A child of `Progman` sits on the
+/// wallpaper: it goes behind normal windows, it survives "show desktop", and it
+/// cannot be covered by the card's own always-on-top level fighting the shell.
+///
+/// `SWP_FRAMECHANGED` after the write is not decoration: the window keeps its old
+/// non-client area until it is told to recompute, which shows up as a card that
+/// does not repaint where it was moved to.
+///
+/// Returns `false` when pinning was asked for and the desktop window is missing --
+/// a session with no shell is the one case where the request cannot be honoured,
+/// and the caller must say so rather than paint a filled pin over a free window.
+pub fn attach_to_desktop(hwnd: isize, on: bool) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, SetWindowLongPtrW, GWLP_HWNDPARENT, SWP_FRAMECHANGED,
+    };
+
+    let parent = if on {
+        let name: Vec<u16> = "Progman".encode_utf16().chain(std::iter::once(0)).collect();
+        let progman = unsafe { FindWindowW(std::ptr::null(), name.as_ptr()) };
+        if progman.is_null() {
+            return false;
+        }
+        progman as isize
+    } else {
+        0
+    };
+    unsafe {
+        SetWindowLongPtrW(hwnd as HWND, GWLP_HWNDPARENT, parent);
+        SetWindowPos(
+            hwnd as HWND,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+    true
+}
+
 /// Set size/position without showing or focusing — startup only.
 pub fn place_hidden(hwnd: isize, x: i32, y: i32, width: i32, height: i32) {
     let hwnd = hwnd as HWND;

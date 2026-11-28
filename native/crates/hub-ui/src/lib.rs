@@ -14,6 +14,7 @@ pub mod quicknote;
 pub mod recover;
 pub mod switcher;
 pub mod theme;
+pub mod todocard;
 
 // `panel` is the S1 measurement surface: fixed content, no input, kept because the
 // latency bench still runs against it. The shipped panel is `launcher`.

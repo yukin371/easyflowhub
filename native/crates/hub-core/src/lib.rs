@@ -21,6 +21,7 @@ pub mod note_text;
 pub mod settings;
 pub mod shortcuts;
 pub mod store;
+pub mod todo;
 pub mod translation;
 
 pub use island::PixelRect;
@@ -34,3 +35,4 @@ pub use settings::{
 };
 pub use shortcuts::{Chord, Command, Scope, Table};
 pub use store::{new_note_id, Counts, NoteRow, NoteWrite, SettingRow, Store, StoreError};
+pub use todo::{Locate, Refused};

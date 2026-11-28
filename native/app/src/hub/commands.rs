@@ -19,6 +19,7 @@ use hub_ui::manager::Tab;
 use super::boot::register_hotkeys;
 use super::{Hub, Request};
 use crate::manager;
+use crate::todocard;
 
 /// The queue entry a global command posts.
 ///
@@ -54,6 +55,26 @@ impl Hub {
         }));
         self.log
             .mark(0, "note_manager", "action=open target=manager");
+        ctx.request_repaint();
+    }
+
+    /// Open the desktop todo card, or focus the one already open.
+    ///
+    /// One card, for the same reason there is one workbench: two cards over the same
+    /// list disagree the moment one of them ticks something.
+    pub(super) fn open_todo_card(&mut self, ctx: &egui::Context) {
+        if self.todo_card.is_some() {
+            ctx.send_viewport_cmd_to(todocard::viewport_id(), egui::ViewportCommand::Focus);
+            ctx.request_repaint_of(todocard::viewport_id());
+            self.log.mark(0, "todo_card", "action=focus");
+            return;
+        }
+        self.todo_card = Some(todocard::Shell::new(todocard::Spawn {
+            log: self.log.clone(),
+            store: self.store.clone(),
+            inbox: self.inbox.clone(),
+        }));
+        self.log.mark(0, "todo_card", "action=open");
         ctx.request_repaint();
     }
 

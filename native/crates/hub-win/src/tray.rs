@@ -42,6 +42,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayCommand {
     NewNote,
+    TodoCard,
     CloseAll,
     Quit,
 }
@@ -53,6 +54,9 @@ pub type CommandSink = Arc<dyn Fn(TrayCommand) + Send + Sync>;
 const MENU_NEW: usize = 1;
 const MENU_CLOSE_ALL: usize = 2;
 const MENU_QUIT: usize = 3;
+/// Appended rather than slotted in after `MENU_NEW`: the ids are what `WM_COMMAND`
+/// carries, and a script that pokes the tray must keep meaning the same thing.
+const MENU_TODO_CARD: usize = 4;
 
 const CLASS_NAME: &str = "EasyFlowHubTray";
 const TRAY_ID: u32 = 1;
@@ -249,6 +253,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, message: u32, wparam: WPARAM, lpar
 fn command_for(id: usize) -> Option<TrayCommand> {
     match id {
         MENU_NEW => Some(TrayCommand::NewNote),
+        MENU_TODO_CARD => Some(TrayCommand::TodoCard),
         MENU_CLOSE_ALL => Some(TrayCommand::CloseAll),
         MENU_QUIT => Some(TrayCommand::Quit),
         _ => None,
@@ -276,6 +281,7 @@ unsafe fn show_menu(hwnd: HWND) {
     // mouse path anywhere else (Esc and Ctrl+D close one window at a time).
     unsafe {
         append(menu, MF_STRING, MENU_NEW, "新建快速笔记\tCtrl+Alt+N");
+        append(menu, MF_STRING, MENU_TODO_CARD, "待办卡片");
         append(menu, MF_STRING, MENU_CLOSE_ALL, "关闭全部笔记\tCtrl+Alt+D");
         append(menu, MF_SEPARATOR, 0, "");
         append(menu, MF_STRING, MENU_QUIT, "退出");
@@ -391,6 +397,7 @@ mod tests {
     #[test]
     fn every_menu_id_maps_to_exactly_one_command() {
         assert_eq!(command_for(MENU_NEW), Some(TrayCommand::NewNote));
+        assert_eq!(command_for(MENU_TODO_CARD), Some(TrayCommand::TodoCard));
         assert_eq!(command_for(MENU_CLOSE_ALL), Some(TrayCommand::CloseAll));
         assert_eq!(command_for(MENU_QUIT), Some(TrayCommand::Quit));
         assert_eq!(

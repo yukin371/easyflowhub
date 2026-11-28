@@ -42,7 +42,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 
 pub use attachments::{StoredAttachment, ATTACHMENT_DIR};
-pub use notes::{NoteRow, NoteWrite};
+pub use notes::{NoteRow, NoteWrite, TODO_INBOX_TITLE};
 pub use recent::{ensure_file_search_recent, FILE_SEARCH_RECENT_DDL};
 pub use schema::{init_schema, schema, Rebuild, Schema, NOTES_DDL, SCHEMA_VERSION, SETTINGS_DDL};
 pub use settings::SettingRow;

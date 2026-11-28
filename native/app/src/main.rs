@@ -26,6 +26,7 @@ mod probe_json;
 mod save;
 mod spike;
 mod store_bench;
+mod todocard;
 mod translate;
 mod wheel;
 
@@ -161,6 +162,7 @@ fn main() {
                 store_root: parsed.store_root.clone(),
                 note_id: parsed.note_id.clone(),
                 resident: parsed.resident,
+                todo_card: parsed.todo_card,
                 settings_path: settings_path.clone(),
                 no_font: parsed.no_font,
                 font_heap: parsed.font_heap,
