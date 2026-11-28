@@ -4,6 +4,14 @@
 //! 800-line ceiling is a rule, not a suggestion. The row is the densest drawing
 //! code in the workbench and it shares nothing with the header or the sidebar, so
 //! it is the piece that moves.
+//!
+//! ## Two lines, not one
+//!
+//! The row used to be title and preview side by side on a 34 px line, which meant
+//! the title column had a fixed 160 px and a long title simply ran into the
+//! preview. The shipped list stacks them: title on top, one line of body under
+//! it, the timestamp at the far right. That is also why the row is 48 px now -- a
+//! single line cannot hold two lines of text.
 
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Vec2};
 
@@ -11,6 +19,13 @@ use crate::hint;
 use crate::theme::Theme;
 
 use super::{report, Action, Row, State};
+
+/// Row height: two lines of text plus 12 px of air on each side.
+const HEIGHT: f32 = 48.0;
+
+/// Where the title column starts. The marker column holds "置顶" / "回收站"; the
+/// widest of them is three characters at 9 px, which fits in 44.
+const TEXT_X: f32 = 56.0;
 
 /// One note row.
 ///
@@ -25,16 +40,17 @@ pub(super) fn note_row(
 ) -> Option<Action> {
     let mut action = None;
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 34.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, HEIGHT), Sense::click());
     // The row is addressable too: the buttons only exist once a row is selected, so
     // the gate has to be able to *select* one, and "click the third row" is exactly
     // the coordinate this file refused to hardcode.
     report(state, &format!("row:{}", row.id), rect);
     let chosen = state.selected.as_deref() == Some(row.id.as_str());
+    let radius = CornerRadius::same(palette.radius.row);
     if chosen || response.hovered() {
         ui.painter().rect_filled(
             rect,
-            CornerRadius::same(4),
+            radius,
             if chosen {
                 palette.surface
             } else {
@@ -42,42 +58,70 @@ pub(super) fn note_row(
             },
         );
     }
-    if let Some(marker) = if row.deleted_at.is_some() {
-        Some("回收站")
+    if chosen {
+        // A 3 px accent bar on the selected row: the fill alone is one step off the
+        // page, and on a light theme that step is easy to miss.
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.top() + 10.0),
+                egui::vec2(3.0, rect.height() - 20.0),
+            ),
+            CornerRadius::same(2),
+            palette.accent,
+        );
+    }
+
+    if let Some((marker, ink)) = if row.deleted_at.is_some() {
+        Some(("回收站", palette.ink_subtle))
     } else if row.pinned {
-        Some("置顶")
+        Some(("置顶", palette.accent))
     } else {
         None
     } {
         ui.painter().text(
-            egui::pos2(rect.left() + 8.0, rect.center().y),
+            egui::pos2(rect.left() + 14.0, rect.center().y),
             Align2::LEFT_CENTER,
             marker,
             FontId::proportional(9.0),
-            palette.accent,
+            ink,
+        );
+    }
+
+    let text_x = rect.left() + TEXT_X;
+    let title_y = if row.preview.is_empty() {
+        rect.center().y
+    } else {
+        rect.center().y - 8.0
+    };
+    ui.painter().text(
+        egui::pos2(text_x, title_y),
+        Align2::LEFT_CENTER,
+        &row.title,
+        FontId::proportional(12.5),
+        if row.deleted_at.is_some() {
+            palette.ink_soft
+        } else {
+            palette.ink
+        },
+    );
+    if !row.preview.is_empty() {
+        // Clipped at the timestamp column rather than measured: the painter does
+        // not wrap, and a preview that runs under the time reads as two strings
+        // colliding instead of one truncated line.
+        let clip = egui::Rect::from_min_max(
+            egui::pos2(text_x, rect.top() + 2.0),
+            egui::pos2(rect.right() - 66.0, rect.bottom() - 2.0),
+        );
+        ui.painter().with_clip_rect(clip).text(
+            egui::pos2(text_x, rect.center().y + 8.0),
+            Align2::LEFT_CENTER,
+            &row.preview,
+            FontId::proportional(10.0),
+            palette.ink_subtle,
         );
     }
     ui.painter().text(
-        egui::pos2(rect.left() + 58.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        &row.title,
-        FontId::proportional(12.0),
-        palette.ink,
-    );
-    if !row.preview.is_empty() {
-        let start = rect.left() + 58.0 + 160.0;
-        if start < rect.right() - 120.0 {
-            ui.painter().text(
-                egui::pos2(start, rect.center().y),
-                Align2::LEFT_CENTER,
-                &row.preview,
-                FontId::proportional(10.5),
-                palette.ink_subtle,
-            );
-        }
-    }
-    ui.painter().text(
-        egui::pos2(rect.right() - 8.0, rect.center().y),
+        egui::pos2(rect.right() - 10.0, rect.center().y),
         Align2::RIGHT_CENTER,
         &row.when,
         FontId::monospace(9.5),
@@ -108,6 +152,9 @@ pub(super) fn note_row(
     // three 16 px buttons per row is a wall of glyphs, and the list is the part
     // that has to stay readable.
     if chosen {
+        // Four pixels above and below: the button row is a third band of the row
+        // and without the gap it reads as the next row's first line.
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
             if row.deleted_at.is_some() {
                 let restore = ui.button(RichText::new("恢复").size(10.5));
@@ -155,6 +202,7 @@ pub(super) fn note_row(
                 }
             }
         });
+        ui.add_space(4.0);
     }
     action
 }

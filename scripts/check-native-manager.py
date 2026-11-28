@@ -75,12 +75,21 @@ CLOSE_KEY = "Ctrl+Q"
 VK_Q = 0x51
 VK_D = 0x44
 
-# Two live notes and one in the trash, so "live" and "trash" cannot be the same
-# number by accident.
+# Three live notes and one in the trash, so "live" and "trash" cannot be the same
+# number by accident. The fourth is the todo inbox: a note whose body is checkbox
+# lines, one of them already ticked -- so "the pane hides what is done" and "the
+# pane can tick" are two different observations on the same list.
 SEED = [
     ("gate-live-1", "买菜清单", "买菜清单\n西红柿 鸡蛋", "", None),
     ("gate-live-2", "周报", "周报\n本周三条结论", "工作", None),
     ("gate-trash", "已经删掉的", "已经删掉的", "", STAMP),
+    (
+        "gate-todo",
+        "待办箱",
+        "待办箱\n- [ ] 买牛奶\n- [x] 交房租 @done:2026-11-20T09:00:00.000Z\n- [ ] 回邮件",
+        "",
+        None,
+    ),
 ]
 
 
@@ -766,11 +775,99 @@ def main() -> int:
             + f"; answer={(answered.strip() or 'none')}; rows={stored}",
         )
 
+        # ------------------------------------- todos, ticked in the workbench
+        # The pane used to be read-only: only the desktop card could flip a checkbox,
+        # which made the workbench a viewer of its own data. Every line now reports two
+        # targets -- the box ticks, the text jumps to the note -- and this gate presses
+        # where the product says they are, then reads the note body back out of the
+        # database. The seeded body has one line already ticked, so the default filter
+        # has something to hide.
+        mark = len(session.trace.text())
+        click_button(session, shell, "tab:todos")
+        listed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "todo-tick:gate-todo:1") is not None, 4
+        )
+        tail = session.trace.tail(mark)
+        report.check(
+            "the todo tab lists the checkboxes of every note",
+            bool(listed) and hit(tail, "todo-tick:gate-todo:3") is not None,
+            "todo rows reported" if listed else "no todo-tick rect",
+        )
+        report.check(
+            "未完成 is the default view, so the ticked line is not listed",
+            bool(listed) and hit(tail, "todo-tick:gate-todo:2") is None,
+            "gate-todo:2 "
+            + ("hidden" if hit(tail, "todo-tick:gate-todo:2") is None else "listed"),
+        )
+
+        before = session.trace.count("manager_todo_toggle")
+        click_button(session, shell, "todo-tick:gate-todo:1")
+        toggled = session.trace.later("manager_todo_toggle", before, 5)
+        stored = query(db, "SELECT content FROM notes WHERE id = ?", ("gate-todo",))
+        body = stored[0] if stored else ""
+        report.check(
+            "clicking the box ticks that line, in the note body",
+            "done=true" in toggled
+            and "line=1" in toggled
+            and "created=false" in toggled
+            and "- [x] 买牛奶 @done:" in body,
+            (toggled.strip() or "no manager_todo_toggle line") + f"; body={body!r}",
+        )
+
+        before = session.trace.count("manager_todo_filter")
+        mark = len(session.trace.text())
+        click_button(session, shell, "todo-filter:all")
+        filtered = session.trace.later("manager_todo_filter", before, 5)
+        both = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "todo-tick:gate-todo:2") is not None, 4
+        )
+        report.check(
+            "全部 brings the completed lines back",
+            "filter=all" in filtered and bool(both),
+            (filtered.strip() or "no manager_todo_filter line")
+            + f"; done row={'listed' if both else 'missing'}",
+        )
+
+        # The untick path is a different rewrite: it has to drop the `@done:` stamp,
+        # not just change `x` back to a space. A body that kept the stamp would show
+        # a completion date on an open task.
+        before = session.trace.count("manager_todo_toggle")
+        click_button(session, shell, "todo-tick:gate-todo:2")
+        untoggled = session.trace.later("manager_todo_toggle", before, 5)
+        stored = query(db, "SELECT content FROM notes WHERE id = ?", ("gate-todo",))
+        body = stored[0] if stored else ""
+        report.check(
+            "unticking drops the @done stamp as well as the x",
+            "done=false" in untoggled
+            and "- [ ] 交房租" in body
+            and "交房租 @done" not in body,
+            (untoggled.strip() or "no manager_todo_toggle line") + f"; body={body!r}",
+        )
+
+        # The text is the other target: it opens the note the task lives in, which is
+        # how "where do I go to write more" is answered from the list. `note_open`
+        # carries the *note* id; `note_spawn` carries the window's index, which is a
+        # different number and the wrong one to watch.
+        before = session.trace.count("note_open id=gate-todo")
+        click_button(session, shell, "todo-open:gate-todo:3")
+        jumped = session.trace.later("note_open id=gate-todo", before, 8)
+        report.check(
+            "clicking a task's text opens the note it lives in",
+            "source=manager" in jumped,
+            jumped.strip() or "no note_open line for the todo's note",
+        )
+        session.capture("todos: ticked, filtered, jumped")
+
         # ------------------------------------- the card, from the workbench
         # The frontend panel has had this button all along; in takeover mode that
         # panel is not on screen, so the tray was the only way in. Same request, one
         # window -- `todo_card action=open` is the controller saying so.
         mark = len(session.trace.text())
+        # Leave the tab and come back: the rectangles are written when a control
+        # appears, and the workbench is still on 待办 from the section above. Clicking
+        # 待办 while already there would be a no-op and the fresh report would never
+        # happen.
+        click_button(session, shell, "tab:notes")
         click_button(session, shell, "tab:todos")
         offered = wininput.wait_for(
             lambda: hit(session.trace.tail(mark), "todo-card") is not None, 4

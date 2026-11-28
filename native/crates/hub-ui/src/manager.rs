@@ -24,84 +24,28 @@
 //! from a frame key to a chord already exists in [`crate::keys`] -- the same one
 //! the note uses, so a captured key and a pressed key cannot disagree.
 
-// `manager.rs` plus a `manager/` directory: the classic non-`mod.rs` layout. Two
+// `manager.rs` plus a `manager/` directory: the classic non-`mod.rs` layout. Five
 // jobs got big enough to be their own file -- the row (the densest drawing code
-// here) and the confirm dialog (its own state machine, tested on its own).
+// here), the confirm dialog (its own state machine, tested on its own), the
+// sidebar (a rail made of tiles and captions), the panel header (title,
+// description, actions, and the hairline under them) and the todo pane (the one
+// list in this window that writes back to a note body).
 mod confirm;
+mod head;
 mod list;
+mod nav;
+mod row;
+mod todo;
 
 pub use confirm::Pending;
+pub use row::Row;
+pub use todo::{Filter, TodoGroup};
 
 use egui::{RichText, Stroke};
 use hub_core::{Chord, Command, Scope, Table};
 
 use crate::hint;
 use crate::theme::Theme;
-
-/// One note, as the list needs it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Row {
-    pub id: String,
-    pub title: String,
-    pub preview: String,
-    pub when: String,
-    pub pinned: bool,
-    /// `Some` when the row is in the trash.
-    pub deleted_at: Option<String>,
-    haystack: String,
-}
-
-impl Row {
-    pub fn new(
-        id: &str,
-        title: &str,
-        content: &str,
-        tags: &str,
-        updated_at: &str,
-        pinned: bool,
-        deleted_at: Option<String>,
-    ) -> Self {
-        let display = hub_core::note_text::display_title(title, content);
-        Self {
-            id: id.to_string(),
-            preview: preview_of(content),
-            title: display.clone(),
-            when: short_time(updated_at),
-            pinned,
-            deleted_at,
-            haystack: format!("{display}\n{content}\n{tags}").to_lowercase(),
-        }
-    }
-
-    fn matches(&self, query: &str) -> bool {
-        let query = query.trim().to_lowercase();
-        query.is_empty() || self.haystack.contains(&query)
-    }
-}
-
-fn preview_of(content: &str) -> String {
-    const MAX: usize = 64;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut out: String = line.chars().take(MAX).collect();
-        if line.chars().count() > MAX {
-            out.push('…');
-        }
-        return out;
-    }
-    String::new()
-}
-
-fn short_time(stamp: &str) -> String {
-    let bytes = stamp.as_bytes();
-    if bytes.len() >= 16 && bytes[4] == b'-' && bytes[7] == b'-' && bytes[10] == b'T' {
-        return format!("{} {}", &stamp[5..10], &stamp[11..16]);
-    }
-    stamp.to_string()
-}
 
 /// The four sections the sidebar offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +76,34 @@ impl Tab {
             Tab::Settings => "settings",
         }
     }
+
+    /// The single character in the sidebar's icon tile.
+    ///
+    /// A Chinese character, not an emoji: the CJK face installed by
+    /// [`crate::theme`] covers these four, while `🗑` and `⚙` depend on emoji
+    /// fonts whose presence on a stripped-down Windows install is not something
+    /// the navigation should bet on. The tile is the only icon the rail has, so it
+    /// must never come up as tofu.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Tab::Notes => "笔",
+            Tab::Todos => "办",
+            Tab::Trash => "删",
+            Tab::Settings => "设",
+        }
+    }
+
+    /// The small-caps second line under the name, the same one the shipped
+    /// sidebar shows: the section names are short enough that two lines of
+    /// text would otherwise be vertically unbalanced.
+    pub fn caption(self) -> &'static str {
+        match self {
+            Tab::Notes => "NOTES",
+            Tab::Todos => "TODOS",
+            Tab::Trash => "TRASH",
+            Tab::Settings => "SETTINGS",
+        }
+    }
 }
 
 // The todo parser used to live here, with a comment saying it was "deliberate" that
@@ -152,6 +124,19 @@ pub enum Action {
     /// last place that could only *point at* it (frontend had a button, the native
     /// manager had none, so in takeover mode nobody could reach it).
     TodoCard,
+    /// Tick or untick one checkbox line.
+    ///
+    /// Carries the text as well as the line number because the controller re-locates
+    /// the task before writing (`hub_core::todo::locate`): a line index from this
+    /// frame is a hint, and another window may have inserted a line above it since.
+    ToggleTodo {
+        note: String,
+        line: usize,
+        text: String,
+    },
+    /// View state, but it travels as an action so the log records it -- "why does
+    /// the list look empty" has an answer in the file.
+    SetTodoFilter(Filter),
     Open(String),
     Pin { id: String, pinned: bool },
     Trash(String),
@@ -180,6 +165,9 @@ pub struct State {
     /// and bare for chrome (`new-note`, `todo-card`, `tab:trash`), so a click can be
     /// addressed without the script knowing the arrangement.
     pub hits: Vec<(String, egui::Rect)>,
+    /// Which todos the todo tab lists. View state, like `selected`: the filter does
+    /// not belong to the controller, and a reopen starts from 未完成 again.
+    pub filter: Filter,
     /// A destructive action waiting for its second yes, if any.
     ///
     /// This is view state on purpose: an open question is not a decision, and the
@@ -196,6 +184,7 @@ impl Default for State {
             capturing: None,
             status: String::new(),
             hits: Vec::new(),
+            filter: Filter::default(),
             pending: None,
         }
     }
@@ -224,7 +213,7 @@ pub fn draw(
     palette: Theme,
     state: &mut State,
     rows: &[Row],
-    todo: Option<&str>,
+    todos: &[TodoGroup],
     table: &Table,
 ) -> Action {
     let mut action = Action::None;
@@ -245,100 +234,140 @@ pub fn draw(
         }
     }
 
-    egui::TopBottomPanel::top("manager-head")
-        .frame(egui::Frame::NONE.fill(palette.surface).inner_margin(egui::Margin::symmetric(14, 10)))
+    egui::SidePanel::left("manager-tabs")
+        .exact_width(nav::WIDTH)
+        .resizable(false)
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.surface)
+                .inner_margin(egui::Margin {
+                    left: 14,
+                    right: 10,
+                    top: 18,
+                    bottom: 12,
+                }),
+        )
+        .show(ctx, |ui| {
+            let rail = nav::sidebar(
+                ui,
+                palette,
+                state,
+                rows.iter().filter(|row| row.deleted_at.is_none()).count(),
+                rows.iter().filter(|row| row.deleted_at.is_some()).count(),
+            );
+            if rail != Action::None {
+                action = rail;
+            }
+        });
+
+    // The status line lives under the content, not in the header. A message that
+    // comes and goes must not reflow the title above it -- and "已移到回收站"
+    // arriving in the header would push the whole list down for a second.
+    //
+    // Declared before the central panel on purpose: a bottom panel takes its
+    // height off whatever is left after the side panel, and the panel order is
+    // exactly how egui decides that.
+    egui::TopBottomPanel::bottom("manager-status")
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.canvas)
+                .inner_margin(egui::Margin {
+                    left: 22,
+                    right: 22,
+                    top: 4,
+                    bottom: 8,
+                }),
+        )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("工作台").size(14.0).color(palette.ink));
-                ui.add_space(8.0);
                 ui.label(
                     RichText::new(&state.status)
-                        .size(10.5)
+                        .size(9.5)
                         .color(palette.ink_subtle),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let close = ui.add(
-                        egui::Button::new(RichText::new("关闭").size(11.0).color(palette.ink_soft))
-                            .fill(palette.canvas)
-                            .stroke(Stroke::new(1.0, palette.border)),
+                    ui.label(
+                        RichText::new("Esc 关闭")
+                            .size(9.0)
+                            .color(palette.ink_disabled),
                     );
-                    if hint::hint(close, palette, "关闭工作台", "Esc").clicked() {
-                        action = Action::Close;
-                    }
-                    // The one action the workbench could only *describe* before: the
-                    // empty list said "press Ctrl+Alt+N" because there was no button
-                    // to point at. It is the hotkey's own request, not a second path.
-                    let new_note = ui.add(
-                        egui::Button::new(
-                            RichText::new("新建笔记").size(11.0).color(palette.ink),
-                        )
-                        .fill(palette.surface)
-                        .stroke(Stroke::new(1.0, palette.border_strong)),
-                    );
-                    report(state, "new-note", new_note.rect);
-                    if hint::hint(new_note, palette, "新建一条快速笔记", "Ctrl+Alt+N").clicked()
-                    {
-                        action = Action::NewNote;
-                    }
                 });
             });
         });
 
-    egui::SidePanel::left("manager-tabs")
-        .exact_width(132.0)
-        .frame(egui::Frame::NONE.fill(palette.canvas).inner_margin(egui::Margin::same(8)))
-        .show(ctx, |ui| {
-            for tab in Tab::ALL {
-                let selected = state.tab == tab;
-                let label = if tab == Tab::Trash {
-                    format!("{} ({})", tab.label(), rows.iter().filter(|row| row.deleted_at.is_some()).count())
-                } else if tab == Tab::Notes {
-                    format!("{} ({})", tab.label(), rows.iter().filter(|row| row.deleted_at.is_none()).count())
-                } else {
-                    tab.label().to_string()
-                };
-                let button = ui.add_sized(
-                    [ui.available_width(), 28.0],
-                    egui::Button::new(
-                        RichText::new(label)
-                            .size(11.5)
-                            .color(if selected { palette.ink } else { palette.ink_soft }),
-                    )
-                    .fill(if selected { palette.surface } else { palette.canvas })
-                    .stroke(Stroke::new(0.0, palette.border)),
-                );
-                if button.clicked() {
-                    state.tab = tab;
-                    state.query.clear();
-                    state.status.clear();
-                    action = Action::SetTab(tab);
-                    // The sidebar painted these fills before the click was known, and
-                    // the controller does not repaint on `SetTab`: ask for the frame
-                    // that shows the new tab as selected.
-                    ui.ctx().request_repaint();
-                }
-                report(state, &format!("tab:{}", tab.id()), button.rect);
-            }
-        });
-
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(palette.canvas).inner_margin(egui::Margin::same(12)))
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.canvas)
+                .inner_margin(egui::Margin {
+                    left: 22,
+                    right: 22,
+                    top: 18,
+                    bottom: 10,
+                }),
+        )
         .show(ctx, |ui| match state.tab {
             Tab::Notes | Tab::Trash => {
                 let trash = state.tab == Tab::Trash;
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut state.query)
-                        .hint_text("搜索标题、正文、标签")
-                        .desired_width(f32::INFINITY),
+                let head_action = head::panel_head(
+                    ui,
+                    palette,
+                    state,
+                    if trash { "RECYCLE BIN" } else { "NOTES" },
+                    if trash { "回收站" } else { "笔记" },
+                    if trash {
+                        "删除的笔记保留 30 天；可以恢复，也可以彻底删除。"
+                    } else {
+                        "点一行选中它，操作按钮出现在该行下方。"
+                    },
+                    |ui, state| {
+                        let mut asked = Action::None;
+                        if head::ghost(ui, palette, "关闭").clicked() {
+                            asked = Action::Close;
+                        }
+                        if !trash {
+                            // The one action the workbench could only *describe*
+                            // before: the empty list said "press Ctrl+Alt+N" because
+                            // there was no button to point at. Same request either
+                            // way, so the button is not a second path.
+                            let new_note = head::primary(ui, palette, "新建笔记");
+                            report(state, "new-note", new_note.rect);
+                            if hint::hint(new_note, palette, "新建一条快速笔记", "Ctrl+Alt+N")
+                                .clicked()
+                            {
+                                asked = Action::NewNote;
+                            }
+                        }
+                        asked
+                    },
                 );
-                let _ = field;
-                ui.add_space(6.0);
+                if head_action != Action::None {
+                    action = head_action;
+                }
+
+                // The field is a card, not a bare `TextEdit`: an input that floats
+                // on the page with a hairline is the one shape the shipped manager
+                // never uses, and the search box is the first thing the eye lands
+                // on in this panel.
+                egui::Frame::NONE
+                    .fill(palette.surface)
+                    .corner_radius(egui::CornerRadius::same(palette.radius.card))
+                    .inner_margin(egui::Margin::symmetric(12, 7))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.query)
+                                .hint_text("搜索标题、正文、标签")
+                                .desired_width(f32::INFINITY)
+                                .frame(false),
+                        );
+                    });
+                ui.add_space(10.0);
                 let visible: Vec<&Row> = rows
                     .iter()
                     .filter(|row| row.deleted_at.is_some() == trash && row.matches(&state.query))
                     .collect();
                 if visible.is_empty() {
-                    ui.add_space(8.0);
+                    ui.add_space(10.0);
                     ui.label(
                         RichText::new(if trash {
                             "回收站是空的"
@@ -349,124 +378,142 @@ pub fn draw(
                         .color(palette.ink_subtle),
                     );
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for row in visible {
-                        if let Some(clicked) = list::note_row(ui, palette, state, row) {
-                            action = clicked;
-                        }
-                    }
-                });
-            }
-            Tab::Todos => {
-                let content = todo.unwrap_or("");
-                let items = hub_core::todo::lines(content);
-                let open = items.iter().filter(|item| !item.done).count();
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("待办箱 · 未完成 {open} / 共 {}", items.len()))
-                            .size(11.0)
-                            .color(palette.ink_soft),
-                    );
-                    // The frontend panel has had this button since the card shipped;
-                    // in takeover mode the frontend panel is not on screen, so the
-                    // card was reachable only from the tray. Same request either way
-                    // (`Request::TodoCard`), so there is still one window, not two.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let card = ui.add(
-                            egui::Button::new(
-                                RichText::new("悬浮卡片").size(10.5).color(palette.ink),
-                            )
-                            .fill(palette.surface)
-                            .stroke(Stroke::new(1.0, palette.border_strong)),
-                        );
-                        report(state, "todo-card", card.rect);
-                        if hint::hint(card, palette, "在桌面显示待办卡片", "").clicked() {
-                            action = Action::TodoCard;
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for row in visible {
+                            if let Some(clicked) = list::note_row(ui, palette, state, row) {
+                                action = clicked;
+                            }
                         }
                     });
-                });
-                ui.add_space(6.0);
-                if items.is_empty() {
-                    ui.label(
-                        RichText::new("还没有待办。在名为「待办箱」的笔记里写 - [ ] 事项")
-                            .size(11.0)
-                            .color(palette.ink_subtle),
-                    );
+            }
+            Tab::Todos => {
+                // The counts come from every group, not from what the filter shows:
+                // "未完成 2 / 共 5" is a fact about the store, and a header that
+                // changed its meaning with the filter would be two different numbers
+                // under one sentence.
+                let (open, total) = todo::counts(todos);
+                let description = format!("未完成 {open} · 共 {total} 条，按笔记分组。");
+                let head_action = head::panel_head(
+                    ui,
+                    palette,
+                    state,
+                    "TODO",
+                    "待办",
+                    &description,
+                    |ui, state| {
+                        let mut asked = Action::None;
+                        if head::ghost(ui, palette, "关闭").clicked() {
+                            asked = Action::Close;
+                        }
+                        // The frontend panel has had this button since the card
+                        // shipped; in takeover mode the frontend panel is not on
+                        // screen, so the card was reachable only from the tray.
+                        // Same request either way (`Request::TodoCard`), so there is
+                        // still one window, not two.
+                        let card = head::quiet(ui, palette, "悬浮卡片");
+                        report(state, "todo-card", card.rect);
+                        if hint::hint(card, palette, "在桌面显示待办卡片", "").clicked() {
+                            asked = Action::TodoCard;
+                        }
+                        asked
+                    },
+                );
+                if head_action != Action::None {
+                    action = head_action;
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for item in &items {
-                        let (mark, ink) = if item.done {
-                            ("✓", palette.ink_subtle)
-                        } else {
-                            ("○", palette.ink)
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(mark).size(11.0).color(ink));
-                            ui.label(
-                                RichText::new(&item.text)
-                                    .size(11.5)
-                                    .color(if item.done { palette.ink_subtle } else { ink }),
-                            );
-                        });
-                    }
-                });
+
+                // The pane owns the filter row, the groups and the two targets per
+                // line. It writes nothing itself: a tick comes back as
+                // `Action::ToggleTodo` and the controller does the locating.
+                let asked = todo::pane(ui, palette, state, todos);
+                if asked != Action::None {
+                    action = asked;
+                }
             }
             Tab::Settings => {
-                ui.label(
-                    RichText::new("快捷键 · 点按键位后按新键，Esc 取消")
-                        .size(11.0)
-                        .color(palette.ink_soft),
-                );
-                ui.add_space(6.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for scope in [Scope::Global, Scope::Window] {
-                        ui.label(
-                            RichText::new(match scope {
-                                Scope::Global => "全局（其它窗口有焦点时也生效）",
-                                Scope::Window => "笔记窗口内",
-                            })
-                            .size(10.0)
-                            .color(palette.ink_subtle),
-                        );
-                        ui.add_space(2.0);
-                        for command in Command::ALL
-                            .into_iter()
-                            .filter(|command| command.scope() == scope)
-                        {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(command.label())
-                                        .size(11.5)
-                                        .color(palette.ink_soft),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if state.capturing == Some(command) {
-                                            ui.label(
-                                                RichText::new("按下新键…（Esc 取消）")
-                                                    .size(10.5)
-                                                    .color(palette.accent),
-                                            );
-                                            return;
-                                        }
-                                        let chip = chip_button(
-                                            ui,
-                                            palette,
-                                            &table.hint(command),
-                                            table.shadowed().contains(&command),
-                                        );
-                                        if hint::hint(chip, palette, "改键", "").clicked() {
-                                            state.capturing = Some(command);
-                                            action = Action::BeginCapture(command);
-                                        }
-                                    },
-                                );
-                            });
+                let head_action = head::panel_head(
+                    ui,
+                    palette,
+                    state,
+                    "SETTINGS",
+                    "设置",
+                    "点按键位后按新键，Esc 取消。",
+                    |ui, _state| {
+                        if head::ghost(ui, palette, "关闭").clicked() {
+                            Action::Close
+                        } else {
+                            Action::None
                         }
-                        ui.add_space(8.0);
-                    }
-                });
+                    },
+                );
+                if head_action != Action::None {
+                    action = head_action;
+                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for scope in [Scope::Global, Scope::Window] {
+                            ui.label(
+                                RichText::new(match scope {
+                                    Scope::Global => "全局（其它窗口有焦点时也生效）",
+                                    Scope::Window => "笔记窗口内",
+                                })
+                                .size(8.5)
+                                .color(palette.ink_subtle)
+                                .extra_letter_spacing(2.2),
+                            );
+                            ui.add_space(6.0);
+                            for command in Command::ALL
+                                .into_iter()
+                                .filter(|command| command.scope() == scope)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(command.label())
+                                            .size(11.5)
+                                            .color(palette.ink_soft),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if state.capturing == Some(command) {
+                                                ui.label(
+                                                    RichText::new("按下新键…（Esc 取消）")
+                                                        .size(10.5)
+                                                        .color(palette.accent),
+                                                );
+                                                return;
+                                            }
+                                            // A command with no chord still needs a
+                                            // chip: an empty button is invisible, and
+                                            // the only way to bind one is to click the
+                                            // thing that is not there.
+                                            let hint = table.hint(command);
+                                            let label = if hint.trim().is_empty() {
+                                                "未绑定".to_string()
+                                            } else {
+                                                hint
+                                            };
+                                            let chip = chip_button(
+                                                ui,
+                                                palette,
+                                                &label,
+                                                table.shadowed().contains(&command),
+                                            );
+                                            if hint::hint(chip, palette, "改键", "").clicked() {
+                                                state.capturing = Some(command);
+                                                action = Action::BeginCapture(command);
+                                            }
+                                        },
+                                    );
+                                });
+                                ui.add_space(6.0);
+                            }
+                            ui.add_space(14.0);
+                        }
+                    });
             }
         });
 
@@ -492,184 +539,7 @@ fn chip_button(ui: &mut egui::Ui, palette: Theme, chord: &str, conflict: bool) -
     )
 }
 
+// The tests are a sibling file, not an inline module: the drawing code above is
+// dense enough that the assertions read better on their own page.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn row(id: &str, title: &str, content: &str, tags: &str, deleted: bool) -> Row {
-        Row::new(
-            id,
-            title,
-            content,
-            tags,
-            "2026-11-26T02:31:00.123456789+00:00",
-            false,
-            deleted.then(|| "2026-11-26T03:00:00+00:00".to_string()),
-        )
-    }
-
-    #[test]
-    fn search_covers_title_body_and_tags() {
-        let rows = vec![
-            row("a", "周末计划", "买螺丝刀", "", false),
-            row("b", "会议", "本周进度", "工作 重要", false),
-        ];
-        assert_eq!(
-            rows.iter().filter(|r| r.matches("螺丝刀")).count(),
-            1,
-            "the body was not searched"
-        );
-        assert_eq!(rows.iter().filter(|r| r.matches("重要")).count(), 1);
-        assert_eq!(rows.iter().filter(|r| r.matches("")).count(), 2);
-    }
-
-    #[test]
-    fn the_trash_tab_sees_only_deleted_rows() {
-        let rows = vec![row("a", "留下", "", "", false), row("b", "删掉", "", "", true)];
-        let live = rows.iter().filter(|row| row.deleted_at.is_none()).count();
-        let trash = rows.iter().filter(|row| row.deleted_at.is_some()).count();
-        assert_eq!((live, trash), (1, 1));
-    }
-
-    #[test]
-    fn the_list_shows_the_same_todos_the_card_does() {
-        // One parser now, but this test stays: it pins what the *list* relies on --
-        // the marks a shipped note actually uses (`-`/`*`, `x`/`X`) and that a plain
-        // bullet is not a todo.
-        let items =
-            hub_core::todo::lines("- [ ] 买菜\n* [x] 洗衣\n- [X] 回邮件\nnot a todo\n");
-        let seen: Vec<(&str, bool)> = items.iter().map(|i| (i.text.as_str(), i.done)).collect();
-        assert_eq!(seen, vec![("买菜", false), ("洗衣", true), ("回邮件", true)]);
-    }
-
-    #[test]
-    fn an_empty_todo_note_has_no_items_rather_than_a_blank_one() {
-        assert!(hub_core::todo::lines("").is_empty());
-        assert!(hub_core::todo::lines("普通段落\n- 列表但不是待办").is_empty());
-    }
-
-    #[test]
-    fn a_row_title_falls_back_to_the_first_line_like_the_note_does() {
-        // The list and the note must agree on what a note is called, or the same
-        // note has two names depending on where you look at it.
-        let row = row("a", "", "\n买菜清单\n鸡蛋", "", false);
-        assert_eq!(row.title, "买菜清单");
-    }
-
-    #[test]
-    fn tabs_are_stable_for_the_settings_file_and_the_log() {
-        // The ids end up in log lines; a rename would break a saved expectation.
-        assert_eq!(Tab::Notes.id(), "notes");
-        assert_eq!(Tab::Trash.id(), "trash");
-        assert_eq!(Tab::ALL.len(), 4);
-    }
-
-    /// Run one frame and hand back the rectangles it reported.
-    fn frame(state: &mut State, rows: &[Row]) -> Vec<(String, egui::Rect)> {
-        let ctx = egui::Context::default();
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::Vec2::new(900.0, 620.0),
-            )),
-            ..Default::default()
-        };
-        let table = Table::defaults();
-        let mut hits = Vec::new();
-        let _ = ctx.run(input, |ctx| {
-            let _ = draw(ctx, Theme::standard(), state, rows, None, &table);
-            hits = state.hits.clone();
-        });
-        hits
-    }
-
-    fn named(hits: &[(String, egui::Rect)], name: &str) -> bool {
-        hits.iter().any(|(other, _)| other == name)
-    }
-
-    #[test]
-    fn a_row_reports_its_own_buttons_only_once_it_is_selected() {
-        // The buttons are drawn under the selected row, so the gate needs two things
-        // to be true: the row is addressable before it is selected (to select it) and
-        // the buttons appear only then. Asserting the absence as well as the presence
-        // is what stops "report every row's buttons" from passing by accident.
-        let rows = vec![
-            row("note-1", "一", "一\n正文", "", false),
-            row("note-2", "二", "二\n正文", "", false),
-        ];
-        let mut state = State::default();
-        let before = frame(&mut state, &rows);
-        assert!(named(&before, "row:note-1"), "the row itself must be clickable");
-        assert!(!named(&before, "pin:note-1"), "no row was selected yet");
-
-        state.selected = Some("note-2".to_string());
-        let after = frame(&mut state, &rows);
-        assert!(named(&after, "open:note-2"));
-        assert!(named(&after, "pin:note-2"));
-        assert!(named(&after, "trash:note-2"));
-        assert!(!named(&after, "pin:note-1"), "only the selected row has buttons");
-    }
-
-    #[test]
-    fn the_todo_tab_offers_the_card_and_the_notes_tab_does_not() {        // The card could only be opened from the tray in takeover mode. The button
-        // lives on the todo tab, next to the count, like the frontend panel's.
-        let rows = vec![row("note-1", "一", "一", "", false)];
-        let mut state = State::default();
-        assert!(!named(&frame(&mut state, &rows), "todo-card"));
-        state.tab = Tab::Todos;
-        let hits = frame(&mut state, &rows);
-        assert!(named(&hits, "todo-card"), "todo tab must offer the card");
-        assert!(named(&hits, "tab:todos"));
-    }
-
-    #[test]
-    fn clicking_a_trashed_row_selects_it_so_it_can_be_restored() {
-        // A trashed row has no "open" action, and the first version therefore never
-        // set `selected` for it: 恢复 was unreachable for every row except the one
-        // just deleted. The gate found this by clicking and watching nothing happen;
-        // it is pinned here because the rule is one line and easy to undo.
-        let ctx = egui::Context::default();
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::new(900.0, 620.0));
-        let table = Table::defaults();
-        let rows = vec![row("gone", "删掉的", "删掉的", "", true)];
-        let mut state = State {
-            tab: Tab::Trash,
-            ..Default::default()
-        };
-        let pass = |state: &mut State, events: Vec<egui::Event>| {
-            let input = egui::RawInput {
-                screen_rect: Some(screen),
-                events,
-                ..Default::default()
-            };
-            let _ = ctx.run(input, |ctx| {
-                let _ = draw(ctx, Theme::standard(), state, &rows, None, &table);
-            });
-        };
-        pass(&mut state, Vec::new());
-        let rect = state
-            .hits
-            .iter()
-            .find(|(name, _)| name == "row:gone")
-            .expect("the trashed row must be reported")
-            .1;
-        let at = rect.center();
-        let press = |pressed: bool| {
-            vec![egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::default(),
-            }]
-        };
-        pass(&mut state, press(true));
-        pass(&mut state, press(false));
-        assert_eq!(state.selected.as_deref(), Some("gone"));
-        // The buttons are drawn for the row that was *already* selected when the
-        // frame started, so they appear on the next frame -- a click asks for a
-        // repaint, which is that frame in the real window.
-        pass(&mut state, Vec::new());
-        assert!(named(&state.hits, "restore:gone"), "恢复 must become reachable");
-        assert!(!named(&state.hits, "open:gone"), "a trashed row cannot be opened");
-    }
-}
+mod tests;

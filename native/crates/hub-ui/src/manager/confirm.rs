@@ -183,7 +183,7 @@ mod tests {
         let table = Table::defaults();
         let mut action = Action::None;
         let _ = ctx.run(input, |ctx| {
-            action = draw(ctx, Theme::standard(), state, rows, None, &table);
+            action = draw(ctx, Theme::standard(), state, rows, &[], &table);
         });
         action
     }

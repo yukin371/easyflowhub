@@ -16,8 +16,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use hub_core::{clock, Store, Table};
-use hub_ui::manager::{self, Action, Pending, Row, Tab};
+use hub_core::{clock, todo, NoteWrite, Store, Table};
+use hub_ui::manager::{self, Action, Pending, Row, Tab, TodoGroup};
 use hub_ui::Theme;
 
 use crate::hub::Request;
@@ -44,7 +44,13 @@ pub struct Spawn {
 pub struct Shell {
     state: manager::State,
     rows: Vec<Row>,
-    todo: Option<String>,
+    /// Every live note's checkbox lines, grouped by note.
+    ///
+    /// Not just the `待办箱`: the pane is the place to review everything that is
+    /// still open, and the shipped panel grouped by note for the same reason. The
+    /// groups are built in [`Shell::reload`] from the rows it already reads, so this
+    /// is not a second query.
+    todos: Vec<TodoGroup>,
     log: Arc<Log>,
     store: Option<Arc<Mutex<Store>>>,
     shortcuts: Arc<RwLock<Table>>,
@@ -61,7 +67,7 @@ impl Shell {
         let mut shell = Self {
             state: manager::State::default(),
             rows: Vec::new(),
-            todo: None,
+            todos: Vec::new(),
             log: spawn.log,
             store: spawn.store,
             shortcuts: spawn.shortcuts,
@@ -74,10 +80,10 @@ impl Shell {
             0,
             "manager_open",
             &format!(
-                "notes={} trash={} todo={} store={}",
+                "notes={} trash={} todos={} store={}",
                 shell.live_count(),
                 shell.trash_count(),
-                shell.todo.is_some(),
+                shell.todo_items(),
                 if shell.store.is_some() { "on" } else { "off" }
             ),
         );
@@ -105,8 +111,12 @@ impl Shell {
     pub fn builder(&self) -> egui::ViewportBuilder {
         egui::ViewportBuilder::default()
             .with_title(TITLE)
-            .with_inner_size([760.0, 540.0])
-            .with_min_inner_size([560.0, 360.0])
+            // 860 x 600: the sidebar is 216 and the content column needs room for a
+            // title, a description and two buttons on one line. At the old 760 the
+            // header's action cluster had to be capped so hard that the description
+            // wrapped on the first long sentence.
+            .with_inner_size([860.0, 600.0])
+            .with_min_inner_size([620.0, 420.0])
             .with_decorations(true)
             .with_resizable(true)
             .with_taskbar(true)
@@ -158,7 +168,7 @@ impl Shell {
             Theme::standard(),
             &mut self.state,
             &self.rows,
-            self.todo.as_deref(),
+            &self.todos,
             &table,
         );
         self.note_confirm(&asked, &action);
@@ -266,6 +276,17 @@ impl Shell {
                 self.push(Request::TodoCard);
                 ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
+            Action::ToggleTodo { note, line, text } => {
+                self.toggle_todo(ctx, &note, line, &text);
+            }
+            Action::SetTodoFilter(filter) => {
+                self.state.status = format!("筛选：{}", filter.label());
+                self.log
+                    .mark(0, "manager_todo_filter", &format!("filter={}", filter.id()));
+                // The pane already asked for a frame; this is the one that also
+                // updates the count of notes at the right of the filter row.
+                self.refresh(ctx);
+            }
             Action::Pin { id, pinned } => {
                 let ok = self.with_store(|store| store.set_note_pin(&id, pinned));
                 self.state.status = if ok == Some(true) {
@@ -341,6 +362,110 @@ impl Shell {
         }
     }
 
+    /// Tick or untick one checkbox line, in the note that holds it.
+    ///
+    /// The line number the pane reported belongs to the frame that drew it, so it is
+    /// treated as a hint: `todo::locate` re-finds the task by its text in the body as
+    /// it is *now*. Same rule as the desktop card, and the same reason -- a tick
+    /// applies to a task, not to whatever happens to be on row 7 after another window
+    /// inserted a line above it.
+    fn toggle_todo(&mut self, ctx: &egui::Context, id: &str, line: usize, text: &str) {
+        let at = clock::now_iso();
+        let Some(store) = self.store.clone() else {
+            self.state.status = "数据库未打开".to_string();
+            return;
+        };
+        let mut guard = store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(row) = guard.note(id).ok().flatten() else {
+            self.state.status = "这条笔记已不存在".to_string();
+            self.log.mark(
+                0,
+                "manager_todo_toggle",
+                &format!("id={id} line={line} refused=missing"),
+            );
+            drop(guard);
+            self.reload();
+            self.refresh(ctx);
+            return;
+        };
+        let target = match todo::locate(&row.content, line, text) {
+            todo::Locate::Exact(at) | todo::Locate::Relocated(at) => at,
+            // Refuse rather than guess: two tasks with the same words are two tasks,
+            // and ticking the wrong one is silent data loss.
+            todo::Locate::Conflict => {
+                self.state.status = "同名待办不止一条，未改动".to_string();
+                self.log.mark(
+                    0,
+                    "manager_todo_toggle",
+                    &format!("id={id} line={line} refused=conflict"),
+                );
+                return;
+            }
+            todo::Locate::Missing => {
+                self.state.status = "这条待办已被其他窗口删除".to_string();
+                self.log.mark(
+                    0,
+                    "manager_todo_toggle",
+                    &format!("id={id} line={line} refused=missing"),
+                );
+                drop(guard);
+                self.reload();
+                self.refresh(ctx);
+                return;
+            }
+        };
+        let next = match todo::toggle(&row.content, target, &at) {
+            Ok(next) => next,
+            Err(error) => {
+                self.state.status = "这一行已不是待办".to_string();
+                self.log.mark(
+                    0,
+                    "manager_todo_toggle",
+                    &format!("id={id} line={target} refused={error:?}"),
+                );
+                return;
+            }
+        };
+        // Read the state back out of the rewrite rather than inverting `item.done`:
+        // the pane's copy of the line is one frame old, and the log has to state what
+        // the database now says.
+        let done = todo::lines(&next)
+            .into_iter()
+            .find(|item| item.index == target)
+            .map(|item| item.done)
+            .unwrap_or(false);
+        let write = NoteWrite {
+            id: row.id,
+            title: row.title,
+            content: next,
+            tags: row.tags,
+            created_at: row.created_at,
+            updated_at: at,
+        };
+        let ok = match guard.save_note_body(&write) {
+            // `true` means the row was *created*. A tick almost always updates an
+            // existing note, so the log says which happened instead of calling the
+            // normal case a failure.
+            Ok(created) => format!("created={created}"),
+            Err(error) => format!("error=\"{error}\""),
+        };
+        self.log.mark(
+            0,
+            "manager_todo_toggle",
+            &format!("id={id} line={target} done={done} {ok}"),
+        );
+        self.state.status = if done {
+            "已完成".to_string()
+        } else {
+            "已取消完成".to_string()
+        };
+        drop(guard);
+        self.reload();
+        self.refresh(ctx);
+    }
+
     /// Ask for one more frame after a write changed the list.
     ///
     /// `reload()` swaps the rows while this frame is already half-painted, and egui
@@ -382,6 +507,7 @@ impl Shell {
     /// be the manager becoming the reason the notes feel slow.
     fn reload(&mut self) {
         self.rows.clear();
+        self.todos.clear();
         let Some(store) = self.store.as_ref() else {
             return;
         };
@@ -402,12 +528,21 @@ impl Shell {
                         )
                     })
                     .collect();
+                // From the rows just read, not from a second query: the todo pane
+                // needs whole bodies, and this is the one place that already has
+                // them. Trashed notes are excluded -- a deleted note's tasks are not
+                // open work, and ticking one would resurrect a row whose window is
+                // gone.
+                self.todos = rows
+                    .iter()
+                    .filter(|row| row.deleted_at.is_none())
+                    .filter_map(|row| TodoGroup::from_note(&row.id, &row.title, &row.content))
+                    .collect();
             }
             Err(error) => self
                 .log
                 .mark(0, "manager_store", &format!("list error=\"{error}\"")),
         }
-        self.todo = guard.todo_inbox().ok().flatten().map(|row| row.content);
     }
 
     fn live_count(&self) -> usize {
@@ -416,5 +551,9 @@ impl Shell {
 
     fn trash_count(&self) -> usize {
         self.rows.iter().filter(|row| row.deleted_at.is_some()).count()
+    }
+
+    fn todo_items(&self) -> usize {
+        self.todos.iter().map(|group| group.items.len()).sum()
     }
 }
