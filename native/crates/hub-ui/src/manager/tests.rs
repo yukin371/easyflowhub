@@ -114,7 +114,7 @@ fn frame_with(
     let table = Table::defaults();
     let mut hits = Vec::new();
     let _ = ctx.run(input, |ctx| {
-        let _ = draw(ctx, Theme::standard(), state, rows, todos, &table);
+        let _ = draw(ctx, Theme::standard(), state, rows, todos, &table, None);
         hits = state.hits.clone();
     });
     hits
@@ -219,7 +219,7 @@ fn clicking_a_trashed_row_selects_it_so_it_can_be_restored() {
             ..Default::default()
         };
         let _ = ctx.run(input, |ctx| {
-            let _ = draw(ctx, Theme::standard(), state, &rows, &[], &table);
+            let _ = draw(ctx, Theme::standard(), state, &rows, &[], &table, None);
         });
     };
     pass(&mut state, Vec::new());
@@ -283,7 +283,7 @@ fn run(
     };
     let mut action = Action::None;
     let _ = ctx.run(input, |ctx| {
-        action = draw(ctx, Theme::standard(), state, rows, todos, &Table::defaults());
+        action = draw(ctx, Theme::standard(), state, rows, todos, &Table::defaults(), None);
     });
     action
 }
@@ -512,7 +512,10 @@ fn restore_selected_carries_every_picked_id_in_a_stable_order() {
 
     assert_eq!(
         click(&ctx, &mut state, &rows, "restore-selected"),
-        Action::RestoreSelected(vec!["gone-a".to_string(), "gone-b".to_string()])
+        Action::RestoreSelected {
+            kind: RowKind::Note,
+            ids: vec!["gone-a".to_string(), "gone-b".to_string()],
+        }
     );
     assert!(!state.checked.is_empty(), "the controller clears it, not the click");
 }
@@ -531,13 +534,23 @@ fn clearing_the_pick_leaves_the_rows_alone() {
 }
 
 #[test]
-fn the_other_two_sub_tabs_answer_instead_of_listing_notes() {
-    // 收集箱 and 脚本 are the Tauri manager's; the chip leads to a sentence saying so.
-    // A dimmed chip would be a dead control, and an empty list would be a claim about
-    // data this window cannot see.
-    let rows = trash_rows();
+fn each_sub_tab_lists_its_own_kind_and_counts_its_own_rows() {
+    // Three sources, one list. The chip is what says which store you are looking at,
+    // and the row carries the kind so the restore goes back into the right one. A
+    // mixed list would have to answer "which kind is this" on every line -- and it
+    // would answer wrong exactly once, in the code path that deletes things.
+    let capture = Row::inbox("cap", "一张截图", "截图里的字", "图片", "2026-11-27T09:00:00+00:00");
+    let script = Row::script("s1", "run.py", "D:/work/run.py", "2026-11-27T10:00:00+00:00");
+    let mut rows = trash_rows();
+    rows.push(capture);
+    rows.push(script);
+
     let mut state = trash_state();
     let hits = frame(&mut state, &rows);
+    // 笔记 by default: the two notes, and neither of the other kinds.
+    assert!(named(&hits, "row:gone-a"));
+    assert!(!named(&hits, "row:cap"), "a capture is not a note");
+    assert!(!named(&hits, "row:s1"), "a script is not a note");
     for view in TrashView::ALL {
         assert!(
             named(&hits, &format!("trash-view:{}", view.id())),
@@ -545,7 +558,6 @@ fn the_other_two_sub_tabs_answer_instead_of_listing_notes() {
             view.id()
         );
     }
-    assert!(!named(&hits, "trash-notice"), "笔记 is the default, and it has a list");
 
     let ctx = egui::Context::default();
     assert_eq!(
@@ -553,9 +565,108 @@ fn the_other_two_sub_tabs_answer_instead_of_listing_notes() {
         Action::SetTrashView(TrashView::Inbox)
     );
     let hits = frame(&mut state, &rows);
-    assert!(named(&hits, "trash-notice"), "the notice replaces the list");
-    assert!(!named(&hits, "row:gone-a"), "and the rows are not behind it");
-    assert!(TrashView::Inbox.notice().is_some() && TrashView::Notes.notice().is_none());
+    assert!(named(&hits, "row:cap"), "收集箱 lists its own rows");
+    assert!(!named(&hits, "row:gone-a"), "and not the notes'");
+    assert!(named(&hits, "check:cap"), "a pick is a pick on every kind");
+
+    assert_eq!(
+        click(&ctx, &mut state, &rows, "trash-view:scripts"),
+        Action::SetTrashView(TrashView::Scripts)
+    );
+    let hits = frame(&mut state, &rows);
+    assert!(named(&hits, "row:s1"));
+    assert!(!named(&hits, "row:cap"), "one sub-tab, one kind");
+}
+
+#[test]
+fn a_pick_made_on_one_sub_tab_does_not_survive_the_switch() {
+    // 恢复选中 restores "the ticked ids" into the store the sub-tab names. A pick
+    // carried across kinds would ask the notes store to restore a script id -- which
+    // either does nothing or, worse, matches something.
+    let mut rows = trash_rows();
+    rows.push(Row::script("s1", "run.py", "D:/work/run.py", "2026-11-27T10:00:00+00:00"));
+    let mut state = trash_state();
+    let ctx = egui::Context::default();
+    click(&ctx, &mut state, &rows, "check:gone-a");
+    assert_eq!(state.checked.len(), 1);
+
+    click(&ctx, &mut state, &rows, "trash-view:scripts");
+    assert!(state.checked.is_empty(), "the switch drops the pick");
+}
+
+#[test]
+fn the_batch_restore_carries_the_kind_of_the_sub_tab_it_came_from() {
+    let capture = Row::inbox("cap", "一张截图", "", "图片", "2026-11-27T09:00:00+00:00");
+    let mut state = trash_state();
+    state.trash_view = TrashView::Inbox;
+    let rows = vec![capture];
+    let ctx = egui::Context::default();
+    click(&ctx, &mut state, &rows, "check:cap");
+    assert_eq!(
+        click(&ctx, &mut state, &rows, "restore-selected"),
+        Action::RestoreSelected {
+            kind: RowKind::Inbox,
+            ids: vec!["cap".to_string()],
+        }
+    );
+}
+
+#[test]
+fn a_script_row_purges_as_a_script() {
+    // The same two buttons, three different writes. The kind on the row is what
+    // keeps them apart, so it is asserted where the action is produced.
+    let script = Row::script("s1", "run.py", "D:/work/run.py", "2026-11-27T10:00:00+00:00");
+    let mut state = trash_state();
+    state.trash_view = TrashView::Scripts;
+    state.selected = Some("s1".to_string());
+    let rows = vec![script];
+    let hits = frame(&mut state, &rows);
+    assert!(named(&hits, "restore:s1"));
+
+    let ctx = egui::Context::default();
+    assert_eq!(
+        click(&ctx, &mut state, &rows, "restore:s1"),
+        Action::Restore {
+            kind: RowKind::Script,
+            id: "s1".to_string(),
+        }
+    );
+    click(&ctx, &mut state, &rows, "purge:s1");
+    assert_eq!(
+        state.pending,
+        Some(super::Pending::Purge {
+            kind: RowKind::Script,
+            id: "s1".to_string(),
+            title: "run.py".to_string(),
+        }),
+        "the question names the kind, because the answer does"
+    );
+}
+
+#[test]
+fn an_empty_sub_tab_says_which_kind_of_empty_it_is() {
+    // "Nothing was deleted" and "this machine has no script library" are different
+    // sentences, and neither is a claim the other can stand in for.
+    assert_eq!(
+        trash::empty_text(TrashView::Scripts, Some("这台机器上没有脚本库")),
+        "这台机器上没有脚本库"
+    );
+    assert_eq!(
+        trash::empty_text(TrashView::Scripts, None),
+        TrashView::Scripts.empty_line()
+    );
+    assert!(TrashView::Notes.empty_line().contains("30 天"));
+    assert_eq!(TrashView::Inbox.empty_label(), "清空收集箱");
+    assert_eq!(TrashView::Scripts.empty_label(), "清空脚本");
+    // The summary is per view: what a restore does is the part that differs.
+    assert!(TrashView::Inbox.summary().contains("附件"));
+    assert!(TrashView::Scripts.summary().contains("原位置"));
+    // The search field offers what its rows actually carry. A script row is a name
+    // and a path, so promising a body and tags there is promising two fields that
+    // are not on the page.
+    assert_eq!(TrashView::Scripts.search_hint(), "搜索脚本名或原路径");
+    assert_eq!(TrashView::Inbox.search_hint(), "搜索标题、正文、类型");
+    assert_eq!(TrashView::Notes.search_hint(), "搜索标题、正文、标签");
 }
 
 #[test]
@@ -572,8 +683,11 @@ fn empty_trash_asks_before_it_takes_anything() {
     assert_eq!(click(&ctx, &mut state, &rows, "empty-trash"), Action::None);
     assert_eq!(
         state.pending,
-        Some(super::Pending::EmptyTrash { count: 2 }),
-        "the question has to name how many rows it would take"
+        Some(super::Pending::EmptyTrash {
+            kind: RowKind::Note,
+            count: 2
+        }),
+        "the question has to name how many rows it would take, and which kind"
     );
 
     // Nothing in the trash, nothing to empty.

@@ -61,6 +61,8 @@ pub struct Args {
     pub store_bench: bool,
     /// App data directory to use instead of `%APPDATA%\com.yukin.easyflowhub`.
     pub store_root: Option<PathBuf>,
+    /// Scripts' trash directory to use instead of `%APPDATA%\scriptmgr\trash\scripts`.
+    pub script_trash: Option<PathBuf>,
     /// Directory for the schema dumps and the row dump the S3 gate compares.
     pub store_artifacts: Option<PathBuf>,
     /// Allow `--store-bench` to write probe rows. Refused for the live app dir.
@@ -102,6 +104,7 @@ impl Default for Args {
             editor_budget_p99_ms: 25.0,
             store_bench: false,
             store_root: None,
+            script_trash: None,
             store_artifacts: None,
             store_write: false,
             store_hold_ms: None,
@@ -142,6 +145,7 @@ easyflowhub-native — S1 shell spike
   --editor-budget-p99 <ms>  gate for keystroke -> painted p99 (default 25)
   --store-bench          read the product notes.db, print counts/schema, exit (S3)
   --store-root <dir>     app data dir to use instead of %APPDATA%
+  --script-trash <dir>   scripts' trash to read instead of %APPDATA%\\scriptmgr
   --store-artifacts <dir>  write schema dumps + row dump there (S3 gate input)
   --store-write          let --store-bench write probe rows (refused for the live dir)
   --store-hold <ms>      hold a write transaction open that long, then commit
@@ -267,6 +271,9 @@ pub fn parse<I: IntoIterator<Item = String>>(raw: I) -> Result<Args, String> {
             }
             "--store-bench" => args.store_bench = true,
             "--store-root" => args.store_root = Some(PathBuf::from(value("--store-root")?)),
+            "--script-trash" => {
+                args.script_trash = Some(PathBuf::from(value("--script-trash")?));
+            }
             "--store-artifacts" => {
                 args.store_artifacts = Some(PathBuf::from(value("--store-artifacts")?));
             }

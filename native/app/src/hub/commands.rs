@@ -52,6 +52,7 @@ impl Hub {
             store: self.store.clone(),
             shortcuts: self.shortcuts.clone(),
             inbox: self.inbox.clone(),
+            script_trash: self.script_trash.clone(),
         }));
         self.log
             .mark(0, "note_manager", "action=open target=manager");

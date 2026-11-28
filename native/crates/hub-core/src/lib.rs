@@ -18,6 +18,7 @@ pub mod clock;
 pub mod island;
 pub mod layout;
 pub mod note_text;
+pub mod script_trash;
 pub mod settings;
 pub mod shortcuts;
 pub mod store;

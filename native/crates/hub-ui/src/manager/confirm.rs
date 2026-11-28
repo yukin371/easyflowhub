@@ -15,23 +15,35 @@
 //! second yes. Esc is the one thing the controller *does* need to know about: it
 //! closes the window, so "Esc while a dialog is open" has to mean "cancel the
 //! dialog" instead. That is what [`State::dismiss`](super::State::dismiss) reports.
+//!
+//! ## Three kinds, three sentences
+//!
+//! The trash holds notes, capture items and scripts, and "permanent" is not the
+//! same fact for the three: a note leaves a table, a capture takes its attachment
+//! files with it, and a script *is* a file. One shared sentence would have to be
+//! vague enough to cover all three -- which is the sentence a user reads right
+//! before pressing the only irreversible button in the window.
 
 use egui::{Align, Layout, RichText, Stroke};
 
 use crate::theme::Theme;
 
-use super::{report, Action, State};
+use super::{report, Action, RowKind, State};
 
 /// A destructive action that has been asked for and not yet answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pending {
-    /// Permanent: the row leaves the database. Restoring it is not possible, which
-    /// is why this is the one action that asks.
-    Purge { id: String, title: String },
-    /// The whole trash at once. Same irreversibility as [`Pending::Purge`], but the
-    /// question has to name a count instead of a title -- "清空回收站？" with no
+    /// Permanent: the row leaves the database (and, for a capture, so do the files
+    /// it pointed at). Restoring it is not possible, which is why this asks.
+    Purge {
+        kind: RowKind,
+        id: String,
+        title: String,
+    },
+    /// One whole sub-tab at once. Same irreversibility as [`Pending::Purge`], but
+    /// the question has to name a count instead of a title -- "清空回收站？" with no
     /// number is a question the user cannot answer.
-    EmptyTrash { count: usize },
+    EmptyTrash { kind: RowKind, count: usize },
 }
 
 impl Pending {
@@ -42,7 +54,15 @@ impl Pending {
         }
     }
 
-    /// The row this question is about. `*` for the whole-trash question, which has
+    /// Which source this question is about. Logged next to the verb: `verb=empty
+    /// kind=scripts` is a post-mortem's only way to tell the three apart.
+    pub fn kind(&self) -> RowKind {
+        match self {
+            Self::Purge { kind, .. } | Self::EmptyTrash { kind, .. } => *kind,
+        }
+    }
+
+    /// The row this question is about. `*` for the whole-sub-tab question, which has
     /// no id: the log still needs a field there, and an empty one reads as a bug.
     pub fn id(&self) -> &str {
         match self {
@@ -52,36 +72,57 @@ impl Pending {
     }
 
     fn question(&self) -> &'static str {
-        match self {
-            Self::Purge { .. } => "彻底删除这条笔记？",
-            Self::EmptyTrash { .. } => "清空回收站？",
+        match (self, self.kind()) {
+            (Self::Purge { .. }, RowKind::Note) => "彻底删除这条笔记？",
+            (Self::Purge { .. }, RowKind::Inbox) => "彻底删除这个收集项？",
+            (Self::Purge { .. }, RowKind::Script) => "彻底删除这个脚本？",
+            (Self::EmptyTrash { .. }, RowKind::Note) => "清空回收站？",
+            (Self::EmptyTrash { .. }, RowKind::Inbox) => "清空收集箱？",
+            (Self::EmptyTrash { .. }, RowKind::Script) => "清空脚本？",
         }
     }
 
     fn detail(&self) -> String {
         match self {
-            Self::Purge { title, .. } => {
-                format!("「{title}」会从数据库删除，回收站也找不回来。")
-            }
-            Self::EmptyTrash { count } => {
-                format!("{count} 条笔记会从数据库删除，回收站也找不回来。")
-            }
+            Self::Purge { title, .. } => match self.kind() {
+                RowKind::Note => format!("「{title}」会从数据库删除，回收站也找不回来。"),
+                RowKind::Inbox => {
+                    format!("「{title}」和它的附件会被删除，回收站也找不回来。")
+                }
+                RowKind::Script => {
+                    format!("「{title}」的文件会从回收站删除，原位置不会再有它。")
+                }
+            },
+            Self::EmptyTrash { count, .. } => match self.kind() {
+                RowKind::Note => {
+                    format!("{count} 条笔记会从数据库删除，回收站也找不回来。")
+                }
+                RowKind::Inbox => {
+                    format!("{count} 个收集项和它们的附件会被删除，回收站也找不回来。")
+                }
+                RowKind::Script => {
+                    format!("{count} 个脚本的文件会被删除，回收站也找不回来。")
+                }
+            },
         }
     }
 
     fn yes(&self) -> &'static str {
-        match self {
-            Self::Purge { .. } => "彻底删除",
-            Self::EmptyTrash { .. } => "清空回收站",
+        match (self, self.kind()) {
+            (Self::Purge { .. }, _) => "彻底删除",
+            (Self::EmptyTrash { .. }, RowKind::Note) => "清空回收站",
+            (Self::EmptyTrash { .. }, RowKind::Inbox) => "清空收集箱",
+            (Self::EmptyTrash { .. }, RowKind::Script) => "清空脚本",
         }
     }
 
     /// What answering yes means. One place, so a new destructive verb cannot forget
-    /// to say which [`Action`](super::Action) it produces.
+    /// to say which [`Action`](super::Action) it produces -- and cannot drop the
+    /// kind, which is what tells the controller which store to write.
     fn agreed(self) -> Action {
         match self {
-            Self::Purge { id, .. } => Action::Purge(id),
-            Self::EmptyTrash { .. } => Action::EmptyTrash,
+            Self::Purge { kind, id, .. } => Action::Purge { kind, id },
+            Self::EmptyTrash { kind, .. } => Action::EmptyTrash { kind },
         }
     }
 }
@@ -188,6 +229,14 @@ mod tests {
         )]
     }
 
+    fn purge() -> Pending {
+        Pending::Purge {
+            kind: RowKind::Note,
+            id: "gone".to_string(),
+            title: "删掉的".to_string(),
+        }
+    }
+
     fn pass(
         ctx: &egui::Context,
         state: &mut State,
@@ -205,7 +254,7 @@ mod tests {
         let table = Table::defaults();
         let mut action = Action::None;
         let _ = ctx.run(input, |ctx| {
-            action = draw(ctx, Theme::standard(), state, rows, &[], &table);
+            action = draw(ctx, Theme::standard(), state, rows, &[], &table, None);
         });
         action
     }
@@ -277,14 +326,7 @@ mod tests {
 
         let action = pass(&ctx, &mut state, &rows, click(at));
         assert_eq!(action, Action::None, "one click must not purge");
-        assert_eq!(
-            state.pending,
-            Some(Pending::Purge {
-                id: "gone".to_string(),
-                title: "删掉的".to_string()
-            }),
-            "the dialog must be open"
-        );
+        assert_eq!(state.pending, Some(purge()), "the dialog must be open");
     }
 
     #[test]
@@ -294,17 +336,20 @@ mod tests {
         let mut state = State {
             tab: Tab::Trash,
             selected: Some("gone".to_string()),
-            pending: Some(Pending::Purge {
-                id: "gone".to_string(),
-                title: "删掉的".to_string(),
-            }),
+            pending: Some(purge()),
             ..Default::default()
         };
         // The dialog is drawn this frame, so its buttons are known after it settles.
         let at = settle(&ctx, &mut state, &rows, "confirm-ok").center();
 
         let action = pass(&ctx, &mut state, &rows, click(at));
-        assert_eq!(action, Action::Purge("gone".to_string()));
+        assert_eq!(
+            action,
+            Action::Purge {
+                kind: RowKind::Note,
+                id: "gone".to_string()
+            }
+        );
         assert_eq!(state.pending, None, "answering closes the dialog");
     }
 
@@ -317,14 +362,58 @@ mod tests {
         let rows = trashed();
         let mut state = State {
             tab: Tab::Trash,
-            pending: Some(Pending::EmptyTrash { count: 1 }),
+            pending: Some(Pending::EmptyTrash {
+                kind: RowKind::Note,
+                count: 1,
+            }),
             ..Default::default()
         };
         let at = settle(&ctx, &mut state, &rows, "confirm-ok").center();
 
         let action = pass(&ctx, &mut state, &rows, click(at));
-        assert_eq!(action, Action::EmptyTrash);
+        assert_eq!(
+            action,
+            Action::EmptyTrash {
+                kind: RowKind::Note
+            }
+        );
         assert_eq!(state.pending, None);
+    }
+
+    #[test]
+    fn each_kind_asks_its_own_question_and_answers_with_its_own_kind() {
+        // "Permanent" is three different facts. A shared sentence would have to be
+        // vague enough to cover a table row, an attachment and a file -- and this is
+        // the text a user reads before the only irreversible click in the window.
+        let note = purge();
+        let capture = Pending::Purge {
+            kind: RowKind::Inbox,
+            id: "cap".to_string(),
+            title: "一张图".to_string(),
+        };
+        let script = Pending::Purge {
+            kind: RowKind::Script,
+            id: "s1".to_string(),
+            title: "run.py".to_string(),
+        };
+        assert_eq!(note.question(), "彻底删除这条笔记？");
+        assert_eq!(capture.question(), "彻底删除这个收集项？");
+        assert_eq!(script.question(), "彻底删除这个脚本？");
+        assert!(capture.detail().contains("附件"), "{}", capture.detail());
+        assert!(script.detail().contains("原位置"), "{}", script.detail());
+        assert_eq!(capture.agreed(), Action::Purge { kind: RowKind::Inbox, id: "cap".to_string() });
+        assert_eq!(script.agreed(), Action::Purge { kind: RowKind::Script, id: "s1".to_string() });
+
+        let empty = |kind| Pending::EmptyTrash { kind, count: 2 };
+        assert_eq!(empty(RowKind::Inbox).yes(), "清空收集箱");
+        assert_eq!(empty(RowKind::Script).yes(), "清空脚本");
+        assert_eq!(
+            empty(RowKind::Script).agreed(),
+            Action::EmptyTrash { kind: RowKind::Script }
+        );
+        // The log fields, so a post-mortem can tell the three apart.
+        assert_eq!(empty(RowKind::Script).kind().id(), "scripts");
+        assert_eq!(empty(RowKind::Script).id(), "*");
     }
 
     #[test]
@@ -334,10 +423,7 @@ mod tests {
         let mut state = State {
             tab: Tab::Trash,
             selected: Some("gone".to_string()),
-            pending: Some(Pending::Purge {
-                id: "gone".to_string(),
-                title: "删掉的".to_string(),
-            }),
+            pending: Some(purge()),
             ..Default::default()
         };
         let at = settle(&ctx, &mut state, &rows, "confirm-cancel").center();
@@ -353,10 +439,7 @@ mod tests {
         // become "cancel the dialog". That decision needs an answer, not a guess.
         let mut state = State::default();
         assert!(!state.dismiss(), "nothing was open");
-        state.pending = Some(Pending::Purge {
-            id: "gone".to_string(),
-            title: "删掉的".to_string(),
-        });
+        state.pending = Some(purge());
         assert!(state.dismiss());
         assert_eq!(state.pending, None, "dismiss must clear it, not just report");
         assert!(!state.dismiss(), "the second Esc is the window's");

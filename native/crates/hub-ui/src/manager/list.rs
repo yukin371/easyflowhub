@@ -29,7 +29,7 @@ use crate::hint;
 use crate::theme::Theme;
 
 use super::check::{check_box, BOX};
-use super::{report, Action, Row, State};
+use super::{report, Action, Row, RowKind, State};
 
 /// Row height: two lines of text plus 12 px of air on each side.
 const HEIGHT: f32 = 48.0;
@@ -203,12 +203,23 @@ pub(super) fn note_row(
                 let restore = ui.button(RichText::new("恢复").size(10.5));
                 report(state, &format!("restore:{}", row.id), restore.rect);
                 if restore.clicked() {
-                    action = Some(Action::Restore(row.id.clone()));
+                    action = Some(Action::Restore {
+                        kind: row.kind,
+                        id: row.id.clone(),
+                    });
                 }
+                // The hint names what "permanent" costs for this kind: a table row, an
+                // attachment, or a file. The action carries the kind, so the same
+                // button can mean three different writes.
+                let hint_text = match row.kind {
+                    RowKind::Note => "从数据库删除这一行（会再确认一次）",
+                    RowKind::Inbox => "删除这一行和它的附件（会再确认一次）",
+                    RowKind::Script => "删掉回收站里的这个文件（会再确认一次）",
+                };
                 let purge = hint::hint(
                     ui.button(RichText::new("彻底删除").size(10.5)),
                     palette,
-                    "从数据库删除这一行（会再确认一次）",
+                    hint_text,
                     "",
                 );
                 report(state, &format!("purge:{}", row.id), purge.rect);
@@ -216,6 +227,7 @@ pub(super) fn note_row(
                     // Not `Action::Purge`: a question is not a decision. The dialog
                     // asks, and only its yes becomes an action.
                     state.pending = Some(super::Pending::Purge {
+                        kind: row.kind,
                         id: row.id.clone(),
                         title: row.title.clone(),
                     });

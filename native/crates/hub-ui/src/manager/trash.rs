@@ -1,14 +1,12 @@
-//! The trash pane: its sub-tabs, and the bar that acts on a multi-row pick.
+//! The trash pane: its three sub-tabs, and the bar that acts on a multi-row pick.
 //!
-//! ## Why the sub-tabs exist when only one of them has a list
+//! ## Why three sub-tabs and not one merged list
 //!
-//! The shipped panel's trash holds three kinds -- notes, captured items, scripts --
-//! because the Tauri manager owns all three. The native workbench only owns notes,
-//! so the other two chips lead to a sentence that says exactly that. A dimmed chip
-//! would say the same thing without the click; a chip that does nothing at all is
-//! the one shape this window refuses, because "I pressed it and nothing happened" is
-//! indistinguishable from a bug. The click here *does* answer the question it raises
-//! ("where did my deleted capture go?"), and the answer is not "try again".
+//! The three kinds are restored by three different writes -- an `UPDATE` on
+//! `notes`, an `UPDATE` on `inbox_items`, and a set of file moves out of
+//! `%APPDATA%\scriptmgr\trash\scripts`. A merged list would have to answer "which
+//! one is this row" on every line, and the answer would then be wrong exactly once,
+//! in the code path that deletes things. The chip is the answer, asked once.
 //!
 //! ## Why a selection bar and not a header button
 //!
@@ -22,9 +20,9 @@ use egui::{CornerRadius, RichText, Stroke, Vec2};
 use crate::theme::Theme;
 
 use super::head;
-use super::{report, Action, State};
+use super::{report, Action, RowKind, State};
 
-/// The three kinds of thing the shipped trash can hold.
+/// The three kinds of thing the trash holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrashView {
     #[default]
@@ -53,44 +51,85 @@ impl TrashView {
         }
     }
 
-    /// Why this view has no list in the native shell, if it has none.
-    ///
-    /// Separate from [`TrashView::has_list`] so the sentence lives next to the label
-    /// it belongs to instead of in the drawing code, where it would read as "the
-    /// list is empty".
-    pub fn notice(self) -> Option<&'static str> {
+    /// What the rows on this sub-tab came from. An action carries this, so the
+    /// controller never has to guess which store to write.
+    pub fn kind(self) -> RowKind {
         match self {
-            TrashView::Notes => None,
-            TrashView::Inbox => Some("收集箱条目的回收站在 Tauri 版管理器里；原生工作台只处理笔记。"),
-            TrashView::Scripts => Some("脚本的回收站在 Tauri 版管理器里；原生工作台只处理笔记。"),
+            TrashView::Notes => RowKind::Note,
+            TrashView::Inbox => RowKind::Inbox,
+            TrashView::Scripts => RowKind::Script,
         }
     }
 
-    pub fn has_list(self) -> bool {
-        self.notice().is_none()
+    /// The sentence under the panel title.
+    ///
+    /// Per view rather than one shared line, because "保留 30 天" is the only part
+    /// they share: what a restore does with the thing is the difference, and it is
+    /// the part a user needs before pressing it.
+    pub fn summary(self) -> &'static str {
+        match self {
+            TrashView::Notes => "删除的笔记保留 30 天；勾选多条可以一次恢复。",
+            TrashView::Inbox => "删除的收集项保留 30 天；彻底删除会连附件一起清理。",
+            TrashView::Scripts => "删除的脚本保留 30 天；恢复会把文件放回原位置。",
+        }
+    }
+
+    /// The destructive header button's label for this sub-tab.
+    ///
+    /// It names the kind: on 收集箱 a button called 清空回收站 reads as "empty
+    /// everything", and the only thing it actually empties is the list under it.
+    pub fn empty_label(self) -> &'static str {
+        match self {
+            TrashView::Notes => "清空回收站",
+            TrashView::Inbox => "清空收集箱",
+            TrashView::Scripts => "清空脚本",
+        }
+    }
+
+    /// What the search field says it can find here.
+    ///
+    /// Per view because the three kinds do not carry the same fields: a script row
+    /// is a name and an original path, so the notes' hint would promise a body and
+    /// a tag list that are not on screen -- and `Row::script` would then be accused
+    /// of not searching them.
+    pub fn search_hint(self) -> &'static str {
+        match self {
+            TrashView::Notes => "搜索标题、正文、标签",
+            TrashView::Inbox => "搜索标题、正文、类型",
+            TrashView::Scripts => "搜索脚本名或原路径",
+        }
+    }
+
+    /// What the list says when it has no rows.
+    pub fn empty_line(self) -> &'static str {
+        match self {
+            TrashView::Notes => "回收站是空的 · 删除的笔记会在这里保留 30 天",
+            TrashView::Inbox => "没有已删除的收集项 · 从收集箱删掉的内容会出现在这里",
+            TrashView::Scripts => "没有已删除的脚本 · 在脚本工作台里删掉的脚本会出现在这里",
+        }
     }
 }
 
-/// The chip row under the panel header.
+/// The chip row under the panel header. `counts` is in [`TrashView::ALL`] order.
 pub(super) fn subnav(
     ui: &mut egui::Ui,
     palette: Theme,
     state: &mut State,
-    notes: usize,
+    counts: [usize; 3],
 ) -> Option<Action> {
     let mut asked = None;
     ui.horizontal(|ui| {
-        for view in TrashView::ALL {
+        for (index, view) in TrashView::ALL.into_iter().enumerate() {
             let chosen = state.trash_view == view;
-            let label = if view == TrashView::Notes {
-                format!("{} {notes}", view.label())
-            } else {
-                view.label().to_string()
-            };
+            let label = format!("{} {}", view.label(), counts[index]);
             let chip = chip(ui, palette, &label, chosen);
             report(state, &format!("trash-view:{}", view.id()), chip.rect);
             if chip.clicked() && !chosen {
                 state.trash_view = view;
+                // A pick belongs to the list it was made in. Carrying it across
+                // kinds would make 恢复选中 act on ids the current list cannot show,
+                // so the set is dropped here as well as pruned by the pane.
+                state.checked.clear();
                 asked = Some(Action::SetTrashView(view));
                 // The fill was decided before the click was known and this frame has
                 // already painted the old selection; same reason the todo filter asks.
@@ -112,6 +151,7 @@ pub(super) fn selection_bar(
     }
     let mut asked = None;
     let count = state.checked.len();
+    let kind = state.trash_view.kind();
     egui::Frame::NONE
         .fill(palette.surface)
         .stroke(Stroke::new(1.0, palette.border))
@@ -131,9 +171,10 @@ pub(super) fn selection_bar(
                         // The ids travel with the action: the controller never reads
                         // view state, and the log then names exactly what was asked
                         // for instead of "whatever was ticked at the time".
-                        asked = Some(Action::RestoreSelected(
-                            state.checked.iter().cloned().collect(),
-                        ));
+                        asked = Some(Action::RestoreSelected {
+                            kind,
+                            ids: state.checked.iter().cloned().collect(),
+                        });
                     }
                     let clear = head::ghost(ui, palette, "取消选择");
                     report(state, "clear-selection", clear.rect);
@@ -148,14 +189,20 @@ pub(super) fn selection_bar(
     asked
 }
 
-/// The sentence a sub-tab without a list shows instead of one.
-pub(super) fn notice(ui: &mut egui::Ui, palette: Theme, state: &mut State, view: TrashView) {
-    ui.add_space(12.0);
-    if let Some(text) = view.notice() {
-        let label = ui.label(RichText::new(text).size(11.0).color(palette.ink_subtle));
-        // Reported so the gate can tell "the notice replaced the list" from "the list
-        // happened to be empty" -- both look the same in a screenshot.
-        report(state, "trash-notice", label.rect);
+/// What an empty list says.
+///
+/// A function rather than three branches inside the drawing code, for two reasons:
+/// the sentence is the one thing a screenshot cannot prove (a test can compare it),
+/// and the notes case has to read the retention number from the same constant the
+/// header does -- two copies of "30" is one of them being wrong.
+pub(super) fn empty_text(view: TrashView, scripts_note: Option<&str>) -> String {
+    match (view, scripts_note) {
+        (TrashView::Scripts, Some(note)) => note.to_string(),
+        (TrashView::Notes, _) => format!(
+            "回收站是空的 · 删除的笔记会在这里保留 {} 天",
+            hub_core::store::TRASH_RETENTION_DAYS
+        ),
+        _ => view.empty_line().to_string(),
     }
 }
 

@@ -31,6 +31,7 @@
 //! change meaning) and not something a spike may decide on the user's behalf.
 
 mod attachments;
+mod inbox;
 mod notes;
 mod recent;
 mod schema;
@@ -42,6 +43,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 
 pub use attachments::{StoredAttachment, ATTACHMENT_DIR};
+pub use inbox::InboxRow;
 pub use notes::{NoteRow, NoteWrite, TODO_INBOX_TITLE, TRASH_RETENTION_DAYS};
 pub use recent::{ensure_file_search_recent, FILE_SEARCH_RECENT_DDL};
 pub use schema::{init_schema, schema, Rebuild, Schema, NOTES_DDL, SCHEMA_VERSION, SETTINGS_DDL};
@@ -79,6 +81,11 @@ pub enum StoreError {
     Io(std::io::Error),
     /// The database is there but a row we require is not.
     Missing(String),
+    /// The write was refused for a reason the caller can act on: a destination that
+    /// is already occupied, an id that would escape its directory, a manifest that
+    /// is not the shape it claims. Distinct from [`StoreError::Io`] because "this
+    /// would overwrite your file" is not a disk failure and must not read as one.
+    Refused(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -87,6 +94,7 @@ impl std::fmt::Display for StoreError {
             StoreError::Sqlite(error) => write!(f, "sqlite: {error}"),
             StoreError::Io(error) => write!(f, "io: {error}"),
             StoreError::Missing(what) => write!(f, "missing: {what}"),
+            StoreError::Refused(why) => write!(f, "refused: {why}"),
         }
     }
 }
@@ -265,6 +273,18 @@ impl Store {
         })
     }
 
+    /// The retention window, applied to every table that has one.
+    ///
+    /// One method rather than two calls at the call site: "保留 30 天" is a promise
+    /// about the trash, not about a table, and a sweep that covered notes while
+    /// ignoring captures would be a leak with a reassuring sentence over it -- which
+    /// is exactly the failure the notes-only version was written to fix.
+    pub fn purge_expired(&mut self, now: &str, days: i64) -> Result<Sweep> {
+        let notes = self.purge_expired_trash(now, days)?;
+        let inbox = self.purge_expired_inbox(now, days)?;
+        Ok(Sweep { notes, inbox })
+    }
+
     fn count(&self, table: &str) -> Result<Option<i64>> {
         if !self.table_exists(table)? {
             return Ok(None);
@@ -302,6 +322,23 @@ pub struct Counts {
     pub inbox_items: Option<i64>,
     pub inbox_attachments: Option<i64>,
     pub file_search_recent: Option<i64>,
+}
+
+/// What one retention sweep took, per table with a retention window.
+///
+/// Reported as a pair rather than a sum: the log line and the status sentence both
+/// say how much of each, so "cleaned 3" cannot be read as "cleaned 3 notes" when it
+/// was one note and two captures.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sweep {
+    pub notes: usize,
+    pub inbox: usize,
+}
+
+impl Sweep {
+    pub fn total(self) -> usize {
+        self.notes + self.inbox
+    }
 }
 
 /// `%APPDATA%\com.yukin.easyflowhub`.

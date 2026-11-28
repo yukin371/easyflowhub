@@ -14,15 +14,17 @@
 //! widget crate never sees SQL, and this file never draws.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use hub_core::store::TRASH_RETENTION_DAYS;
 use hub_core::{clock, todo, NoteWrite, Store, Table};
-use hub_ui::manager::{self, Action, Pending, Row, Tab, TodoGroup, TrashView};
+use hub_ui::manager::{self, Action, Pending, Row, RowKind, Tab, TodoGroup, TrashView};
 use hub_ui::Theme;
 
 use crate::hub::Request;
 use crate::log::Log;
+
+mod trash;
 
 /// Title of the workbench window. Also how it is found again after eframe
 /// recreates it (a monitor change does that).
@@ -40,6 +42,10 @@ pub struct Spawn {
     /// viewport, and rebinding re-registers global keys. Neither may happen from
     /// inside a frame of this window.
     pub inbox: Arc<Mutex<Vec<Request>>>,
+    /// Where the scripts' trash lives: `%APPDATA%\scriptmgr\trash\scripts`, or the
+    /// `--script-trash` override. Resolved once, at spawn, so a frame never reads the
+    /// environment to decide where to delete a file.
+    pub script_trash: PathBuf,
 }
 
 pub struct Shell {
@@ -56,6 +62,14 @@ pub struct Shell {
     store: Option<Arc<Mutex<Store>>>,
     shortcuts: Arc<RwLock<Table>>,
     inbox: Arc<Mutex<Vec<Request>>>,
+    /// The scripts' trash directory, resolved once at spawn.
+    script_trash: PathBuf,
+    /// What the scripts sub-tab says when its trash directory does not exist.
+    ///
+    /// `None` once the directory is there. On a machine that never ran the script
+    /// service there is nothing to be empty, and "没有已删除的脚本" would be a claim
+    /// about a library that is not installed.
+    scripts_note: Option<String>,
     closing: bool,
     /// Every control's rectangle as last written to the log, keyed by the name the
     /// widget gave it (`new-note`, `pin:note-1`, ...). Only logged when it moves: a
@@ -73,6 +87,8 @@ impl Shell {
             store: spawn.store,
             shortcuts: spawn.shortcuts,
             inbox: spawn.inbox,
+            script_trash: spawn.script_trash,
+            scripts_note: None,
             closing: false,
             hit_logged: HashMap::new(),
         };
@@ -81,11 +97,21 @@ impl Shell {
             0,
             "manager_open",
             &format!(
-                "notes={} trash={} todos={} store={}",
+                "notes={} trash={} todos={} scripts={} store={}",
                 shell.live_count(),
                 shell.trash_count(),
                 shell.todo_items(),
+                shell.script_count(),
                 if shell.store.is_some() { "on" } else { "off" }
+            ),
+        );
+        shell.log.mark(
+            0,
+            "manager_scripts",
+            &format!(
+                "root={} present={}",
+                shell.script_trash.display(),
+                shell.script_trash.exists()
             ),
         );
         shell
@@ -176,6 +202,7 @@ impl Shell {
             &self.rows,
             &self.todos,
             &table,
+            self.scripts_note.as_deref(),
         );
         self.note_confirm(&asked, &action);
         self.log_hit(ctx);
@@ -188,10 +215,18 @@ impl Shell {
             (None, Some(now)) => self.log.mark(
                 0,
                 "manager_confirm",
-                &format!("action=ask verb={} id={}", now.verb(), now.id()),
+                &format!(
+                    "action=ask verb={} kind={} id={}",
+                    now.verb(),
+                    now.kind().id(),
+                    now.id()
+                ),
             ),
             (Some(then), None) => {
-                let outcome = if matches!(action, Action::Purge(_) | Action::EmptyTrash) {
+                let outcome = if matches!(
+                    action,
+                    Action::Purge { .. } | Action::EmptyTrash { .. }
+                ) {
                     "ok"
                 } else {
                     "cancel"
@@ -199,7 +234,12 @@ impl Shell {
                 self.log.mark(
                     0,
                     "manager_confirm",
-                    &format!("action={outcome} verb={} id={}", then.verb(), then.id()),
+                    &format!(
+                        "action={outcome} verb={} kind={} id={}",
+                        then.verb(),
+                        then.kind().id(),
+                        then.id()
+                    ),
                 );
             }
             _ => {}
@@ -303,46 +343,19 @@ impl Shell {
             }
             Action::SetTrashView(view) => {
                 self.state.status = format!("回收站：{}", view.label());
-                self.log
-                    .mark(0, "manager_trash_view", &format!("view={}", view.id()));
-                self.refresh(ctx);
-            }
-            Action::RestoreSelected(ids) => {
-                let restored = self.with_store(|store| store.restore_notes(&ids));
-                let count = restored.unwrap_or(0);
-                self.state.status = if count > 0 {
-                    format!("已恢复 {count} 条")
-                } else {
-                    "没有可恢复的笔记".to_string()
-                };
-                // The count and the ids: the first is what the user was told, the
-                // second is what a post-mortem needs when a note did not come back.
                 self.log.mark(
                     0,
-                    "manager_restore_many",
-                    &format!("count={count} ids={}", ids.join(",")),
+                    "manager_trash_view",
+                    &format!(
+                        "view={} scripts_root={}",
+                        view.id(),
+                        if self.script_trash.exists() { "present" } else { "missing" }
+                    ),
                 );
-                self.state.checked.clear();
-                self.reload();
                 self.refresh(ctx);
             }
-            Action::EmptyTrash => {
-                let purged = self.with_store(|store| store.purge_trashed());
-                let count = purged.unwrap_or(0);
-                self.state.status = if count > 0 {
-                    format!("已清空 {count} 条")
-                } else {
-                    "回收站是空的".to_string()
-                };
-                self.log.mark(
-                    0,
-                    "manager_empty_trash",
-                    &format!("count={count} permanent=true"),
-                );
-                self.state.checked.clear();
-                self.reload();
-                self.refresh(ctx);
-            }
+            Action::RestoreSelected { kind, ids } => self.restore_rows(ctx, kind, &ids),
+            Action::EmptyTrash { kind } => self.empty_kind(ctx, kind),
             Action::Pin { id, pinned } => {
                 let ok = self.with_store(|store| store.set_note_pin(&id, pinned));
                 self.state.status = if ok == Some(true) {
@@ -367,31 +380,8 @@ impl Shell {
                 self.reload();
                 self.refresh(ctx);
             }
-            Action::Restore(id) => {
-                let ok = self.with_store(|store| store.restore_note(&id));
-                self.state.status = if ok == Some(true) {
-                    "已恢复".to_string()
-                } else {
-                    "恢复失败".to_string()
-                };
-                self.log.mark(0, "manager_restore", &format!("id={id} ok={ok:?}"));
-                self.reload();
-                self.refresh(ctx);
-            }
-            Action::Purge(id) => {
-                let ok = self.with_store(|store| store.purge_note(&id));
-                self.state.status = if ok == Some(true) {
-                    "已彻底删除".to_string()
-                } else {
-                    "删除失败".to_string()
-                };
-                // Permanent, so it is logged as such: "where did my note go" needs
-                // an answer that outlives the session.
-                self.log
-                    .mark(0, "manager_purge", &format!("id={id} ok={ok:?} permanent=true"));
-                self.reload();
-                self.refresh(ctx);
-            }
+            Action::Restore { kind, id } => self.restore_one(ctx, kind, &id),
+            Action::Purge { kind, id } => self.purge_one(ctx, kind, &id),
             Action::BeginCapture(command) => {
                 self.state.status = format!("按新键替换 {}", command.label());
                 ctx.request_repaint();
@@ -560,29 +550,6 @@ impl Shell {
         }
     }
 
-    /// Delete what has sat in the trash past the retention window.
-    ///
-    /// The panel has said "保留 30 天" since it got a description and nothing was
-    /// doing it -- a trash that only grows is a disk leak with a reassuring sentence
-    /// over it. The sweep runs when the trash is opened, which is when the sentence
-    /// is being read, and it reports what it did: a silent delete on a tab click is
-    /// exactly the kind of thing that makes a user distrust the trash.
-    fn expire_trash(&mut self) {
-        let now = clock::now_iso();
-        let purged = self.with_store(|store| store.purge_expired_trash(&now, TRASH_RETENTION_DAYS));
-        let Some(count) = purged else { return };
-        if count == 0 {
-            return;
-        }
-        self.state.status = format!("已清理 {count} 条超过 {TRASH_RETENTION_DAYS} 天的笔记");
-        self.log.mark(
-            0,
-            "manager_trash_expire",
-            &format!("days={TRASH_RETENTION_DAYS} purged={count}"),
-        );
-        self.reload();
-    }
-
     /// Re-read the list after a write.
     ///
     /// Not a per-frame query: the list only changes when this window changes it, or
@@ -591,6 +558,13 @@ impl Shell {
     fn reload(&mut self) {
         self.rows.clear();
         self.todos.clear();
+        self.reload_notes();
+        self.reload_inbox();
+        self.reload_scripts();
+    }
+
+    /// The notes, and the todo groups built from them.
+    fn reload_notes(&mut self) {
         let Some(store) = self.store.as_ref() else {
             return;
         };
@@ -628,12 +602,101 @@ impl Shell {
         }
     }
 
-    fn live_count(&self) -> usize {
-        self.rows.iter().filter(|row| row.deleted_at.is_none()).count()
+    /// The Inbox's trash.
+    ///
+    /// A second query rather than a join: the two tables share no column and the
+    /// trash pane shows them on different sub-tabs, so one statement for both would
+    /// be a `UNION` with a fake column, and the row types would still differ.
+    fn reload_inbox(&mut self) {
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+        let guard = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match guard.trashed_inbox() {
+            Ok(items) => {
+                for item in &items {
+                    let deleted = item
+                        .deleted_at
+                        .as_deref()
+                        // A trashed row without a stamp cannot be sorted or expired;
+                        // its capture time is the honest stand-in for "when".
+                        .unwrap_or(item.captured_at.as_str());
+                    self.rows.push(Row::inbox(
+                        &item.id,
+                        &item.title,
+                        &item.content,
+                        Row::inbox_label(&item.kind),
+                        deleted,
+                    ));
+                }
+            }
+            Err(error) => self.log.mark(
+                0,
+                "manager_store",
+                &format!("inbox trash error=\"{error}\""),
+            ),
+        }
     }
 
+    /// The scripts' trash, read straight off the directory.
+    fn reload_scripts(&mut self) {
+        match hub_core::script_trash::list(&self.script_trash) {
+            Ok(listing) => {
+                for entry in &listing.entries {
+                    self.rows.push(Row::script(
+                        &entry.id,
+                        &entry.name,
+                        &entry.original_path,
+                        &entry.deleted_at,
+                    ));
+                }
+                // Reported rather than swallowed: a directory the service would
+                // also call corrupt is a thing the user cannot fix from here, but it
+                // is not nothing.
+                if !listing.skipped.is_empty() {
+                    self.log.mark(
+                        0,
+                        "manager_scripts",
+                        &format!(
+                            "skipped={} first=\"{}\"",
+                            listing.skipped.len(),
+                            listing.skipped[0]
+                        ),
+                    );
+                }
+            }
+            Err(error) => self.log.mark(
+                0,
+                "manager_scripts",
+                &format!("list error=\"{error}\""),
+            ),
+        }
+        self.scripts_note = if self.script_trash.exists() {
+            None
+        } else {
+            Some("没有脚本库 · 未找到脚本服务的回收站目录".to_string())
+        };
+    }
+
+    fn live_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.kind == RowKind::Note && row.deleted_at.is_none())
+            .count()
+    }
+
+    /// Everything in the trash, of every kind: the rail's badge is about the trash,
+    /// and a number that counted only notes would disagree with the three chips the
+    /// panel shows one click later.
     fn trash_count(&self) -> usize {
         self.rows.iter().filter(|row| row.deleted_at.is_some()).count()
+    }
+
+    fn script_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.kind == RowKind::Script)
+            .count()
     }
 
     fn todo_items(&self) -> usize {

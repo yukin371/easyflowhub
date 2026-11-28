@@ -101,6 +101,25 @@ SEED = [
     ),
 ]
 
+# The Inbox's trash is a second table, so it needs its own rows: one live capture
+# (it must not be listed), and three deleted ones -- one of them an image with a
+# stored file, because "permanent" means the bytes go too and that is a different
+# claim from "the row is gone".
+INBOX_SEED = [
+    ("gate-cap-live", "text", "还在收集箱里", None, None),
+    ("gate-cap-1", "text", "删掉的收集甲", None, STAMP),
+    ("gate-cap-2", "image", "删掉的一张图", ("att-cap-2", "gate-cap.png"), STAMP),
+    ("gate-cap-3", "link", "删掉的链接", None, STAMP),
+]
+
+# Two deleted scripts, written the way `scriptmgr-go` writes them: a directory named
+# after the entry id, the script inside it, and `entry.json`. The originals do not
+# exist yet -- that is what a restore is for.
+SCRIPT_SEED = [
+    ("aaa111", "run.py", "python"),
+    ("bbb222", "build.sh", "shell"),
+]
+
 
 def note_window() -> int:
     return user32.FindWindowW(None, f"{NOTE_PREFIX}#0")
@@ -110,7 +129,7 @@ def manager_window() -> int:
     return user32.FindWindowW(None, MANAGER_TITLE)
 
 
-def seed(db: str) -> None:
+def seed(db: str, root: str) -> None:
     connection = sqlite3.connect(db)
     try:
         connection.execute("DELETE FROM notes")
@@ -120,17 +139,85 @@ def seed(db: str) -> None:
                 " is_pinned, deleted_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
                 (note_id, title, content, tags, STAMP, STAMP, deleted),
             )
+        connection.execute("DELETE FROM inbox_items")
+        for item_id, kind, title, attachment, deleted in INBOX_SEED:
+            connection.execute(
+                "INSERT INTO inbox_items (id, kind, title, content, source, context,"
+                " captured_at, deleted_at) VALUES (?, ?, ?, '正文', 'gate', '', ?, ?)",
+                (item_id, kind, title, STAMP, deleted),
+            )
+            if attachment is None:
+                continue
+            attachment_id, filename = attachment
+            connection.execute(
+                "INSERT INTO inbox_attachments (id, item_id, kind, name, mime_type,"
+                " filename, size_bytes, created_at)"
+                " VALUES (?, ?, 'image', '截图', 'image/png', ?, 5, ?)",
+                (attachment_id, item_id, filename, STAMP),
+            )
+            # The bytes have to exist for "purge deleted the file" to mean anything.
+            assets = os.path.join(root, "assets")
+            os.makedirs(assets, exist_ok=True)
+            with open(os.path.join(assets, filename), "wb") as handle:
+                handle.write(b"\x89PNG\r\n")
         connection.commit()
     finally:
         connection.close()
 
 
-def counts(db: str) -> tuple:
+def seed_scripts(root: str, originals: str) -> None:
+    """Two entries in the script service's own on-disk shape."""
+    shutil.rmtree(root, ignore_errors=True)
+    # The originals too: the run before this one restored `aaa111` to
+    # `script-home/run.py`, and a restore that finds a file already there refuses to
+    # overwrite it -- correctly, and the check that reads `ok=true` then reports a
+    # product regression that is really a dirty seed.
+    shutil.rmtree(originals, ignore_errors=True)
+    os.makedirs(originals, exist_ok=True)
+    for entry_id, name, script_type in SCRIPT_SEED:
+        directory = os.path.join(root, entry_id)
+        os.makedirs(directory)
+        with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:
+            handle.write("print('hi')\n")
+        with open(os.path.join(directory, "entry.json"), "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "id": entry_id,
+                    "name": name,
+                    "original_path": os.path.join(originals, name),
+                    "script_type": script_type,
+                    "deleted_at": STAMP,
+                    "size_bytes": 13,
+                },
+                handle,
+            )
+
+
+def script_entries(root: str) -> int:
+    if not os.path.isdir(root):
+        return 0
+    return sum(
+        1
+        for name in os.listdir(root)
+        if os.path.isfile(os.path.join(root, name, "entry.json"))
+    )
+
+
+def counts(db: str, scripts: str) -> tuple:
+    """Live notes, and everything in the trash of *every* kind.
+
+    The rail's badge counts the whole trash, so the expected number is the sum: a
+    check that only counted notes would disagree with the three chips one click
+    later.
+    """
     connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         live = connection.execute("SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL").fetchone()[0]
-        trash = connection.execute("SELECT COUNT(*) FROM notes WHERE deleted_at IS NOT NULL").fetchone()[0]
-        return (live, trash)
+        notes = connection.execute("SELECT COUNT(*) FROM notes WHERE deleted_at IS NOT NULL").fetchone()[0]
+        captures = connection.execute(
+            "SELECT COUNT(*) FROM inbox_items WHERE deleted_at IS NOT NULL"
+        ).fetchone()[0]
+        return (live, notes + captures + script_entries(scripts))
     finally:
         connection.close()
 
@@ -393,10 +480,11 @@ class Trace:
 
 
 class Session:
-    def __init__(self, exe: str, root: str, settings: str, log: str) -> None:
+    def __init__(self, exe: str, root: str, settings: str, log: str, scripts: str) -> None:
         self.exe = exe
         self.root = root
         self.settings = settings
+        self.scripts = scripts
         self.trace = Trace(log)
         self.process = None
         self.sections = []
@@ -409,6 +497,8 @@ class Session:
                 "--note",
                 "--store-root",
                 self.root,
+                "--script-trash",
+                self.scripts,
                 "--settings",
                 self.settings,
                 "--log",
@@ -511,8 +601,10 @@ def main() -> int:
     os.makedirs(root, exist_ok=True)
     db = os.path.join(root, "notes.db")
     shutil.copyfile(live_db, db)
-    seed(db)
-    live, trash = counts(db)
+    scripts = os.path.join(work, "script-trash")
+    seed_scripts(scripts, os.path.join(work, "script-home"))
+    seed(db, root)
+    live, trash = counts(db, scripts)
 
     # The settings file is the whole input of the first scenario: two overrides, one
     # per scope. Everything else is the default, which is also a check -- a partial
@@ -528,7 +620,7 @@ def main() -> int:
     log_path = os.path.join(work, "native-manager.log")
 
     report = Report()
-    session = Session(exe, root, settings_path, log_path)
+    session = Session(exe, root, settings_path, log_path, scripts)
     try:
         # ------------------------------------------------------- K1 the file is read
         window, control = session.start()
@@ -718,7 +810,7 @@ def main() -> int:
         stored = query(db, "SELECT deleted_at FROM notes WHERE id = ?", ("gate-trash",))
         report.check(
             "the 恢复 button puts the note back",
-            "id=gate-trash" in restored and "ok=Some(true)" in restored and stored == (None,),
+            "id=gate-trash" in restored and "ok=true" in restored and stored == (None,),
             (restored.strip() or "no manager_restore line") + f"; deleted_at={stored}",
         )
 
@@ -812,15 +904,22 @@ def main() -> int:
         before = session.trace.count("manager_trash_view")
         mark = len(session.trace.text())
         click_button(session, shell, "trash-view:inbox")
-        notice = wininput.wait_for(
-            lambda: hit(session.trace.tail(mark), "trash-notice") is not None, 4
+        listed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "row:gate-cap-1") is not None, 4
         )
         switched = session.trace.later("manager_trash_view", before, 5)
         report.check(
-            "收集箱 says where that trash lives instead of listing notes",
-            bool(notice) and "view=inbox" in switched,
+            "收集箱 lists the captures' trash instead of the notes'",
+            bool(listed) and "view=inbox" in switched,
             (switched.strip() or "no manager_trash_view line")
-            + f"; notice={'yes' if notice else 'no'}",
+            + f"; first row={'reported' if listed else 'missing'}",
+        )
+        tail = session.trace.tail(mark)
+        report.check(
+            "a capture row is pickable and its kind is not the notes'",
+            hit(tail, "check:gate-cap-1") is not None
+            and hit(tail, "row:gate-cap-live") is None,
+            "check:gate-cap-1 reported; a live capture is not in the trash",
         )
 
         mark = len(session.trace.text())
@@ -919,7 +1018,164 @@ def main() -> int:
             (emptied.strip() or "no manager_empty_trash line") + f"; trashed rows={left}",
         )
 
-        # ------------------------------------- todos, ticked in the workbench
+        # ------------------------------------- the Inbox's own trash
+        # Three sub-tabs, three stores. The chip says which one is on screen and the
+        # row carries the kind, so 恢复选中 asks the same question of a different
+        # table. Proven here: the captures listed are the deleted ones, a purge takes
+        # the attachment *file* with the row, and a batch restore brings back exactly
+        # the rows that were ticked.
+        mark = len(session.trace.text())
+        click_button(session, shell, "trash-view:inbox")
+        listed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "check:gate-cap-3") is not None, 4
+        )
+        report.check(
+            "收集箱 lists every deleted capture",
+            bool(listed),
+            "capture rows reported" if listed else "no check rect for gate-cap-3",
+        )
+
+        # The image: purge has to take the bytes, not just the row.
+        mark = len(session.trace.text())
+        click_button(session, shell, "row:gate-cap-2")
+        revealed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "purge:gate-cap-2") is not None, 4
+        )
+        before = session.trace.count("manager_confirm action=ask")
+        mark = len(session.trace.text())
+        click_button(session, shell, "purge:gate-cap-2")
+        offered = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "confirm-ok") is not None, 5
+        )
+        asked = session.trace.later("manager_confirm action=ask", before, 5)
+        stored = query(db, "SELECT COUNT(*) FROM inbox_items WHERE id = ?", ("gate-cap-2",))
+        report.check(
+            "彻底删除 on a capture asks first, and names the kind it would take",
+            bool(revealed)
+            and bool(offered)
+            and "verb=purge" in asked
+            and "kind=inbox" in asked
+            and stored == (1,),
+            (asked.strip() or "no manager_confirm ask line") + f"; rows={stored}",
+        )
+
+        asset = os.path.join(root, "assets", "gate-cap.png")
+        before = session.trace.count("manager_purge")
+        click_button(session, shell, "confirm-ok")
+        purged = session.trace.later("manager_purge", before, 5)
+        stored = query(db, "SELECT COUNT(*) FROM inbox_items WHERE id = ?", ("gate-cap-2",))
+        report.check(
+            "the second yes deletes the capture and its attachment file",
+            "kind=inbox" in purged
+            and "permanent=true" in purged
+            and stored == (0,)
+            and not os.path.exists(asset),
+            (purged.strip() or "no manager_purge line")
+            + f"; rows={stored}; file={'still there' if os.path.exists(asset) else 'gone'}",
+        )
+
+        mark = len(session.trace.text())
+        click_button(session, shell, "check:gate-cap-1")
+        click_button(session, shell, "check:gate-cap-3")
+        offered = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "restore-selected") is not None, 4
+        )
+        before = session.trace.count("manager_restore_many")
+        click_button(session, shell, "restore-selected")
+        restored = session.trace.later("manager_restore_many", before, 5)
+        left = query(db, "SELECT COUNT(*) FROM inbox_items WHERE deleted_at IS NOT NULL")
+        report.check(
+            "恢复选中 restores the captures in one write, and only those",
+            bool(offered)
+            and "count=2" in restored
+            and "kind=inbox" in restored
+            and left == (0,),
+            (restored.strip() or "no manager_restore_many line") + f"; still trashed={left}",
+        )
+
+        # ------------------------------------- the scripts' trash, read off disk
+        # The one sub-tab whose data is not in a table: `scriptmgr-go` leaves one
+        # directory per deleted script, and the native shell restores it by moving
+        # the file back. A restore that reports success while the file stayed in the
+        # trash would be the exact failure this section exists to catch, so the
+        # assertion is `os.path.exists` on the original path.
+        before = session.trace.count("manager_trash_view")
+        mark = len(session.trace.text())
+        click_button(session, shell, "trash-view:scripts")
+        listed = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "row:aaa111") is not None, 4
+        )
+        switched = session.trace.later("manager_trash_view", before, 5)
+        report.check(
+            "脚本 lists the entries the service left behind",
+            bool(listed) and "view=scripts" in switched and "scripts_root=present" in switched,
+            (switched.strip() or "no manager_trash_view line")
+            + f"; first row={'reported' if listed else 'missing'}",
+        )
+
+        mark = len(session.trace.text())
+        click_button(session, shell, "row:aaa111")
+        wininput.wait_for(lambda: hit(session.trace.tail(mark), "restore:aaa111") is not None, 4)
+        before = session.trace.count("manager_restore")
+        click_button(session, shell, "restore:aaa111")
+        restored = session.trace.later("manager_restore", before, 5)
+        home = os.path.join(work, "script-home", "run.py")
+        report.check(
+            "恢复 puts the script file back where it came from",
+            "kind=scripts" in restored
+            and "ok=true" in restored
+            and os.path.exists(home)
+            and not os.path.isdir(os.path.join(scripts, "aaa111")),
+            (restored.strip() or "no manager_restore line")
+            + f"; file={'home' if os.path.exists(home) else 'missing'}"
+            + f"; entry={'gone' if not os.path.isdir(os.path.join(scripts, 'aaa111')) else 'still there'}",
+        )
+
+        before = session.trace.count("manager_confirm action=ask")
+        mark = len(session.trace.text())
+        click_button(session, shell, "empty-trash")
+        dialog = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "confirm-ok") is not None, 5
+        )
+        asked = session.trace.later("manager_confirm action=ask", before, 5)
+        report.check(
+            "清空脚本 asks first, and names the kind it empties",
+            bool(dialog)
+            and "verb=empty" in asked
+            and "kind=scripts" in asked
+            and os.path.isdir(os.path.join(scripts, "bbb222")),
+            (asked.strip() or "no manager_confirm ask line")
+            + f"; entry={'still there' if os.path.isdir(os.path.join(scripts, 'bbb222')) else 'gone'}",
+        )
+
+        before = session.trace.count("manager_empty_trash")
+        click_button(session, shell, "confirm-ok")
+        emptied = session.trace.later("manager_empty_trash", before, 5)
+        report.check(
+            "the second yes takes the script and its directory",
+            "count=1" in emptied and "kind=scripts" in emptied and not os.path.isdir(scripts),
+            (emptied.strip() or "no manager_empty_trash line")
+            + f"; root={'gone' if not os.path.isdir(scripts) else 'still there'}",
+        )
+
+        # With no directory left there is no library to have a trash, and that is a
+        # different sentence from "nothing was deleted". Leaving and coming back is
+        # also what proves the frame that says it was drawn.
+        mark = len(session.trace.text())
+        click_button(session, shell, "tab:notes")
+        click_button(session, shell, "tab:trash")
+        click_button(session, shell, "trash-view:scripts")
+        says = wininput.wait_for(
+            lambda: hit(session.trace.tail(mark), "trash-notice:scripts") is not None, 4
+        )
+        report.check(
+            "an emptied script trash says there is no library, not that it is empty",
+            bool(says),
+            "the sentence replaced the list" if says else "no trash-notice:scripts rect",
+        )
+        session.capture("trash: notes, captures, scripts")
+
+
         # The pane used to be read-only: only the desktop card could flip a checkbox,
         # which made the workbench a viewer of its own data. Every line now reports two
         # targets -- the box ticks, the text jumps to the note -- and this gate presses

@@ -1,0 +1,137 @@
+# 三个子页签都有列表了：收集箱是第二张表，脚本是一个目录
+
+> 状态：`completed` —— 回收站三个子页签都真列出来了；收集箱的"彻底删除"连 `assets/` 里的字节一起删，
+> 脚本的"恢复"把文件移回原位置；三类共用一行模型、一条确认框、一次到期清理
+
+## 1. 一行三源，kind 跟着 Action 走
+
+上一刀留下的三个 chip 里只有「笔记」有列表，另两个给一句解释。补齐它要回答的第一个问题是
+**"这一行是什么"**，因为三类的写完全不是一件事：`UPDATE notes` / `UPDATE inbox_items` /
+在 `%APPDATA%\scriptmgr\trash\scripts` 里搬文件。
+
+三个选项：
+
+- **三个 `Row` 类型、三个列表控件**：把窗口里最密的绘图代码复制三遍，而三者的可见形状一模一样
+  ——标题、第二行、右侧时间。子页签已经说明"你在看哪一类"，行不该再自我介绍。
+- **一个 `Row`，控制器按当前子页签猜**：控制器不读视图状态，这是它从第一刀起就守的规矩；而且
+  动作会跨帧，猜到的那一帧可能已经不是当初那一页。
+- **一个 `Row`，加一个 `RowKind` 字段**：可见部分共用，差异只有 1 个字节，且**差异随动作旅行**。
+
+选第三种。`RowKind { Note, Inbox, Script }` 长在 `Row` 上，`Action::Restore/Purge/RestoreSelected/
+EmptyTrash` 全部带 kind，控制器拿到的 id 永远配着它的来源。三个构造器
+（`Row::new` / `Row::inbox` / `Row::script`）与一个 `id()` 就是全部差异。
+
+## 2. 收集箱：第二张表，"永久"包括字节
+
+`inbox_items` 本来就有 `deleted_at`，所以"回收站"在数据层已经存在，缺的只是读它的人。
+`store/inbox.rs` 五个方法：
+
+| 方法 | 语义 |
+|---|---|
+| `trashed_inbox()` | 一条 `LEFT JOIN` 带出附件，`GROUP_CONCAT(a.filename, char(31))` |
+| `restore_inbox(&[String])` | 一事务逐条 `UPDATE ... AND deleted_at IS NOT NULL`，计数只算真的改动 |
+| `purge_inbox(id)` | 先读文件名，再 `DELETE`，提交后删文件 |
+| `purge_trashed_inbox()` / `purge_expired_inbox(now, days)` | 同上，批量与到期 |
+
+三处决定：
+
+- **附件名用单元分隔符（`char(31)`）而不是逗号**：文件名里可以有逗号。分隔符选错时，症状是
+  "彻底删除只删掉半个文件"，而且只在某些用户的文件上出现。
+- **先读名、再删行、后删文件，读名在事务里**：`ON DELETE CASCADE` 一执行，就没有东西再告诉我们
+  哪些文件属于这一行。所以文件名必须在 `DELETE` 之前拿到，且和 `DELETE` 在同一个事务里读——
+  另一个窗口刚恢复的行，这一帧不该再被删掉（`AND deleted_at IS NOT NULL` 是同一件事的第二半）。
+- **文件删除是 best-effort**：`store_attachment` 当初也是 best-effort（写文件失败不回滚行）。
+  不对称的读写会在崩溃时留下一行指向不存在的文件，那就按"行是权威、文件是缓存"读；
+  `purge` 反过来要求"文件也删干净"就会变成一半成功一半失败的事务。
+
+## 3. 脚本：读另一个进程的目录，只读不写
+
+脚本的回收站不在数据库里。`scriptmgr-go` 删一个脚本时做的是
+`%APPDATA%\scriptmgr\trash\scripts\<id>\{entry.json, <脚本>, <sidecar>}`，原生侧要能列、能恢复、
+能彻底删除、能清空。`script_trash.rs` 复刻那个 `entry.json` 的形状（`serde` + `#[serde(default)]`，
+字段名就是 Go 侧的 JSON tag），但**只读**：
+
+- **"删进回收站"这一步不重做**：那要判 roots 合法性、要有 rollback、要知道 sidecar 在哪，
+  而它已经有一份实现且在被使用。抄第二份的结果是两个进程对"什么算合法删除"各有一套意见。
+- **目录不存在是空回收站，不是错误**：没装过脚本的机器上点进「脚本」不该看见红字。空态因此
+  分两句——"没有脚本库"和"回收站是空的"是两件事（`empty_text` 接 `scripts_note`）。
+- **恢复拒绝覆盖**：目标已存在时返回 `StoreError::Refused`。用户可能在删除后重建了同名文件，
+  覆盖会毁掉唯一的那一份——而这条错误不该读成"磁盘坏了"，所以它是 `Refused` 而不是 `Io`。
+- **先把要移动的文件全部检查一遍再动手**：半途失败会让脚本回到原位、元数据还在回收站，
+  下一次恢复就撞上自己刚放回去的文件。
+- **`rename` 失败就 copy + remove**：`%APPDATA%` 在 C:、脚本常在工作盘，跨卷 `rename` 会失败。
+- **id 只允许 `[A-Za-z0-9_-]{1,64}`**：`../etc` 这类值直接把目录逃出去了。同一条规则也用在
+  `entry.id != dir.Name` 上——与服务端 `readTrashEntry` 同一条，不认识的目录进 `skipped`，
+  不让一个坏目录遮住整个列表。
+
+时间戳只比前 19 个字符（`YYYY-MM-DDTHH:MM:SS`）：本地写 9 位小数 + `+00:00`，Go 写 `Z`，
+整串比较会让一种格式永远早于另一种，到期清理就会删错人。
+
+## 4. 子页签就是"哪个 store"
+
+`TrashView::kind()` 把三个 chip 映射成三种来源之后，`has_list()` / `notice()` 就没有存在理由了
+——三个都有列表。取而代之的是四个按视图分支的句子：`summary()`（恢复会做什么）、`empty_label()`
+（清空按钮叫什么）、`empty_line()`（空态说什么）、`search_hint()`（能搜什么）。
+
+- **清空按钮要说出它清的是哪一堆**：在收集箱页上写"清空回收站"读起来像"清空全部"，而它只清下面
+  这一份列表。
+- **切子页签清空勾选**：勾选 id 只在它所在的那一页有意义。带过去就是让 `restore_notes` 去恢复一个
+  脚本 id——`checked` 是 `BTreeSet<String>`，它不知道自己存的是什么。
+- **搜索框只承诺当前行真的有的字段**："搜索标题、正文、标签"在脚本页上承诺了正文和标签，而脚本行
+  只有名字与原路径。截图里发现的那一处就是它。
+
+## 5. 三类一起到期，分三行报数
+
+`Store::purge_expired(now, days)` 返回 `Sweep { notes, inbox }`，脚本那一路在 `script_trash::
+purge_expired`。三条路径共享同一条规则：**`now` 读不懂就 no-op**，`days <= 0` 也不删——这是一次
+打开页签时的删除，猜错就是数据丢失。日志分三行写（`notes=0 inbox=0 scripts=1`），因为"删了 1 条"
+在一张有三种东西的表里不算答案。
+
+## 6. 门禁：两种新种子，两处新坑
+
+`--script-trash <dir>` 与 `--store-root` 同一个理由：门禁播种自己的目录，用户试用时删不到真脚本。
+`check-native-manager.py` 49 → **59**，脚本里没有一处硬编码坐标：
+
+- 收集箱：列出全部已删、活着的收集项不在列表里；`purge` 先问（`verb=purge kind=inbox`）、
+  第二声"是"后行与 `assets/gate-cap.png` 都不存在；勾两条 `restore-selected` 得
+  `count=2 kind=inbox` 且回收站归零。
+- 脚本：`trash-view:scripts` 后 `row:aaa111` 出现且 `scripts_root=present`；`restore:aaa111`
+  之后文件回到 `script-home/run.py`、入口目录消失；`empty-trash` 先问（`verb=empty kind=scripts`）、
+  第二声"是"后 `count=1 kind=scripts` 且根目录不在；清空后再进来读到的是 `trash-notice:scripts`
+  （"没有脚本库"而不是"回收站是空的"）。
+
+两处只有跑第二遍才会露出来的东西：
+
+- **种子的 `title` 带换行**：截图上是"行内文字被挤成三行、第三行被裁掉一半"，看着像布局缺陷。
+  真服务写进 `inbox_items.title` 的永远是单行（取抓取内容的第一行），所以这是种子的错。
+  改种子，不改产品——但记在这里，因为"截图像缺陷"和"缺陷"之间差一个种子。
+- **门禁不可重入**：上一轮把 `aaa111` 恢复到了 `script-home/run.py`，本轮 `restore` 正确地
+  拒绝覆盖它，而断言读的是 `ok=true`——于是**产品的正确行为被读成了回归**。修法是种子清掉
+  原位置目录（`rmtree(originals)`），不是放宽断言。种子留下上一轮的结果，就不是种子。
+
+## 7. 证据
+
+- `scripts/check-native-manager.py` **49 → 59**，59/59 PASS，连跑两遍都是 PASS（可重入）。
+- `hub-core` **140 → 159**（+19：收集箱 8、脚本 11）；`hub-ui` **76 → 81**（+5：三个子页签各列
+  自己的行与计数、切页签丢勾选、批量恢复带来源、脚本行按脚本身份彻底删除、空态三句）；
+  app **96**；workspace 合计 **385**（96 + 159 + 18 + 81 + 31）。
+- `check-native-architecture.mjs` 通过（5 crates）；`hub-win` 不依赖 egui/rusqlite、`hub-core`
+  不依赖 world/reqwest 两条边界没动。
+- 行数：`inbox.rs` 375、`script_trash.rs` 507、`app/manager/trash.rs` 211、
+  `hub-ui/manager.rs` 674、`store/mod.rs` 607 —— 全部 ≤ 800。
+- 截图：`05a-trash-inbox-list`（三条收集项 + 清空收集箱 + "彻底删除会连附件一起清理"）、
+  `05b-trash-inbox-picked`（两个实心勾 + 已选 2 条）、`05c-trash-inbox-confirm`
+  （"彻底删除这个收集项？"+ 说出这一个会被删）、`05d-trash-scripts-list`（`run.py` / `build.sh`
+  与各自的原路径 + "恢复会把文件放回原位置"）、`05e-trash-scripts-confirm`（"清空脚本？2 个脚本"）。
+
+## 8. 没做
+
+- **按删除日期分组**（旧版按删除日期分组）：列表仍是一串按时间排序的行。分组要一个"今天/昨天/
+  更早"的键，和 30 天窗口是同一个日期问题的第二半。
+- **脚本回收站的写入**：删进回收站这一步仍在 `scriptmgr-go` 里，原生只做读取、恢复、彻底删除、
+  清空（理由见 §3）。
+- **收集箱面板本身**：原生壳仍然没有收集箱页，所以"收集箱回收站"目前只在这一个子页签里存在。
+  它现在是有用的（删掉的收集项能恢复、能真删），但完整形态要等收集箱进原生。
+- **月志没有追加**：`docs/roadmap/progress-2026-11.md` 是 40958 B，软上限 40960 B，只剩 2 B；
+  同一天的前两刀（骨架 / 待办 / 回收站收尾）也没有追加。这一批的记录在本文件、`manager-parity`
+  的对照表与本目录索引里。

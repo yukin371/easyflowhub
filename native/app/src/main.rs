@@ -160,6 +160,7 @@ fn main() {
                 lite,
                 log,
                 store_root: parsed.store_root.clone(),
+                script_trash: parsed.script_trash.clone(),
                 note_id: parsed.note_id.clone(),
                 resident: parsed.resident,
                 todo_card: parsed.todo_card,

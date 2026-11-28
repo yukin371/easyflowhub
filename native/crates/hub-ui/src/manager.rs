@@ -41,7 +41,7 @@ mod todo;
 mod trash;
 
 pub use confirm::Pending;
-pub use row::Row;
+pub use row::{Row, RowKind};
 pub use todo::{Filter, TodoGroup};
 pub use trash::TrashView;
 
@@ -146,20 +146,25 @@ pub enum Action {
     /// Which sub-tab of the trash is open. Also view state, also for the log: the
     /// same reason as the todo filter.
     SetTrashView(TrashView),
-    /// Restore every ticked trash row.
+    /// Restore every ticked trash row, from the store the sub-tab names.
     ///
     /// Carries the ids instead of saying "the checked ones": the controller never
     /// reads view state, and a log line that names the rows can be checked against
-    /// the database afterwards.
-    RestoreSelected(Vec<String>),
-    /// 清空回收站: every trashed row, gone for good. Only the dialog's yes produces
-    /// this, exactly like [`Action::Purge`].
-    EmptyTrash,
+    /// the database afterwards. `kind` is on the action for the same reason -- a
+    /// note id and a script id are both strings, and restoring one into the other
+    /// would either fail or, worse, succeed.
+    RestoreSelected {
+        kind: RowKind,
+        ids: Vec<String>,
+    },
+    /// 清空回收站: every trashed row of one kind, gone for good. Only the dialog's
+    /// yes produces this, exactly like [`Action::Purge`].
+    EmptyTrash { kind: RowKind },
     Open(String),
     Pin { id: String, pinned: bool },
     Trash(String),
-    Restore(String),
-    Purge(String),
+    Restore { kind: RowKind, id: String },
+    Purge { kind: RowKind, id: String },
     SetTab(Tab),
     BeginCapture(Command),
     CancelCapture,
@@ -237,6 +242,12 @@ fn report(state: &mut State, name: &str, rect: egui::Rect) {
 }
 
 /// Draw the whole workbench and return what the user asked for.
+///
+/// `scripts_note` is what the scripts sub-tab says instead of an empty list when
+/// "empty" has a reason: the scripts' trash lives in another product's state
+/// directory, and on a machine with no script library there is no directory to be
+/// empty -- a different sentence from "nothing was deleted". `None` means every
+/// source was readable, and each sub-tab uses its own [`TrashView::empty_line`].
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &egui::Context,
@@ -245,6 +256,7 @@ pub fn draw(
     rows: &[Row],
     todos: &[TodoGroup],
     table: &Table,
+    scripts_note: Option<&str>,
 ) -> Action {
     let mut action = Action::None;
     // Rects belong to one frame: a row that moved must not be clickable at its old
@@ -339,18 +351,27 @@ pub fn draw(
         .show(ctx, |ui| match state.tab {
             Tab::Notes | Tab::Trash => {
                 let trash = state.tab == Tab::Trash;
+                // Which kind this page lists. The notes tab is notes; the trash is
+                // whichever kind its sub-tab names, and the *rows* carry the kind --
+                // so a page never shows a source it cannot act on.
+                let view = state.trash_view;
+                let kind = view.kind();
                 // The trash rows, in one place: the header's 清空 count, the sub-tab
                 // count and the selection pruning all mean the same set.
-                let trashed: Vec<&Row> = rows
-                    .iter()
-                    .filter(|row| row.deleted_at.is_some())
-                    .collect();
+                let trashed: Vec<&Row> = if trash {
+                    rows.iter()
+                        .filter(|row| row.kind == kind && row.deleted_at.is_some())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 if trash {
                     // A row that left the trash (restored here, in a note window, or by
                     // the retention sweep) must not keep its tick: `checked` is an id
                     // list, and an id the list cannot show is a count in "已选 N 条"
-                    // nobody can account for. Pruned against every trashed row rather
-                    // than the search result -- a filtered-out row is still picked.
+                    // nobody can account for. Pruned against every trashed row of this
+                    // kind rather than the search result -- a filtered-out row is still
+                    // picked -- which also drops a pick made on another sub-tab.
                     state
                         .checked
                         .retain(|id| trashed.iter().any(|row| &row.id == id));
@@ -358,17 +379,10 @@ pub fn draw(
                     state.checked.clear();
                 }
                 let description = if trash {
-                    format!(
-                        "删除的笔记保留 {} 天；勾选多条可以一次恢复。",
-                        hub_core::store::TRASH_RETENTION_DAYS
-                    )
+                    view.summary().to_string()
                 } else {
                     "点一行选中它，操作按钮出现在该行下方。".to_string()
                 };
-                // Read before the header: 清空 empties *this* list, so it belongs to
-                // the view that has one. On 收集箱 it would be a destructive button
-                // over a page that says "the notes are elsewhere".
-                let view = state.trash_view;
                 let head_action = head::panel_head(
                     ui,
                     palette,
@@ -382,17 +396,20 @@ pub fn draw(
                             asked = Action::Close;
                         }
                         if trash {
-                            // Only offered when there is something to empty, and only
-                            // on the view that lists it. A destructive button that is
-                            // always on screen gets pressed by accident.
-                            if view.has_list() && !trashed.is_empty() {
-                                let empty = head::warn(ui, palette, "清空回收站");
+                            // Only offered when there is something to empty. A
+                            // destructive button that is always on screen gets pressed
+                            // by accident. Its label names the kind, because it empties
+                            // the list under it and nothing else.
+                            if !trashed.is_empty() {
+                                let empty = head::warn(ui, palette, view.empty_label());
                                 report(state, "empty-trash", empty.rect);
                                 if empty.clicked() {
                                     // A question, not a decision: the dialog asks, and
                                     // only its yes becomes `Action::EmptyTrash`.
-                                    state.pending =
-                                        Some(Pending::EmptyTrash { count: trashed.len() });
+                                    state.pending = Some(Pending::EmptyTrash {
+                                        kind,
+                                        count: trashed.len(),
+                                    });
                                     ui.ctx().request_repaint();
                                 }
                             }
@@ -417,74 +434,92 @@ pub fn draw(
                 }
 
                 if trash {
-                    let count = trashed.len();
-                    if let Some(asked) = trash::subnav(ui, palette, state, count) {
+                    // One count per kind, in `TrashView::ALL` order. Three numbers on
+                    // three chips is how "where did it go" is answered without
+                    // clicking: the trash is not one pile any more.
+                    let counts = TrashView::ALL.map(|other| {
+                        rows.iter()
+                            .filter(|row| row.kind == other.kind() && row.deleted_at.is_some())
+                            .count()
+                    });
+                    if let Some(asked) = trash::subnav(ui, palette, state, counts) {
                         action = asked;
                     }
                     ui.add_space(10.0);
                 }
 
-                if trash && !view.has_list() {
-                    // A sub-tab the native shell does not own. Its body is the
-                    // explanation, not an empty list: "收集箱是空的" would be a claim
-                    // about data this window cannot see.
-                    trash::notice(ui, palette, state, view);
+                // The trash promises only what its current kind can match, and the
+                // notes tab is the notes view whatever sub-tab the trash was left on
+                // -- `trash_view` outlives the page it was chosen in.
+                let search_hint = if trash {
+                    view.search_hint()
                 } else {
-                    // The field is a card, not a bare `TextEdit`: an input that floats
-                    // on the page with a hairline is the one shape the shipped manager
-                    // never uses, and the search box is the first thing the eye lands
-                    // on in this panel.
-                    egui::Frame::NONE
-                        .fill(palette.surface)
-                        .corner_radius(egui::CornerRadius::same(palette.radius.card))
-                        .inner_margin(egui::Margin::symmetric(12, 7))
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.query)
-                                    .hint_text("搜索标题、正文、标签")
-                                    .desired_width(f32::INFINITY)
-                                    .frame(false),
-                            );
-                        });
-                    ui.add_space(10.0);
-                    if trash {
-                        if let Some(asked) = trash::selection_bar(ui, palette, state) {
-                            action = asked;
-                        }
-                        ui.add_space(6.0);
-                    }
-                    let visible: Vec<&Row> = rows
-                        .iter()
-                        .filter(|row| row.deleted_at.is_some() == trash && row.matches(&state.query))
-                        .collect();
-                    if visible.is_empty() {
-                        ui.add_space(10.0);
-                        ui.label(
-                            RichText::new(if trash {
-                                // The same number as the header's sentence, from the
-                                // same constant: two copies of "30" is one of them
-                                // being wrong after the setting exists.
-                                format!(
-                                    "回收站是空的 · 删除的笔记会在这里保留 {} 天",
-                                    hub_core::store::TRASH_RETENTION_DAYS
-                                )
-                            } else {
-                                "没有笔记 · 点「新建笔记」或按 Ctrl+Alt+N".to_string()
-                            })
-                            .size(11.0)
-                            .color(palette.ink_subtle),
+                    TrashView::Notes.search_hint()
+                };
+                // The field is a card, not a bare `TextEdit`: an input that floats
+                // on the page with a hairline is the one shape the shipped manager
+                // never uses, and the search box is the first thing the eye lands
+                // on in this panel.
+                egui::Frame::NONE
+                    .fill(palette.surface)
+                    .corner_radius(egui::CornerRadius::same(palette.radius.card))
+                    .inner_margin(egui::Margin::symmetric(12, 7))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.query)
+                                .hint_text(search_hint)
+                                .desired_width(f32::INFINITY)
+                                .frame(false),
                         );
+                    });
+                ui.add_space(10.0);
+                if trash {
+                    if let Some(asked) = trash::selection_bar(ui, palette, state) {
+                        action = asked;
                     }
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for row in visible {
-                                if let Some(clicked) = list::note_row(ui, palette, state, row) {
-                                    action = clicked;
-                                }
-                            }
-                        });
+                    ui.add_space(6.0);
                 }
+                let visible: Vec<&Row> = if trash {
+                    trashed
+                        .iter()
+                        .copied()
+                        .filter(|row| row.matches(&state.query))
+                        .collect()
+                } else {
+                    rows.iter()
+                        .filter(|row| {
+                            // Only notes: the inbox and script rows in this vector are
+                            // trashed by construction and belong to the trash pane.
+                            row.kind == RowKind::Note
+                                && row.deleted_at.is_none()
+                                && row.matches(&state.query)
+                        })
+                        .collect()
+                };
+                if visible.is_empty() {
+                    ui.add_space(10.0);
+                    let empty = if trash {
+                        trash::empty_text(view, scripts_note)
+                    } else {
+                        "没有笔记 · 点「新建笔记」或按 Ctrl+Alt+N".to_string()
+                    };
+                    let label = ui.label(RichText::new(empty).size(11.0).color(palette.ink_subtle));
+                    if trash {
+                        // Reported so the gate can tell "the sentence replaced the list"
+                        // from "the list happened to be empty" -- both look the same in
+                        // a screenshot, and the name carries the sub-tab.
+                        report(state, &format!("trash-notice:{}", view.id()), label.rect);
+                    }
+                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for row in visible {
+                            if let Some(clicked) = list::note_row(ui, palette, state, row) {
+                                action = clicked;
+                            }
+                        }
+                    });
             }
             Tab::Todos => {
                 // The counts come from every group, not from what the filter shows:

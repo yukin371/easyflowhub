@@ -98,6 +98,13 @@ pub struct Config {
     /// means every test note shows up in the user's list. The gate runs on a copy;
     /// so does a person trying a change.
     pub store_root: Option<PathBuf>,
+    /// `--script-trash`: the scripts' trash directory to read instead of
+    /// `%APPDATA%\scriptmgr\trash\scripts`.
+    ///
+    /// Same reason as `store_root`: the gate seeds a directory of its own, and a
+    /// person trying a change must not be able to delete the real scripts by
+    /// clicking through the trash.
+    pub script_trash: Option<PathBuf>,
     /// `--note-id`: open an existing note instead of a new one.
     pub note_id: Option<String>,
     /// `--resident`: start without creating a note.
@@ -203,6 +210,12 @@ struct Hub {
     /// appearance, and a second source of truth for keys is the thing this batch
     /// exists to remove.
     settings_path: PathBuf,
+    /// The scripts' trash directory, handed to the workbench when it opens.
+    ///
+    /// Resolved once here rather than per frame in the manager: it is the one path
+    /// in the window whose absence means "this machine has no script library", and a
+    /// frame that re-decided that would be able to say two things in one session.
+    script_trash: PathBuf,
     /// C5: the size the next note opens at.
     ///
     /// A cell rather than a field of `settings` because `settings` is a startup
@@ -306,6 +319,13 @@ impl Hub {
             store,
             shortcuts,
             settings_path: config.settings_path,
+            script_trash: config
+                .script_trash
+                .clone()
+                .or_else(hub_core::script_trash::default_root)
+                // No `%APPDATA%`: the workbench says "no script library" and the
+                // path never resolves to anything, which is the same claim.
+                .unwrap_or_default(),
             note_size,
             notes: Vec::new(),
             inbox,
