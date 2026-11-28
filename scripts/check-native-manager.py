@@ -256,31 +256,51 @@ def park_spawned_notes() -> int:
 def clear_spot(shell: int, point: tuple, tries: int = 6) -> bool:
     """Make sure a click at `point` (client pixels) lands on the workbench.
 
-    A note is created on top, so a note opened by the list can sit over the corner
-    where a button is. Parking the spawned notes usually clears it; when it does not
-    (a note whose window has not taken its title yet cannot be found by name), the
-    workbench is nudged instead. The rectangles it reports are client-relative, so
-    moving the window does not invalidate them.
+    A note is created on top, so a note opened by the list sits over the corner where
+    a button is. `park_spawned_notes` moves the ones it can find by title; a note
+    whose window has not taken its title yet cannot be found that way, and that is
+    the case this used to lose: the workbench was nudged left and right in a loop
+    that oscillated between two positions and never cleared the spot.
+
+    So the *blocker* is moved, not the workbench -- far enough that the point is
+    free, and always in the same direction so six tries cannot undo each other.
     """
     for _ in range(tries):
         left, top, _, _ = wininput.client_box(shell)
         under, _title = window_at(left + point[0], top + point[1])
         if user32.GetAncestor(under, 2) == shell:  # GA_ROOT
             return True
+        root = user32.GetAncestor(under, 2) or under
         box = ctypes.wintypes.RECT()
-        user32.GetWindowRect(shell, ctypes.byref(box))
-        step = -160 if box.left > 200 else 160
-        user32.SetWindowPos(
-            shell,
-            0,
-            box.left + step,
-            box.top,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        )
+        if root and user32.GetWindowRect(root, ctypes.byref(box)):
+            user32.SetWindowPos(
+                root,
+                0,
+                box.left + 900,
+                box.top + 520,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
         time.sleep(0.15)
     return False
+
+
+def latest_rect(session: "Session", name: str, current, timeout: float = 0.12):
+    """Prefer a newer rectangle for `name` when the window redrew after being raised.
+
+    The workbench relayouts after a write (a restored row leaves the trash, the rest
+    move up) and only then reports the new rectangles. Clicking the one that was
+    current when the click was decided lands where the button used to be -- the
+    click is swallowed by empty space and the test blames the product.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        now = hit(session.trace.text(), name)
+        if now and now != current:
+            return now
+        time.sleep(0.05)
+    return current
 
 
 def click_button(session: "Session", shell: int, name: str, timeout: float = 6.0):
@@ -291,6 +311,7 @@ def click_button(session: "Session", shell: int, name: str, timeout: float = 6.0
         rect = hit(session.trace.text(), name)
         if rect and rect[2] > 0 and rect[3] > 0:
             raise_window(shell)
+            rect = latest_rect(session, name, rect)
             point = (rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
             clear = clear_spot(shell, point)
             left, top, _, _ = wininput.client_box(shell)
@@ -310,6 +331,20 @@ def click_button(session: "Session", shell: int, name: str, timeout: float = 6.0
         time.sleep(0.05)
     print(f"  click {name}: no rectangle was reported")
     return None
+
+
+def open_confirm(session: "Session", shell: int, row_id: str, timeout: float = 5.0):
+    """Click 彻底删除 and wait for a *fresh* report of the dialog's buttons.
+
+    Fresh matters: the rectangle is only written when a control moves or reappears,
+    and the dialog reopens at the same place. Watching from a mark taken before the
+    click is what distinguishes "it reopened" from "that line was already there".
+    """
+    mark = len(session.trace.text())
+    click_button(session, shell, f"purge:{row_id}")
+    return wininput.wait_for(
+        lambda: hit(session.trace.tail(mark), "confirm-ok") is not None, timeout
+    )
 
 
 class Trace:
@@ -669,17 +704,66 @@ def main() -> int:
             (restored.strip() or "no manager_restore line") + f"; deleted_at={stored}",
         )
 
+        # ------------------------------------- 彻底删除 asks first
+        # The one irreversible button in this window: it used to purge on a single
+        # click, and the gate proved it by deleting a note. Now the first click must
+        # only ask, and only the second yes may delete. Both ways out are checked
+        # too, because "cancel" that leaves the dialog open is not a cancel.
         mark = len(session.trace.text())
         click_button(session, shell, "row:gate-live-2")
         wininput.wait_for(lambda: hit(session.trace.tail(mark), "purge:gate-live-2") is not None, 4)
-        before = session.trace.count("manager_purge")
-        click_button(session, shell, "purge:gate-live-2")
-        purged = session.trace.later("manager_purge", before, 5)
+
+        before = session.trace.count("manager_confirm action=ask")
+        offered = open_confirm(session, shell, "gate-live-2")
+        asked = session.trace.later("manager_confirm action=ask", before, 5)
         stored = query(db, "SELECT COUNT(*) FROM notes WHERE id = ?", ("gate-live-2",))
         report.check(
-            "the 彻底删除 button removes the row for good",
-            "id=gate-live-2" in purged and "permanent=true" in purged and stored == (0,),
-            (purged.strip() or "no manager_purge line") + f"; rows={stored}",
+            "彻底删除 asks before it deletes anything",
+            "id=gate-live-2" in asked and bool(offered) and stored == (1,),
+            (asked.strip() or "no manager_confirm ask line")
+            + f"; confirm-ok={'yes' if offered else 'no'}; rows={stored}",
+        )
+
+        before = session.trace.count("manager_confirm action=cancel")
+        click_button(session, shell, "confirm-cancel")
+        cancelled = session.trace.later("manager_confirm action=cancel", before, 5)
+        stored = query(db, "SELECT COUNT(*) FROM notes WHERE id = ?", ("gate-live-2",))
+        report.check(
+            "取消 keeps the note and closes the dialog",
+            bool(cancelled) and stored == (1,),
+            (cancelled.strip() or "no manager_confirm cancel line") + f"; rows={stored}",
+        )
+
+        # Esc is the keyboard's way out, and it must not take the workbench with it.
+        # That layering is the reason the view reports whether anything was open.
+        before = session.trace.count("manager_confirm action=ask")
+        offered = open_confirm(session, shell, "gate-live-2")
+        wininput.force(shell)
+        wininput.tap(0x1B)
+        escaped = session.trace.later("manager_confirm action=cancel reason=esc", 0, 5)
+        stored = query(db, "SELECT COUNT(*) FROM notes WHERE id = ?", ("gate-live-2",))
+        report.check(
+            "Esc cancels the dialog and leaves the workbench open",
+            bool(offered) and bool(escaped) and stored == (1,) and manager_window() is not None,
+            (escaped.strip() or "no esc cancel line")
+            + f"; rows={stored}; manager={'open' if manager_window() else 'gone'}",
+        )
+
+        before = session.trace.count("manager_purge")
+        offered = open_confirm(session, shell, "gate-live-2")
+        click_button(session, shell, "confirm-ok")
+        purged = session.trace.later("manager_purge", before, 5)
+        answered = session.trace.later("manager_confirm action=ok", 0, 2)
+        stored = query(db, "SELECT COUNT(*) FROM notes WHERE id = ?", ("gate-live-2",))
+        report.check(
+            "the second yes removes the row for good",
+            bool(offered)
+            and "id=gate-live-2" in purged
+            and "permanent=true" in purged
+            and bool(answered)
+            and stored == (0,),
+            (purged.strip() or "no manager_purge line")
+            + f"; answer={(answered.strip() or 'none')}; rows={stored}",
         )
 
         # ------------------------------------- the card, from the workbench

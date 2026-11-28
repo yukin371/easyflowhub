@@ -24,7 +24,15 @@
 //! from a frame key to a chord already exists in [`crate::keys`] -- the same one
 //! the note uses, so a captured key and a pressed key cannot disagree.
 
-use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Vec2};
+// `manager.rs` plus a `manager/` directory: the classic non-`mod.rs` layout. Two
+// jobs got big enough to be their own file -- the row (the densest drawing code
+// here) and the confirm dialog (its own state machine, tested on its own).
+mod confirm;
+mod list;
+
+pub use confirm::Pending;
+
+use egui::{RichText, Stroke};
 use hub_core::{Chord, Command, Scope, Table};
 
 use crate::hint;
@@ -172,6 +180,11 @@ pub struct State {
     /// and bare for chrome (`new-note`, `todo-card`, `tab:trash`), so a click can be
     /// addressed without the script knowing the arrangement.
     pub hits: Vec<(String, egui::Rect)>,
+    /// A destructive action waiting for its second yes, if any.
+    ///
+    /// This is view state on purpose: an open question is not a decision, and the
+    /// controller should not have to know how to draw one. See [`Pending`].
+    pub pending: Option<Pending>,
 }
 
 impl Default for State {
@@ -183,7 +196,19 @@ impl Default for State {
             capturing: None,
             status: String::new(),
             hits: Vec::new(),
+            pending: None,
         }
+    }
+}
+
+impl State {
+    /// Close the open confirmation, if there is one.
+    ///
+    /// The caller needs the answer, not just the side effect: in the window Esc
+    /// means "close the workbench", so with a dialog open it has to mean "cancel
+    /// the dialog" instead. Returns whether anything was open.
+    pub fn dismiss(&mut self) -> bool {
+        self.pending.take().is_some()
     }
 }
 
@@ -287,6 +312,10 @@ pub fn draw(
                     state.query.clear();
                     state.status.clear();
                     action = Action::SetTab(tab);
+                    // The sidebar painted these fills before the click was known, and
+                    // the controller does not repaint on `SetTab`: ask for the frame
+                    // that shows the new tab as selected.
+                    ui.ctx().request_repaint();
                 }
                 report(state, &format!("tab:{}", tab.id()), button.rect);
             }
@@ -322,9 +351,7 @@ pub fn draw(
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for row in visible {
-                        if let Some(clicked) =
-                            note_row(ui, palette, state, row)
-                        {
+                        if let Some(clicked) = list::note_row(ui, palette, state, row) {
                             action = clicked;
                         }
                     }
@@ -443,134 +470,15 @@ pub fn draw(
             }
         });
 
-    action
-}
+    // Drawn last so it sits above the panels, with a backdrop that swallows clicks:
+    // a modal that lets a stray click land on a row is not modal. The answer
+    // replaces the frame's action -- the only action a dialog can produce is the
+    // one it was asking about.
+    let answer = confirm::dialog(ctx, palette, state);
+    if answer != Action::None {
+        action = answer;
+    }
 
-/// One note row: title, preview, timestamp, and two buttons.
-fn note_row(
-    ui: &mut egui::Ui,
-    palette: Theme,
-    state: &mut State,
-    row: &Row,
-) -> Option<Action> {
-    let mut action = None;
-    let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 34.0), Sense::click());
-    // The row is addressable too: the buttons only exist once a row is selected, so
-    // the gate has to be able to *select* one, and "click the third row" is exactly
-    // the coordinate this file refused to hardcode.
-    report(state, &format!("row:{}", row.id), rect);
-    let chosen = state.selected.as_deref() == Some(row.id.as_str());
-    if chosen || response.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(4),
-            if chosen {
-                palette.surface
-            } else {
-                palette.surface_soft
-            },
-        );
-    }
-    if let Some(marker) = if row.deleted_at.is_some() {
-        Some("回收站")
-    } else if row.pinned {
-        Some("置顶")
-    } else {
-        None
-    } {
-        ui.painter().text(
-            egui::pos2(rect.left() + 8.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            marker,
-            FontId::proportional(9.0),
-            palette.accent,
-        );
-    }
-    ui.painter().text(
-        egui::pos2(rect.left() + 58.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        &row.title,
-        FontId::proportional(12.0),
-        palette.ink,
-    );
-    if !row.preview.is_empty() {
-        let start = rect.left() + 58.0 + 160.0;
-        if start < rect.right() - 120.0 {
-            ui.painter().text(
-                egui::pos2(start, rect.center().y),
-                Align2::LEFT_CENTER,
-                &row.preview,
-                FontId::proportional(10.5),
-                palette.ink_subtle,
-            );
-        }
-    }
-    ui.painter().text(
-        egui::pos2(rect.right() - 8.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        &row.when,
-        FontId::monospace(9.5),
-        palette.ink_subtle,
-    );
-
-    if response.clicked() {
-        // Selecting is not conditional on having an action. A trashed row has no
-        // "open", and the first version therefore never set `selected` for it -- so
-        // 恢复 could only ever act on the row that had just been deleted (the one
-        // whose selection survived from the notes tab). Found by the gate clicking
-        // a trashed row and watching nothing happen.
-        state.selected = Some(row.id.clone());
-        action = if row.deleted_at.is_some() {
-            None
-        } else {
-            Some(Action::Open(row.id.clone()))
-        };
-    }
-    // Actions live on the selected row's header line rather than inside every row:
-    // three 16 px buttons per row is a wall of glyphs, and the list is the part
-    // that has to stay readable.
-    if chosen {
-        ui.horizontal(|ui| {
-            if row.deleted_at.is_some() {
-                let restore = ui.button(RichText::new("恢复").size(10.5));
-                report(state, &format!("restore:{}", row.id), restore.rect);
-                if restore.clicked() {
-                    action = Some(Action::Restore(row.id.clone()));
-                }
-                let purge = hint::hint(
-                    ui.button(RichText::new("彻底删除").size(10.5)),
-                    palette,
-                    "从数据库删除这一行",
-                    "",
-                );
-                report(state, &format!("purge:{}", row.id), purge.rect);
-                if purge.clicked() {
-                    action = Some(Action::Purge(row.id.clone()));
-                }
-            } else {
-                let open = ui.button(RichText::new("打开").size(10.5));
-                report(state, &format!("open:{}", row.id), open.rect);
-                if open.clicked() {
-                    action = Some(Action::Open(row.id.clone()));
-                }
-                let pin_label = if row.pinned { "取消置顶" } else { "置顶" };
-                let pin = ui.button(RichText::new(pin_label).size(10.5));
-                report(state, &format!("pin:{}", row.id), pin.rect);
-                if pin.clicked() {
-                    action = Some(Action::Pin {
-                        id: row.id.clone(),
-                        pinned: !row.pinned,
-                    });
-                }
-                let trash = ui.button(RichText::new("移到回收站").size(10.5));
-                report(state, &format!("trash:{}", row.id), trash.rect);
-                if trash.clicked() {
-                    action = Some(Action::Trash(row.id.clone()));
-                }
-            }
-        });
-    }
     action
 }
 

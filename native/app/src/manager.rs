@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use hub_core::{clock, Store, Table};
-use hub_ui::manager::{self, Action, Row, Tab};
+use hub_ui::manager::{self, Action, Pending, Row, Tab};
 use hub_ui::Theme;
 
 use crate::hub::Request;
@@ -129,8 +129,19 @@ impl Shell {
             .map(|chord| chord.vk == 0x1B)
             .unwrap_or(false);
         if escape && self.state.capturing.is_none() {
-            self.close(ctx, "esc");
-            return;
+            // Layered like the todo card's Esc: the most local thing first. A
+            // confirmation that is open gets cancelled; only when there is nothing
+            // to back out of does Esc mean "close the window". Without this the
+            // first Esc out of a "delete forever?" question would take the whole
+            // workbench with it.
+            if self.state.dismiss() {
+                self.log
+                    .mark(0, "manager_confirm", "action=cancel reason=esc");
+                ctx.request_repaint_of(viewport_id());
+            } else {
+                self.close(ctx, "esc");
+                return;
+            }
         }
 
         let table = self
@@ -138,6 +149,10 @@ impl Shell {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        // The dialog is view state, so "did it ask" is not in the action stream.
+        // Comparing the pending action across the frame is how the log learns about
+        // it -- and the log is the only place a post-mortem can look.
+        let asked = self.state.pending.clone();
         let action = manager::draw(
             ctx,
             Theme::standard(),
@@ -146,17 +161,44 @@ impl Shell {
             self.todo.as_deref(),
             &table,
         );
+        self.note_confirm(&asked, &action);
         self.log_hit(ctx);
         self.act(ctx, action);
+    }
+
+    /// One line per transition of the confirmation: asked, answered, dropped.
+    fn note_confirm(&self, before: &Option<Pending>, action: &Action) {
+        match (before, &self.state.pending) {
+            (None, Some(now)) => self.log.mark(
+                0,
+                "manager_confirm",
+                &format!("action=ask verb={} id={}", now.verb(), now.id()),
+            ),
+            (Some(then), None) => {
+                let outcome = if matches!(action, Action::Purge(_)) {
+                    "ok"
+                } else {
+                    "cancel"
+                };
+                self.log.mark(
+                    0,
+                    "manager_confirm",
+                    &format!("action={outcome} verb={} id={}", then.verb(), then.id()),
+                );
+            }
+            _ => {}
+        }
     }
 
     /// Write every control's rectangle that moved this frame.
     ///
     /// Physical client pixels, which is what a click posts and what `click_client()`
-    /// in the gate takes -- the script must not have to know the monitor scale. A
-    /// name that stops being reported (its row scrolled away) keeps its last line and
-    /// stops matching: the gate always reads the *latest* line per name, so a stale
-    /// one cannot be clicked by accident.
+    /// in the gate takes -- the script must not have to know the monitor scale.
+    ///
+    /// A control that stops being reported is forgotten, so that when it comes back
+    /// it announces itself again. Without that, closing and reopening the confirm
+    /// dialog would write no second line (same rectangle, nothing "moved") and a
+    /// gate watching the log from a given point could never see it reopen.
     fn log_hit(&mut self, ctx: &egui::Context) {
         let scale = ctx.pixels_per_point();
         for (name, rect) in &self.state.hits {
@@ -182,6 +224,8 @@ impl Shell {
                 ),
             );
         }
+        let live: Vec<String> = self.state.hits.iter().map(|(name, _)| name.clone()).collect();
+        self.hit_logged.retain(|name, _| live.contains(name));
     }
 
     fn close(&mut self, ctx: &egui::Context, reason: &str) {
@@ -232,6 +276,7 @@ impl Shell {
                 self.log
                     .mark(0, "manager_pin", &format!("id={id} pinned={pinned} ok={ok:?}"));
                 self.reload();
+                self.refresh(ctx);
             }
             Action::Trash(id) => {
                 let at = clock::now_iso();
@@ -243,6 +288,7 @@ impl Shell {
                 };
                 self.log.mark(0, "manager_trash", &format!("id={id} ok={ok:?}"));
                 self.reload();
+                self.refresh(ctx);
             }
             Action::Restore(id) => {
                 let ok = self.with_store(|store| store.restore_note(&id));
@@ -253,6 +299,7 @@ impl Shell {
                 };
                 self.log.mark(0, "manager_restore", &format!("id={id} ok={ok:?}"));
                 self.reload();
+                self.refresh(ctx);
             }
             Action::Purge(id) => {
                 let ok = self.with_store(|store| store.purge_note(&id));
@@ -266,6 +313,7 @@ impl Shell {
                 self.log
                     .mark(0, "manager_purge", &format!("id={id} ok={ok:?} permanent=true"));
                 self.reload();
+                self.refresh(ctx);
             }
             Action::BeginCapture(command) => {
                 self.state.status = format!("按新键替换 {}", command.label());
@@ -291,6 +339,17 @@ impl Shell {
                 ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
         }
+    }
+
+    /// Ask for one more frame after a write changed the list.
+    ///
+    /// `reload()` swaps the rows while this frame is already half-painted, and egui
+    /// paints only when something asks it to. Without this the window keeps showing
+    /// the order from before the write -- a restored row still sitting in the trash,
+    /// a purged one still in the list -- until the mouse happens to move, which
+    /// reads exactly like "the button did nothing".
+    fn refresh(&self, ctx: &egui::Context) {
+        ctx.request_repaint_of(viewport_id());
     }
 
     fn push(&self, request: Request) {
