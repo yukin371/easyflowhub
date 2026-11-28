@@ -4,12 +4,14 @@
 > 按月归档，**新的条目先写进当月文件**，再把文件加进 `roadmap.md` 的索引。
 > 相邻月份：[2026-10](./progress-2026-10.md) · [2026-04](./progress-2026-04.md)
 
-- `2026-11-28` **两个入口不再只是拒绝：待办卡片真开窗，Manager 真有「新建笔记」**。接管态的两条命令原先只回「已由原生壳接管」，现在一条真开窗、一条真转发。
+- `2026-11-28` **接管态的入口不再只是拒绝：卡片真开窗，工作台每个按钮都真点过**。两条命令原先只回「已由原生壳接管」，现在一条真开窗、一条真转发。
   - **卡片**：320×400 浮卡，托盘「待办卡片」/ `--todo-card` 入口，Esc 关窗而进程留下。规则落 `hub-core/src/todo.rs`（抄前端 `todoParser`，11 单测），写入**按文本定位**（F05），同名两条拒绝而不是猜；工具条与命中矩形是纯函数。
-  - **转发不共用 argv**：`--note` 与 `--todo-card` 是两扇门——共用 builder 加个布尔会让"开出一条笔记"看起来像成功。`open_note`/`open_todo_card` 同走 `launch()`（解析 exe / `CREATE_NO_WINDOW` / **不等子进程**）。这条命令仍无前端调用者，证据是 argv 单测 + 原生 `--todo-card` 门禁。
+  - **转发不共用 argv**：`--note` 与 `--todo-card` 是两扇门——共用 builder 加个布尔会让"开出一条笔记"看起来像成功。`open_note`/`open_todo_card` 同走 `launch()`（解析 exe / `CREATE_NO_WINDOW` / **不等子进程**），证据是 argv 单测 + 原生 `--todo-card` 门禁。
   - **按钮是真入口**：头部 `新建笔记` 返回 `Action::NewNote`，app 侧 push `Request::NewNote`——与 `Ctrl+Alt+N` 同一条路（frame 不建视口），空列表文案从"按 Ctrl+Alt+N"改成"点「新建笔记」"。管理器照卡片契约把按钮矩形写进 `manager_hit`（物理客户区像素），门禁 `click_client` 真点。
   - **两个门禁坑**：`save_note_body` 返回值是"是否新建"不是"是否成功"；勾选让行跳到已完成区，旧坐标被下一条占据（第二次点击打中别的任务）。
-  - 证据：卡片 **17/17**（亮像素 230→0、checkbox 中心变色、Esc 后进程仍活、托盘重开有新 reload）、管理器 **19→23**（真点后 `note_spawn id=1 live=2` 且 `#1` 窗存在、管理器不关）、原生 **335**、Tauri **106**。详见 [todo-card](../plans/completed/2026-11-28-todo-card.md) 与 [manager-new-note](../plans/completed/2026-11-28-manager-new-note.md)。
+  - **补上卡片入口**：前端 `TodoPanel` 早有「悬浮卡片」，但接管态下那块面板不在屏幕上——待办页补一个，走同一条 `Request::TodoCard`（单例）。`置顶/回收站/恢复/彻底删除` 也首次被真点：矩形由产品上报，脚本不写坐标。
+  - **门禁揪出的真 bug**：回收站的行点了不设 `selected`（`note_row` 只在有 `Open` 时设），所以「恢复」只对刚删的那行有效。
+  - 证据：卡片 **17/17**（亮像素 230→0、checkbox 中心变色、Esc 后进程仍活、托盘重开有新 reload）、管理器 **19→32**（真点击出 `manager_pin/trash/restore/purge` 并核对库与 `#1` 窗）、原生 **338**、Tauri **106**。详见 [todo-card](../plans/completed/2026-11-28-todo-card.md)、[manager-new-note](../plans/completed/2026-11-28-manager-new-note.md)、[manager-buttons](../plans/completed/2026-11-28-manager-buttons.md)。
 
 - `2026-11-27` **快速笔记入口从 Manager 接回原生壳：两条门铃，一条带 id**。Manager 的「新建快速笔记」原本只回一句「已由原生壳接管」，现在真能开窗。
   - **一个事件一种答案**：转发靠 auto-reset 事件（只唤醒、不带 payload）；`--note` 曾与普通二次启动共用门铃，「要笔记」变成「显示面板」→ 新增 `…Shell.note` 与独立 watcher。**id 落文件**：设置文件旁 `pending-note`，**tmp + `rename`**、**读一次就删**、**60 s 过期**。
@@ -82,7 +84,7 @@
   - **重构也要求证，不是声称**：把判断抽成 `analyzeNativeArchitecture(nativeRoot)` 时，成功路径与失败路径（种一个 `use egui::Context;`）都拿 HEAD 里的旧脚本对同一棵树跑 diff，输出**逐字节相同**。抽取过程中我一度把 `app` 的 `/tauri/` 收窄成 `/\btauri::/`，那是悄悄放宽，已改回。
   - **未测**：注释内 `crate::` 的误报（**有意保留**：剥注释的剥离器出错会漏报，漏报比误报危险）、规则集完整性（未穷举 `cfg_attr` / `include!`）、真实越界 PR 的拦截演练。CI runner 上的耗时后续补测：`architecture-gates` 三步各自 < 1 s。
 
-- `2026-11-26` **`notes.db` 的 DDL 只剩一份：Tauri 调 `hub-core::store` 的同一把梯子**（[../plans/completed/2026-11-26-notes-db-shared-migrator.md](../plans/completed/2026-11-26-notes-db-shared-migrator.md)，批 1–3）。Tauri 新增 `src-tauri/src/db.rs` 作唯一连接入口（路径 + `busy_timeout` + `foreign_keys` + `Rebuild::Run`，梯子没到顶就拒连并点名 rung），`notes.rs` / `inbox/schema.rs` / `settings.rs` 的 DDL 与三处 `db_path` 删除，`file_search_recent` 改调 `hub_core::store::ensure_file_search_recent`（仍懒建、不进梯子）。守卫翻转：`the_tauri_build_owns_no_ddl` 递归扫 Tauri `src/**/*.rs`、跳过 `#[cfg(test)]` 夹具，生产代码出现 `CREATE`/`ALTER`/`PRAGMA user_version` 即失败（反向验证按 `zz_probe.rs:1` 报红）。**`user_version` 仍不写**（§5），门禁"原生写后仍是 0"的断言保持。
+- `2026-11-26` **`notes.db` 的 DDL 只剩一份：Tauri 调 `hub-core::store` 的同一把梯子**（[../plans/completed/2026-11-26-notes-db-shared-migrator.md](../plans/completed/2026-11-26-notes-db-shared-migrator.md)，批 1–3）。Tauri 新增 `src-tauri/src/db.rs` 作唯一连接入口（梯子没到顶就拒连并点名 rung），三处 DDL 与 `db_path` 删除，`file_search_recent` 改调 `hub_core`（仍懒建、不进梯子）。守卫翻转：`the_tauri_build_owns_no_ddl` 递归扫 Tauri 源码、跳过测试夹具，出现 `CREATE`/`ALTER`/`PRAGMA user_version` 即失败。**`user_version` 仍不写**（§5）。
 
 - `2026-11-25` **S3 通过：原生进程直读直写 `notes.db`，39 项门禁检查全绿（0 项口径放宽）**。设计与验收标准先落在 [../plans/completed/2026-11-25-notes-db-compat-spike.md](../plans/completed/2026-11-25-notes-db-compat-spike.md)，再按 A/B/C 三批实现。（当时 S4 未做。）
   - **双向兼容用真代码验，不自证**：native 写入后由 **Tauri 那份代码**读（`get_note_helper` / `list_notes_with_conn` / `save_note_with_conn`，新抽的连接级函数），不是复制 SQL；另加**独立实现**——`sqlite3` CLI（3.50.4，原生 bundled 是 3.46.0）与我们的读者 **42 行逐字段一致**（`rows-identical 42`）。反向也验：Tauri 写 → native 读回同内容。
@@ -118,7 +120,7 @@
 
 - `2026-11-24` **P0.5 完成：窗口生命周期 + 计时契约，静置 600 → 282.8 MB**。设计与验收标准先落在 [../plans/completed/2026-11-24-window-lifecycle-and-latency-contract.md](../plans/completed/2026-11-24-window-lifecycle-and-latency-contract.md)，再按 A/B/C 三批实施并逐条验收。
   - **Batch A（度量）**：`measure-footprint.ps1` 增加 `-Label` / `-OutFile`，三姿态（idle / launcher / manager-2notes）快照归档到 `docs/releases/footprint/0.2.0/`。注意 PS 5.1 里 `$json` 与开关 `-Json` 是同一个变量，赋值会直接报错。
-  - **Batch B（生命周期）**：Manager 从 `tauri.conf.json` 移除，改由 `ensure_manager_window` 按需创建、关闭即销毁；`close_all_note_windows` 改用 `destroy()`。实测 **idle Private 600.0 → 261.6–282.8 MB（−53% ~ −56%）**、WebView2 进程 7 → 6、sidecar 静置 0（懒启动）；关闭 Manager 12 ms 内释放，重建 222–248 ms；10 轮开关与 2 笔记开关均无累积。**顺带修掉两个真实缺陷**：`single-instance` 插件必须最先注册（否则第二个进程先建窗再退出，留下 `about:blank` 与热键冲突），且不能在事件循环线程里就地 `build()` WebView（会死锁，改为 `async_runtime::spawn`）。
+  - **Batch B（生命周期）**：Manager 改由 `ensure_manager_window` 按需创建、关闭即销毁；`close_all_note_windows` 改用 `destroy()`。实测 **idle Private 600.0 → 261.6–282.8 MB（−53%）**、WebView2 进程 7 → 6、sidecar 静置 0；关闭 Manager 12 ms 内释放，重建 222–248 ms，10 轮开关无累积。**顺带修两个真实缺陷**：`single-instance` 必须最先注册；不能在事件循环线程里就地 `build()` WebView（死锁，改 `async_runtime::spawn`）。
   - **Batch C（计时契约）**：热键回调打 `[timing] hotkey_down`（在选区捕获之前，180 ms 上限要计入），Launcher 连续两帧后回调 `report_first_frame`；`log_timing()` 无视 debug 开关落盘。实测 **p50 87 ms / p95 101 ms / p99 130 ms（n=31）**，作为原生壳的对照组写入设计 §7.1；目标仍是 p95 ≤ 60 ms。
   - 未触发"动因被证伪"分支（降幅 53% ≫ 25% 判定线）。Phase 0 剩余工作是 S1–S4 四个 spike。
 
@@ -130,7 +132,7 @@
 
 - `2026-11-24` **内存降为次级目标 + 度量只在本机**：用户确认"8 GB 机器内存足够、额外设备测试没意义、测延迟才有意义"，且"保障常用功能速度前提下自然越小越好"。§7.2 重写为"次级目标 + 解释线"（65/55 MB 不再阻塞发布），补常驻内存构成拆解（刚性/半刚性/软性 + 结构性下限 30–50 MB）、6 条必做免费优化、4 条禁止的反向优化、RC 趋势归档规则；Phase 0 移除第二台机器与 RDP 阻塞要求；G1 与 S1 判据明确"响应阻塞、内存解释"。
 
-- `2026-11-24` **本机实测画像定下 Phase 0 的度量口径**：Ryzen 7 4800H / 31.4 GB / Radeon 集显 / **3840×2160 @150%** / Win11 26300。按 1366×768 估的数全部作废——150% 下字形面积 ×2.25，原计划"3500 常用字图集"≈30 MB+、全屏首帧纹理 ≈33 MB（3840×2160×4）。两条结论写入 ADR 作硬约束：图集只预栅格化首屏字符（300–800 字，3–6 MB），**launcher 必须是面板而非全屏层**。`measure-footprint.ps1` 起逐显示器输出分辨率 + 缩放与主 GPU，跨 DPI 不再误比内存。同期测得系统 WebView2 Runtime 一个月从 878.7 MB（v157）涨到 2029.3 MB（v158）。
+- `2026-11-24` **本机实测画像定下 Phase 0 的度量口径**：Ryzen 7 4800H / 31.4 GB / Radeon 集显 / **3840×2160 @150%** / Win11 26300。按 1366×768 估的数全部作废——150% 下字形面积 ×2.25，原计划"3500 常用字图集"≈30 MB+、全屏首帧纹理 ≈33 MB。两条结论写入 ADR：图集只预栅格化首屏字符（300–800 字，3–6 MB），**launcher 必须是面板而非全屏层**。`measure-footprint.ps1` 逐显示器输出分辨率/缩放，跨 DPI 不再误比内存。同期测得 WebView2 Runtime 一个月 878.7 → 2029.3 MB。
 
 - `2026-11-24` **launcher 语义澄清 + 目标环境修正**：用户明确它模仿 Quicker——**跟随光标的竖版动作面板，不是工作台**。尺寸按实测 `tauri.conf.json` 定为 440×860 逻辑像素（此前误写 960×640 横版），首帧缓冲 150% 下 3.4 MB 而非 33 MB；新增 §5.1.1「光标锚定与高 DPI」（逐档缓冲/图集表、5 条零延迟优化、3 个延迟坑：热键路径不枚举显示器、`pixels_per_point` 要在 `show` 前设好、DPI 切换时新旧图集交接）。同时撤销 4 GB 画像，最低改 8 GB / 4 核 / 集显；`lite` 重新定位为软件渲染 / RDP 降级档、上限 45→55 MB。
 
